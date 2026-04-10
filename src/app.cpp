@@ -31,7 +31,11 @@
 #include "ui_feedback.h"
 #include "ui/boot_screen.h"
 #include "ui/ui_app.h"
+#if USE_LVGL_REMOTE_SERVER
+#include "lvgl_remote_server/lvgl_remote_server.h"
+#else
 #include "web_remote/web_remote.h"
+#endif
 
 /** SPI dedicado ao TF (pinos em `board_pins.h`, documentação Waveshare). */
 static SPIClass s_sd_spi;
@@ -245,9 +249,14 @@ void setup() {
   boot_log_step(BOOT_STEP_WIREGUARD, wg_cfg ? "INFO" : "WARN", "%s",
                 wg_cfg ? "ativo por configuracao" : "desativado");
 
+#if USE_LVGL_REMOTE_SERVER
+  boot_log_step(BOOT_STEP_WEB_REMOTE, "INFO", "%s",
+                "LVGL Remote UDP (viewer Windows); HTTP/WebSocket remoto desativado");
+#else
   const bool web_remote_cfg = true;  // Sem flag dedicada; habilitado por predefinicao.
   boot_log_step(BOOT_STEP_WEB_REMOTE, web_remote_cfg ? "INFO" : "WARN", "%s",
                 web_remote_cfg ? "ativo por configuracao" : "desativado");
+#endif
 
   boot_log_plain("INFO", "Boot concluido. A carregar interface principal...");
   boot_screen_set_footer("A carregar interface principal...");
@@ -263,9 +272,13 @@ void setup() {
   delay(10);
 
   net_services_start_background_task();
+#if USE_LVGL_REMOTE_SERVER
+  lvgl_remote_server_init();
+#else
   if (web_remote_cfg) {
     web_remote_init();
   }
+#endif
 
   Serial.println(String(title) + " end");
 }

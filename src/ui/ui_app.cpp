@@ -21,7 +21,9 @@
 #include "net_time.h"
 #include "net_wireguard.h"
 #include "ui/ui_loading.h"
+#if !USE_LVGL_REMOTE_SERVER
 #include "web_remote/web_remote.h"
+#endif
 
 static constexpr int kStatusBarH = 46;
 
@@ -378,11 +380,13 @@ static void settings_save_vnc_cb(lv_event_t *e) {
   app_settings_set_vnc_jpeg_quality(quality);
   app_settings_set_vnc_interval_ms(interval_ms);
 
+#if !USE_LVGL_REMOTE_SERVER
   web_remote_stream_cfg_t cfg;
   cfg.scale = scale;
   cfg.jpeg_quality = quality;
   cfg.interval_ms = interval_ms;
   web_remote_set_stream_config(&cfg);
+#endif
 
   if (s_vnc_feedback_lbl != nullptr) {
     lv_label_set_text(s_vnc_feedback_lbl, "Guardado e aplicado no stream remoto.");
