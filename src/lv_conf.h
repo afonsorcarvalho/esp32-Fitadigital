@@ -45,8 +45,18 @@
    MEMORY SETTINGS
  *=========================*/
 
-/*1: use custom malloc/free, 0: use the built-in `lv_mem_alloc()` and `lv_mem_free()`*/
-#define LV_MEM_CUSTOM 0
+/**
+ * Usa heap_caps_malloc(MALLOC_CAP_SPIRAM) para o pool do LVGL (PSRAM).
+ *
+ * Antes: LV_MEM_CUSTOM=0 com pool estático de 96 KiB na SRAM interna → deixava
+ * apenas ~25 KiB de heap interno livre depois dos bounce buffers RGB + tasks,
+ * insuficiente para newlib (fopen/fclose) + WiFi buffers + semáforos.
+ * Resultado: abort() em lock_init_generic quando xSemaphoreCreateRecursiveMutex falha.
+ *
+ * Com LV_MEM_CUSTOM=1 + heap_caps SPIRAM: o LVGL usa PSRAM (8 MB OPI nesta placa),
+ * libertando ~96 KiB de heap interno para VFS, WiFi, FTP e AsyncTCP.
+ */
+#define LV_MEM_CUSTOM 1
 #if LV_MEM_CUSTOM == 0
     /*Size of the memory available for `lv_mem_alloc()` in bytes (>= 2kB)*/
     #define LV_MEM_SIZE (96U * 1024U)          /*[bytes]*/
@@ -60,10 +70,10 @@
     #endif
 
 #else       /*LV_MEM_CUSTOM*/
-    #define LV_MEM_CUSTOM_INCLUDE <stdlib.h>   /*Header for the dynamic memory function*/
-    #define LV_MEM_CUSTOM_ALLOC   malloc
-    #define LV_MEM_CUSTOM_FREE    free
-    #define LV_MEM_CUSTOM_REALLOC realloc
+    #define LV_MEM_CUSTOM_INCLUDE <esp_heap_caps.h>
+    #define LV_MEM_CUSTOM_ALLOC(size)          heap_caps_malloc(size, MALLOC_CAP_SPIRAM)
+    #define LV_MEM_CUSTOM_FREE                 heap_caps_free
+    #define LV_MEM_CUSTOM_REALLOC(p, size)     heap_caps_realloc(p, size, MALLOC_CAP_SPIRAM)
 #endif     /*LV_MEM_CUSTOM*/
 
 /*Number of the intermediate memory buffer used during rendering and other internal processing mechanisms.

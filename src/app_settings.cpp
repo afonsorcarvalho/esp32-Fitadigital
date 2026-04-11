@@ -4,6 +4,7 @@
  */
 #include "app_settings.h"
 #include "app_settings_sd.h"
+#include "sd_access.h"
 #include <Preferences.h>
 #include <SD.h>
 #include <ctype.h>
@@ -29,22 +30,12 @@ static constexpr size_t kNtpSrvMax = 63U;
 static constexpr size_t kWgIpMax = 19U;
 static constexpr size_t kWgKeyMax = 127U;
 static constexpr size_t kWgEpMax = 127U;
-static constexpr uint8_t kVncScaleMin = 1U;
-static constexpr uint8_t kVncScaleMax = 8U;
-static constexpr uint8_t kVncScaleDef = 1U;
-static constexpr uint8_t kVncQualityMin = 1U;
-static constexpr uint8_t kVncQualityMax = 100U;
-static constexpr uint8_t kVncQualityDef = 35U;
-static constexpr uint16_t kVncIntervalMin = 80U;
-static constexpr uint16_t kVncIntervalMax = 2000U;
-static constexpr uint16_t kVncIntervalDef = 180U;
-
 /** Tamanho maximo do ficheiro de configuracao no SD (evita RAM excessiva). */
 static constexpr size_t kSdCfgFileMaxBytes = 8192U;
 
 static void put_ftp_creds(const char *user, const char *pass);
 
-static bool sd_card_available(void) { return SD.cardType() != CARD_NONE; }
+static bool sd_card_available(void) { return sd_access_is_mounted(); }
 
 static char *trim_line(char *s) {
   char *p = s;
@@ -73,7 +64,7 @@ static bool parse_bool_val(const char *v, bool *out) {
   return false;
 }
 
-/** Secoes: 0 antes de qualquer [secao], 1 wifi, 2 ui, 3 ftp, 4 time, 5 wireguard, 6 vnc. */
+/** Secoes: 0 antes de qualquer [secao], 1 wifi, 2 ui, 3 ftp, 4 time, 5 wireguard. */
 typedef struct {
   bool have_fmt;
   int fmt;
@@ -107,12 +98,6 @@ typedef struct {
   char wg_ep[128];
   bool have_wg_pt;
   uint32_t wg_pt;
-  bool have_vnc_scale;
-  uint8_t vnc_scale;
-  bool have_vnc_q;
-  uint8_t vnc_q;
-  bool have_vnc_ms;
-  uint32_t vnc_ms;
 } ParsedSdCfg;
 
 static bool copy_key_str(char *dst, size_t cap, const char *val) {
@@ -287,35 +272,6 @@ static bool cfg_parse_kv(int sec, const char *key, const char *val, ParsedSdCfg 
       return true;
     }
     return true;
-  case 6: /* [vnc] */
-    if (!strcmp(key, "scale")) {
-      unsigned long s = strtoul(val, nullptr, 10);
-      if (s < kVncScaleMin || s > kVncScaleMax) {
-        return false;
-      }
-      c->vnc_scale = (uint8_t)s;
-      c->have_vnc_scale = true;
-      return true;
-    }
-    if (!strcmp(key, "jpeg_q")) {
-      unsigned long q = strtoul(val, nullptr, 10);
-      if (q < kVncQualityMin || q > kVncQualityMax) {
-        return false;
-      }
-      c->vnc_q = (uint8_t)q;
-      c->have_vnc_q = true;
-      return true;
-    }
-    if (!strcmp(key, "interval_ms")) {
-      unsigned long ms = strtoul(val, nullptr, 10);
-      if (ms < kVncIntervalMin || ms > kVncIntervalMax) {
-        return false;
-      }
-      c->vnc_ms = (uint32_t)ms;
-      c->have_vnc_ms = true;
-      return true;
-    }
-    return true;
   default:
     return true;
   }
@@ -357,10 +313,6 @@ static bool cfg_parse_section_line(const char *line, int *sec) {
   }
   if (!strcmp(name, "wireguard")) {
     *sec = 5;
-    return true;
-  }
-  if (!strcmp(name, "vnc")) {
-    *sec = 6;
     return true;
   }
   return false;
@@ -411,130 +363,123 @@ static void cfg_apply_parsed(const ParsedSdCfg *c) {
   if (c->have_wg_pt) {
     s_prefs.putUInt("wg_pt", c->wg_pt);
   }
-  if (c->have_vnc_scale) {
-    s_prefs.putUChar("vnc_sc", c->vnc_scale);
-  }
-  if (c->have_vnc_q) {
-    s_prefs.putUChar("vnc_q", c->vnc_q);
-  }
-  if (c->have_vnc_ms) {
-    s_prefs.putUInt("vnc_ms", c->vnc_ms);
-  }
 }
 
 bool app_settings_try_load_from_sd_config(void) {
   if (!sd_card_available()) {
     return false;
   }
-  File f = SD.open(kAppSettingsSdConfigPath, FILE_READ);
-  if (!f) {
-    return false;
-  }
-  size_t n = f.size();
-  if (n == 0U || n > kSdCfgFileMaxBytes) {
-    f.close();
-    return false;
-  }
-  char *buf = (char *)malloc(n + 1U);
-  if (!buf) {
-    f.close();
-    return false;
-  }
-  size_t nread = f.read((uint8_t *)buf, n);
-  if (nread != n) {
-    free(buf);
-    f.close();
-    return false;
-  }
-  buf[n] = '\0';
-  f.close();
-
-  ParsedSdCfg c;
-  memset(&c, 0, sizeof(c));
-  int sec = 0;
-
-  for (char *p = buf; *p != '\0';) {
-    char *eol = strchr(p, '\n');
-    if (eol) {
-      *eol = '\0';
+  bool ok = false;
+  sd_access_sync([&] {
+    File f = SD.open(kAppSettingsSdConfigPath, FILE_READ);
+    if (!f) {
+      return;
     }
-    trim_line(p);
-    if (p[0] != '\0' && p[0] != '#') {
-      if (cfg_parse_section_line(p, &sec)) {
-        if (sec != 0 && !c.have_fmt) {
-          free(buf);
-          return false;
+    size_t n = f.size();
+    if (n == 0U || n > kSdCfgFileMaxBytes) {
+      f.close();
+      return;
+    }
+    char *buf = (char *)malloc(n + 1U);
+    if (!buf) {
+      f.close();
+      return;
+    }
+    size_t nread = f.read((uint8_t *)buf, n);
+    if (nread != n) {
+      free(buf);
+      f.close();
+      return;
+    }
+    buf[n] = '\0';
+    f.close();
+
+    ParsedSdCfg c;
+    memset(&c, 0, sizeof(c));
+    int sec = 0;
+
+    for (char *p = buf; *p != '\0';) {
+      char *eol = strchr(p, '\n');
+      if (eol) {
+        *eol = '\0';
+      }
+      trim_line(p);
+      if (p[0] != '\0' && p[0] != '#') {
+        if (cfg_parse_section_line(p, &sec)) {
+          if (sec != 0 && !c.have_fmt) {
+            free(buf);
+            return;
+          }
+          p = eol ? (eol + 1) : (p + strlen(p));
+          continue;
         }
-        p = eol ? (eol + 1) : (p + strlen(p));
-        continue;
+        char *eq = strchr(p, '=');
+        if (!eq) {
+          free(buf);
+          return;
+        }
+        *eq = '\0';
+        const char *key = trim_line(p);
+        const char *val = trim_line(eq + 1);
+        if (!cfg_parse_kv(sec, key, val, &c)) {
+          free(buf);
+          return;
+        }
       }
-      char *eq = strchr(p, '=');
-      if (!eq) {
-        free(buf);
-        return false;
-      }
-      *eq = '\0';
-      const char *key = trim_line(p);
-      const char *val = trim_line(eq + 1);
-      if (!cfg_parse_kv(sec, key, val, &c)) {
-        free(buf);
-        return false;
-      }
+      p = eol ? (eol + 1) : (p + strlen(p));
     }
-    p = eol ? (eol + 1) : (p + strlen(p));
-  }
-  free(buf);
+    free(buf);
 
-  if (!c.have_fmt || c.fmt != 1) {
-    return false;
-  }
-  cfg_apply_parsed(&c);
-  return true;
+    if (!c.have_fmt || c.fmt != 1) {
+      return;
+    }
+    cfg_apply_parsed(&c);
+    ok = true;
+  });
+  return ok;
 }
 
 void app_settings_sync_config_file_to_sd(void) {
   if (!sd_card_available()) {
     return;
   }
-  File f = SD.open(kAppSettingsSdConfigPath, FILE_WRITE);
-  if (!f) {
-    return;
-  }
-  f.print("# FitaDigital fdigi.cfg (formato=1). Espelho da NVS; linhas com # sao comentarios.\n");
-  f.print("format=1\n\n");
-  f.print("[wifi]\n");
-  f.printf("wifi_ok=%d\n", app_settings_wifi_configured() ? 1 : 0);
-  f.print("ssid=");
-  f.print(app_settings_wifi_ssid().c_str());
-  f.print("\npass=");
-  f.print(app_settings_wifi_pass().c_str());
-  f.print("\n\n[ui]\n");
-  f.printf("font_i=%u\n\n", (unsigned)app_settings_font_index());
-  f.print("[ftp]\nftp_u=");
-  f.print(app_settings_ftp_user().c_str());
-  f.print("\nftp_p=");
-  f.print(app_settings_ftp_pass().c_str());
-  f.print("\n\n[time]\n");
-  f.printf("ntp_on=%d\n", app_settings_ntp_enabled() ? 1 : 0);
-  f.print("ntp_srv=");
-  f.print(app_settings_ntp_server().c_str());
-  f.printf("\ntz_sec=%ld\n\n", (long)app_settings_tz_offset_sec());
-  f.print("[wireguard]\n");
-  f.printf("wg_on=%d\n", app_settings_wireguard_enabled() ? 1 : 0);
-  f.print("wg_ip=");
-  f.print(app_settings_wg_local_ip().c_str());
-  f.print("\nwg_pk=");
-  f.print(app_settings_wg_private_key().c_str());
-  f.print("\nwg_pub=");
-  f.print(app_settings_wg_peer_public_key().c_str());
-  f.print("\nwg_ep=");
-  f.print(app_settings_wg_endpoint().c_str());
-  f.printf("\nwg_pt=%u\n\n", (unsigned)app_settings_wg_port());
-  f.print("[vnc]\n");
-  f.printf("scale=%u\n", (unsigned)app_settings_vnc_scale());
-  f.printf("jpeg_q=%u\n", (unsigned)app_settings_vnc_jpeg_quality());
-  f.printf("interval_ms=%u\n", (unsigned)app_settings_vnc_interval_ms());
-  f.close();
+  sd_access_sync([&] {
+    File f = SD.open(kAppSettingsSdConfigPath, FILE_WRITE);
+    if (!f) {
+      return;
+    }
+    f.print("# FitaDigital fdigi.cfg (formato=1). Espelho da NVS; linhas com # sao comentarios.\n");
+    f.print("format=1\n\n");
+    f.print("[wifi]\n");
+    f.printf("wifi_ok=%d\n", app_settings_wifi_configured() ? 1 : 0);
+    f.print("ssid=");
+    f.print(app_settings_wifi_ssid().c_str());
+    f.print("\npass=");
+    f.print(app_settings_wifi_pass().c_str());
+    f.print("\n\n[ui]\n");
+    f.printf("font_i=%u\n\n", (unsigned)app_settings_font_index());
+    f.print("[ftp]\nftp_u=");
+    f.print(app_settings_ftp_user().c_str());
+    f.print("\nftp_p=");
+    f.print(app_settings_ftp_pass().c_str());
+    f.print("\n\n[time]\n");
+    f.printf("ntp_on=%d\n", app_settings_ntp_enabled() ? 1 : 0);
+    f.print("ntp_srv=");
+    f.print(app_settings_ntp_server().c_str());
+    f.printf("\ntz_sec=%ld\n\n", (long)app_settings_tz_offset_sec());
+    f.print("[wireguard]\n");
+    f.printf("wg_on=%d\n", app_settings_wireguard_enabled() ? 1 : 0);
+    f.print("wg_ip=");
+    f.print(app_settings_wg_local_ip().c_str());
+    f.print("\nwg_pk=");
+    f.print(app_settings_wg_private_key().c_str());
+    f.print("\nwg_pub=");
+    f.print(app_settings_wg_peer_public_key().c_str());
+    f.print("\nwg_ep=");
+    f.print(app_settings_wg_endpoint().c_str());
+    f.printf("\nwg_pt=%u\n\n", (unsigned)app_settings_wg_port());
+    f.close();
+  });
 }
 
 const char *app_settings_ntp_server_default(void) {
@@ -720,62 +665,5 @@ void app_settings_set_wg_port(uint16_t port) {
     port = 51820;
   }
   s_prefs.putUInt("wg_pt", port);
-  app_settings_sync_config_file_to_sd();
-}
-
-uint8_t app_settings_vnc_scale(void) {
-  uint8_t s = s_prefs.getUChar("vnc_sc", kVncScaleDef);
-  if (s < kVncScaleMin || s > kVncScaleMax) {
-    s = kVncScaleDef;
-  }
-  return s;
-}
-
-void app_settings_set_vnc_scale(uint8_t scale) {
-  if (scale < kVncScaleMin) {
-    scale = kVncScaleMin;
-  }
-  if (scale > kVncScaleMax) {
-    scale = kVncScaleMax;
-  }
-  s_prefs.putUChar("vnc_sc", scale);
-  app_settings_sync_config_file_to_sd();
-}
-
-uint8_t app_settings_vnc_jpeg_quality(void) {
-  uint8_t q = s_prefs.getUChar("vnc_q", kVncQualityDef);
-  if (q < kVncQualityMin || q > kVncQualityMax) {
-    q = kVncQualityDef;
-  }
-  return q;
-}
-
-void app_settings_set_vnc_jpeg_quality(uint8_t quality) {
-  if (quality < kVncQualityMin) {
-    quality = kVncQualityMin;
-  }
-  if (quality > kVncQualityMax) {
-    quality = kVncQualityMax;
-  }
-  s_prefs.putUChar("vnc_q", quality);
-  app_settings_sync_config_file_to_sd();
-}
-
-uint16_t app_settings_vnc_interval_ms(void) {
-  uint32_t ms = s_prefs.getUInt("vnc_ms", kVncIntervalDef);
-  if (ms < kVncIntervalMin || ms > kVncIntervalMax) {
-    ms = kVncIntervalDef;
-  }
-  return (uint16_t)ms;
-}
-
-void app_settings_set_vnc_interval_ms(uint16_t interval_ms) {
-  if (interval_ms < kVncIntervalMin) {
-    interval_ms = kVncIntervalMin;
-  }
-  if (interval_ms > kVncIntervalMax) {
-    interval_ms = kVncIntervalMax;
-  }
-  s_prefs.putUInt("vnc_ms", interval_ms);
   app_settings_sync_config_file_to_sd();
 }

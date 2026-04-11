@@ -19,9 +19,13 @@
 
 #include <WiFi.h>
 
+#include <esp_wifi.h>
+
 #include <FtpServer.h>
 
 #include <string.h>
+
+#include "sd_access.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -61,15 +65,33 @@ static char s_ftp_pass_buf[16];
  */
 static constexpr uint32_t kFtpStopWifiDownHysteresisMs = 30000U;
 
+static void net_wifi_register_events(void);
+
 void net_wifi_begin(const char *ssid, const char *pass) {
 
+  /* Eventos antes de begin: a primeira ligacao STA pode ocorrer antes de net_services_start_background_task(). */
+  net_wifi_register_events();
+
+  /* Antes de WiFi.mode/begin — nome no router e pedidos DHCP (doc Arduino ESP32 Wi-Fi API). */
+  WiFi.setHostname("fitadigital");
+
   WiFi.mode(WIFI_STA);
-  /* Mantem o Wi-Fi sem power save para reduzir latencia. */
+
+  /* Mantem o Wi-Fi sem power save: latencia e menos quedas de TCP/HTTP intermitentes. */
   WiFi.setSleep(false);
+  (void)esp_wifi_set_ps(WIFI_PS_NONE);
 
-  WiFi.disconnect(true, false);
+  WiFi.setAutoReconnect(true);
 
-  delay(100);
+  /*
+   * disconnect(true) desliga a interface STA de forma assincrona (transicao para STOP).
+   * WiFi.begin() imediato pode coincidir com esse estado e falhar com
+   * ESP_ERR_WIFI_STOP_STATE (12308): "netstack cb reg failed".
+   * So' desassociar da rede (false): o radio mantem-se pronto para o novo begin().
+   */
+  WiFi.disconnect(false /* wifioff */, false /* enableAP */);
+
+  delay(150);
 
   WiFi.begin(ssid, pass);
 
@@ -142,6 +164,17 @@ static void ftp_try_start(void) {
 
   s_ftp.begin(s_ftp_user_buf, s_ftp_pass_buf, "FitaDigital SD FTP");
 
+  s_ftp.setCallback([](FtpOperation op, unsigned int, unsigned int) {
+    if (op == FTP_FREE_SPACE_CHANGE) {
+      sd_access_notify_changed();
+    }
+  });
+  s_ftp.setTransferCallback([](FtpTransferOperation op, const char *, unsigned int) {
+    if (op == FTP_TRANSFER_STOP || op == FTP_UPLOAD_STOP) {
+      sd_access_notify_changed();
+    }
+  });
+
   s_ftp_running = true;
   s_ftp_last_card_type = card_type;
   app_log_feature_writef("INFO", "FTP", "Servidor iniciado em ftp://%s/ (user=%s)",
@@ -164,6 +197,24 @@ static void ftp_stop(void) {
 
   s_ftp_running = false;
   app_log_feature_write("INFO", "FTP", "Servidor parado.");
+
+}
+
+void net_services_sd_worker_tick(void) {
+
+  if (WiFi.status() != WL_CONNECTED || s_ftp_suspended) {
+
+    return;
+
+  }
+
+  ftp_try_start();
+
+  if (s_ftp_running) {
+
+    s_ftp.handleFTP();
+
+  }
 
 }
 
@@ -220,7 +271,7 @@ void net_services_loop(void) {
 
     if (down_ms >= kFtpStopWifiDownHysteresisMs) {
 
-      ftp_stop();
+      sd_access_sync([] { ftp_stop(); });
 
     }
 
@@ -242,15 +293,9 @@ void net_services_loop(void) {
 
   if (s_ftp_suspended) {
     if (s_ftp_running) {
-      ftp_stop();
+      sd_access_sync([] { ftp_stop(); });
     }
     return;
-  }
-
-  ftp_try_start();
-
-  if (s_ftp_running) {
-    s_ftp.handleFTP();
   }
 
 }
@@ -259,14 +304,14 @@ void net_services_loop(void) {
 
 void net_services_ftp_restart(void) {
 
-  ftp_stop();
+  sd_access_sync([] { ftp_stop(); });
 
 }
 
 void net_services_set_ftp_suspended(bool suspended) {
   s_ftp_suspended = suspended;
   if (s_ftp_suspended) {
-    ftp_stop();
+    sd_access_sync([] { ftp_stop(); });
   }
 }
 
@@ -284,6 +329,33 @@ static constexpr BaseType_t kNetTaskCore = (BaseType_t)ARDUINO_RUNNING_CORE;
 
 static TaskHandle_t s_net_task_handle = nullptr;
 
+static bool s_wifi_event_registered = false;
+
+/** Uma vez por boot: mantem referencia extra ao radio (RF activo); ver esp_wifi_force_wakeup_acquire no IDF. */
+static bool s_wifi_force_wakeup_acquired = false;
+
+/** Regista uma vez: motivo de desligacao STA; forca radio activo (equipamento em rede continua). */
+static void net_wifi_register_events(void)
+{
+  if (s_wifi_event_registered) {
+    return;
+  }
+  s_wifi_event_registered = true;
+  WiFi.onEvent([](arduino_event_id_t event, arduino_event_info_t info) {
+    if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
+      if (!s_wifi_force_wakeup_acquired) {
+        /* IDF: Wi-Fi keep active state (RF opened). Complementa WIFI_PS_NONE para nao adormecer o modem. */
+        if (esp_wifi_force_wakeup_acquire() == ESP_OK) {
+          s_wifi_force_wakeup_acquired = true;
+        }
+      }
+    } else if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+      Serial.printf("[WIFI] STA desligado reason=%d (ver wifi_err_reason_t no IDF)\n",
+                    (int)info.wifi_sta_disconnected.reason);
+    }
+  });
+}
+
 static void net_services_task(void * /*arg*/) {
   for (;;) {
     net_services_loop();
@@ -295,6 +367,7 @@ void net_services_start_background_task(void) {
   if (s_net_task_handle != nullptr) {
     return;
   }
+  net_wifi_register_events();
   Serial.printf("[NET] Tarefa net_svc no core %d (igual ao Arduino/LVGL; WiFi so' neste core)\n",
                 (int)kNetTaskCore);
   const BaseType_t ok =

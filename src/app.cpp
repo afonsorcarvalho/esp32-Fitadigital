@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
 
 #include "lvgl_port_v8.h"
 #include "app_settings.h"
@@ -27,15 +28,12 @@
 #include "SD.h"
 #include "app_log.h"
 #include "net_services.h"
+#include "sd_access.h"
 #include "net_time.h"
 #include "ui_feedback.h"
 #include "ui/boot_screen.h"
 #include "ui/ui_app.h"
-#if USE_LVGL_REMOTE_SERVER
-#include "lvgl_remote_server/lvgl_remote_server.h"
-#else
-#include "web_remote/web_remote.h"
-#endif
+#include "web_portal/web_portal.h"
 
 /** SPI dedicado ao TF (pinos em `board_pins.h`, documentação Waveshare). */
 static SPIClass s_sd_spi;
@@ -160,6 +158,8 @@ void setup() {
   const char *title = "FitaDigital UI — LCD 4.3B";
 
   Serial.begin(115200);
+  /* Equipamento em rede eletrica continua: prioridade a desempenho; PM/tickless no sdkconfig; Wi-Fi sem PS em net_services. */
+  Serial.printf("[SYS] CPU %u MHz\n", (unsigned)getCpuFrequencyMhz());
   Serial.println(String(title) + " start");
   app_settings_init();
   (void)boot_journal_init();
@@ -190,14 +190,13 @@ void setup() {
     if (sd_ok) {
       app_log_init();
       app_log_write("INFO", "Sistema iniciado; SD montado.");
-      const bool copied = boot_journal_copy_to_sd();
-      boot_log_step(BOOT_STEP_SD, copied ? "INFO" : "WARN", "copia boot.log p/ SD %s",
-                    copied ? "OK" : "adiada");
     } else {
       boot_log_step(BOOT_STEP_SD, "ERROR", "falha apos 3 tentativas");
     }
   }
-  boot_journal_start_sd_mirror_task();
+  /** A partir daqui, todo o I/O SD em segundo plano passa pela fila sd_io (FTP incluido). */
+  sd_access_set_mounted(sd_ok);
+  sd_access_start_task();
 
   if (rtc_probe_with_retries(3U)) {
     net_time_bootstrap_from_rtc_early();
@@ -249,18 +248,28 @@ void setup() {
   boot_log_step(BOOT_STEP_WIREGUARD, wg_cfg ? "INFO" : "WARN", "%s",
                 wg_cfg ? "ativo por configuracao" : "desativado");
 
-#if USE_LVGL_REMOTE_SERVER
-  boot_log_step(BOOT_STEP_WEB_REMOTE, "INFO", "%s",
-                "LVGL Remote UDP (viewer Windows); HTTP/WebSocket remoto desativado");
-#else
-  const bool web_remote_cfg = true;  // Sem flag dedicada; habilitado por predefinicao.
-  boot_log_step(BOOT_STEP_WEB_REMOTE, web_remote_cfg ? "INFO" : "WARN", "%s",
-                web_remote_cfg ? "ativo por configuracao" : "desativado");
-#endif
+  boot_log_step(BOOT_STEP_WEB_PORTAL, "INFO", "%s",
+                "portal HTTP (config, logs, ficheiros SD) na porta 80");
 
   boot_log_plain("INFO", "Boot concluido. A carregar interface principal...");
   boot_screen_set_footer("A carregar interface principal...");
   delay(300);
+
+  /** Um único flush SPIFFS após toda a fase de boot em RAM (ver boot_journal_flush_to_spiffs). */
+  (void)boot_journal_flush_to_spiffs();
+  if (sd_ok) {
+    const bool copied = boot_journal_copy_to_sd();
+    Serial.printf("[BOOT][%s] copia boot.log p/ SD %s\n", copied ? "INFO" : "WARN", copied ? "OK" : "adiada");
+    boot_screen_set_step(BOOT_STEP_SD, copied ? "INFO" : "WARN");
+  }
+  /**
+   * Desativado: em runtime o `boot_journal_mirror_task` causou `abort()` dentro de `SPIFFS.open()`:
+   * backtrace mostrou `lock_init_generic` → `fopen` → `VFSFileImpl::VFSFileImpl` → `boot_journal_mirror_task`.
+   *
+   * Como o journal de boot só é escrito durante o `setup()`, a cópia única acima é suficiente e
+   * evita consumo extra de heap interno (stack da task) e ciclos periódicos de I/O.
+   */
+  // boot_journal_start_sd_mirror_task();
 
   /* Fail-safe: nunca sair do setup sem carregar a UI principal.
    * O ecra de boot só pode ser destruído dentro de `ui_app_run` depois de `lv_scr_load`,
@@ -271,19 +280,33 @@ void setup() {
   /* Ceder tempo à tarefa LVGL para o primeiro frame (evita lv_refr_now com mutex + RGB). */
   delay(10);
 
+  web_portal_init();
+  /**
+   * `net_svc` consome heap interno (stack). Se ele iniciar antes do portal, pode impedir o AsyncTCP
+   * de criar a task interna (erro: "AsyncTCP begin(): failed to start task"). Por isso o portal
+   * é inicializado primeiro.
+   */
   net_services_start_background_task();
-#if USE_LVGL_REMOTE_SERVER
-  lvgl_remote_server_init();
-#else
-  if (web_remote_cfg) {
-    web_remote_init();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("[NET] IP=%s mascara=%s gateway=%s\n", WiFi.localIP().toString().c_str(),
+                  WiFi.subnetMask().toString().c_str(), WiFi.gatewayIP().toString().c_str());
+    Serial.printf("[NET] Portal: http://%s/  (mesma rede que este PC; confirme o IP no monitor)\n",
+                  WiFi.localIP().toString().c_str());
+    if (MDNS.begin("fitadigital")) {
+      MDNS.addService("http", "tcp", 80);
+      Serial.println("[NET] mDNS: http://fitadigital.local/ (se o SO resolver .local)");
+    } else {
+      Serial.println("[NET] mDNS indisponivel; use o IP acima.");
+    }
+  } else {
+    Serial.println("[NET] Wi-Fi STA sem ligacao — portal HTTP so' responde apos configurar Wi-Fi no ecra ou por cabo.");
   }
-#endif
 
   Serial.println(String(title) + " end");
 }
 
 void loop() {
-  /** Rede e FTP correm na tarefa FreeRTOS net_svc (outro core em dual-core). */
+  /** Rede: net_svc; FTP e acesso SD: tarefa sd_io (fila unica). */
   vTaskDelay(portMAX_DELAY);
 }

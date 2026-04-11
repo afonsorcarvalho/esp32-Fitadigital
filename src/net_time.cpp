@@ -6,6 +6,7 @@
 #include "app_log.h"
 #include "app_settings.h"
 #include "fs/fs_time_fix.h"
+#include "sd_access.h"
 #include <Arduino.h>
 #include <SD.h>
 #include <WiFi.h>
@@ -319,32 +320,34 @@ void net_time_loop(void) {
   const uint32_t now = millis();
   if (now - s_last_resync_ms < 3600000U) {
     if (!s_sd_time_fix_done && !s_rtc_sd_sync_blocked && net_time_is_valid()) {
-      const uint8_t card_type = SD.cardType();
-      if (card_type != CARD_NONE) {
-      time_t rtc_ts = 0;
-      if (rtc_get_epoch_utc_internal(&rtc_ts)) {
-        const uint32_t touched = fs_time_fix_touch_all("/sd", rtc_ts);
-        app_log_feature_writef("INFO", "RTC", "Datas do SD sincronizadas pelo RTC: %lu entradas.",
-                               (unsigned long)touched);
-        s_sd_time_fix_done = true;
-        s_rtc_sd_sync_attempts = 0;
-      } else {
-        if (s_rtc_sd_sync_attempts < 255U) {
-          s_rtc_sd_sync_attempts++;
+      sd_access_sync([&] {
+        if (SD.cardType() == CARD_NONE) {
+          return;
         }
-        if (s_rtc_sd_sync_attempts >= kRtcSdSyncMaxAttempts) {
-          s_rtc_sd_sync_blocked = true;
-          app_log_feature_writef("ERROR", "RTC",
-                                 "Sincronizacao RTC->SD desativada apos %u falhas consecutivas.",
-                                 (unsigned)kRtcSdSyncMaxAttempts);
+        time_t rtc_ts = 0;
+        if (rtc_get_epoch_utc_internal(&rtc_ts)) {
+          const uint32_t touched = fs_time_fix_touch_all("/sd", rtc_ts);
+          app_log_feature_writef("INFO", "RTC", "Datas do SD sincronizadas pelo RTC: %lu entradas.",
+                                 (unsigned long)touched);
+          s_sd_time_fix_done = true;
+          s_rtc_sd_sync_attempts = 0;
         } else {
-          app_log_feature_writef("WARN", "RTC",
-                                 "RTC indisponivel para sincronizar datas do SD (tentativa %u/%u).",
-                                 (unsigned)s_rtc_sd_sync_attempts,
-                                 (unsigned)kRtcSdSyncMaxAttempts);
+          if (s_rtc_sd_sync_attempts < 255U) {
+            s_rtc_sd_sync_attempts++;
+          }
+          if (s_rtc_sd_sync_attempts >= kRtcSdSyncMaxAttempts) {
+            s_rtc_sd_sync_blocked = true;
+            app_log_feature_writef("ERROR", "RTC",
+                                   "Sincronizacao RTC->SD desativada apos %u falhas consecutivas.",
+                                   (unsigned)kRtcSdSyncMaxAttempts);
+          } else {
+            app_log_feature_writef("WARN", "RTC",
+                                   "RTC indisponivel para sincronizar datas do SD (tentativa %u/%u).",
+                                   (unsigned)s_rtc_sd_sync_attempts,
+                                   (unsigned)kRtcSdSyncMaxAttempts);
+          }
         }
-      }
-      }
+      });
     }
     return;
   }

@@ -49,7 +49,8 @@
  */
 #define LVGL_PORT_TASK_MAX_DELAY_MS             (500)       // The maximum delay of the LVGL timer task, in milliseconds
 #define LVGL_PORT_TASK_MIN_DELAY_MS             (2)         // The minimum delay of the LVGL timer task, in milliseconds
-#define LVGL_PORT_TASK_STACK_SIZE               (6 * 1024)  // The stack size of the LVGL timer task, in bytes
+/** 8 KiB: suficiente para draw SW + gradientes em 800x480 (LVGL 8.3); alocação LVGL agora em PSRAM. */
+#define LVGL_PORT_TASK_STACK_SIZE               (8 * 1024)  // The stack size of the LVGL timer task, in bytes
 #define LVGL_PORT_TASK_PRIORITY                 (2)         // The priority of the LVGL timer task
 #define LVGL_PORT_TASK_CORE                     (ARDUINO_RUNNING_CORE)
                                                             // The core of the LVGL timer task, `-1` means the don't specify the core

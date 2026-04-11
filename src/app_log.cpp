@@ -1,5 +1,7 @@
 #include "app_log.h"
 
+#include "sd_access.h"
+
 #include <Arduino.h>
 #include <SD.h>
 
@@ -19,8 +21,11 @@ static const size_t kCopyBufSize = 1024U;
 
 static SemaphoreHandle_t s_log_mutex = nullptr;
 
+static void (*s_line_notify)(const char *line, void *user) = nullptr;
+static void *s_line_notify_user = nullptr;
+
 static bool sd_ready(void) {
-  return SD.cardType() != CARD_NONE;
+  return sd_access_is_mounted();
 }
 
 static void lock_log(void) {
@@ -106,11 +111,23 @@ void app_log_init(void) {
     return;
   }
   lock_log();
-  File f = SD.open(kLogPath, FILE_APPEND);
-  if (f) {
-    f.close();
-  }
+  sd_access_sync([&] {
+    File f = SD.open(kLogPath, FILE_APPEND);
+    if (f) {
+      f.close();
+    }
+  });
   unlock_log();
+}
+
+void app_log_set_line_notify(void (*fn)(const char *line, void *user), void *user) {
+  s_line_notify = fn;
+  s_line_notify_user = user;
+}
+
+void app_log_clear_line_notify(void) {
+  s_line_notify = nullptr;
+  s_line_notify_user = nullptr;
 }
 
 void app_log_write(const char *level, const char *message) {
@@ -121,14 +138,23 @@ void app_log_write(const char *level, const char *message) {
   format_ts(ts, sizeof(ts));
   const char *lvl = (level != nullptr && level[0] != '\0') ? level : "INFO";
 
+  char line_notify[384];
+  snprintf(line_notify, sizeof(line_notify), "%s | %s | %s", ts, lvl, message);
+
   lock_log();
-  File f = SD.open(kLogPath, FILE_APPEND);
-  if (f) {
-    f.printf("%s | %s | %s\n", ts, lvl, message);
-    f.close();
-    (void)rotate_if_needed_locked();
-  }
+  sd_access_sync([&] {
+    File f = SD.open(kLogPath, FILE_APPEND);
+    if (f) {
+      f.printf("%s | %s | %s\n", ts, lvl, message);
+      f.close();
+      (void)rotate_if_needed_locked();
+    }
+  });
   unlock_log();
+
+  if (s_line_notify != nullptr) {
+    s_line_notify(line_notify, s_line_notify_user);
+  }
 }
 
 void app_log_writef(const char *level, const char *fmt, ...) {
@@ -181,39 +207,42 @@ bool app_log_read_tail(char *buf, size_t buf_size, size_t *out_file_size, bool *
   }
 
   lock_log();
-  File f = SD.open(kLogPath, FILE_READ);
-  if (!f) {
-    unlock_log();
-    return false;
-  }
-
-  const size_t total = f.size();
-  if (out_file_size != nullptr) {
-    *out_file_size = total;
-  }
-  const size_t room = buf_size - 1U;
-  size_t start = 0U;
-  bool truncated = false;
-  if (total > room) {
-    start = total - room;
-    truncated = true;
-  }
-  f.seek(start);
-  size_t n = f.read((uint8_t *)buf, room);
-  buf[n] = '\0';
-  f.close();
-
-  if (truncated && start > 0U) {
-    char *nl = strchr(buf, '\n');
-    if (nl != nullptr && nl[1] != '\0') {
-      memmove(buf, nl + 1, strlen(nl + 1U) + 1U);
+  bool ok = false;
+  sd_access_sync([&] {
+    File f = SD.open(kLogPath, FILE_READ);
+    if (!f) {
+      return;
     }
-  }
-  if (out_truncated != nullptr) {
-    *out_truncated = truncated;
-  }
+
+    const size_t total = f.size();
+    if (out_file_size != nullptr) {
+      *out_file_size = total;
+    }
+    const size_t room = buf_size - 1U;
+    size_t start = 0U;
+    bool truncated = false;
+    if (total > room) {
+      start = total - room;
+      truncated = true;
+    }
+    f.seek(start);
+    size_t n = f.read((uint8_t *)buf, room);
+    buf[n] = '\0';
+    f.close();
+
+    if (truncated && start > 0U) {
+      char *nl = strchr(buf, '\n');
+      if (nl != nullptr && nl[1] != '\0') {
+        memmove(buf, nl + 1, strlen(nl + 1U) + 1U);
+      }
+    }
+    if (out_truncated != nullptr) {
+      *out_truncated = truncated;
+    }
+    ok = true;
+  });
   unlock_log();
-  return true;
+  return ok;
 }
 
 bool app_log_clear(void) {
@@ -221,12 +250,15 @@ bool app_log_clear(void) {
     return false;
   }
   lock_log();
-  SD.remove(kLogPath);
-  File f = SD.open(kLogPath, FILE_WRITE);
-  const bool ok = (bool)f;
-  if (f) {
-    f.close();
-  }
+  bool ok = false;
+  sd_access_sync([&] {
+    SD.remove(kLogPath);
+    File f = SD.open(kLogPath, FILE_WRITE);
+    ok = (bool)f;
+    if (f) {
+      f.close();
+    }
+  });
   unlock_log();
   return ok;
 }

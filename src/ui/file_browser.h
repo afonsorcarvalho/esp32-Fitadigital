@@ -13,8 +13,14 @@
  */
 bool file_browser_init(lv_obj_t *parent);
 
-/** Atualiza a listagem do diretorio atual. */
+/** Atualiza a listagem do diretorio atual (com overlay "A carregar..."). */
 void file_browser_refresh(void);
+
+/** Atualiza a listagem sem mostrar overlay (para auto-refresh em segundo plano). */
+void file_browser_refresh_silent(void);
+
+/** Timestamp (millis) da ultima vez que a lista de ficheiros foi desenhada na UI. */
+uint32_t file_browser_last_refresh_ms(void);
 
 /** Aplica fonte a todos os widgets do explorador (apos mudar tamanho nas definicoes). */
 void file_browser_apply_font(const lv_font_t *font);

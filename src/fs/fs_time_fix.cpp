@@ -13,6 +13,13 @@ static bool is_dot_name(const char *name) {
   return (strcmp(name, ".") == 0) || (strcmp(name, "..") == 0);
 }
 
+/*
+ * Limiar: ficheiros com mtime >= kValidEpoch ja' tinham hora valida quando
+ * foram escritos — nao devem ser tocados para preservar o timestamp real.
+ * 2020-01-01 00:00:00 UTC.
+ */
+static constexpr time_t kValidEpoch = (time_t)1577836800;
+
 static uint32_t touch_tree_recursive(const char *path, const struct utimbuf *tb) {
   uint32_t touched = 0;
 
@@ -40,11 +47,11 @@ static uint32_t touch_tree_recursive(const char *path, const struct utimbuf *tb)
 
     if (S_ISDIR(st.st_mode)) {
       touched += touch_tree_recursive(child, tb);
-      if (utime(child, tb) == 0) {
+      if (st.st_mtime < kValidEpoch && utime(child, tb) == 0) {
         touched++;
       }
     } else if (S_ISREG(st.st_mode)) {
-      if (utime(child, tb) == 0) {
+      if (st.st_mtime < kValidEpoch && utime(child, tb) == 0) {
         touched++;
       }
     }
@@ -70,8 +77,12 @@ uint32_t fs_time_fix_touch_all(const char *root_path, time_t epoch_ts) {
   tb.modtime = epoch_ts;
 
   uint32_t touched = touch_tree_recursive(root_path, &tb);
-  if (utime(root_path, &tb) == 0) {
-    touched++;
+
+  struct stat root_st = {};
+  if (stat(root_path, &root_st) == 0 && root_st.st_mtime < kValidEpoch) {
+    if (utime(root_path, &tb) == 0) {
+      touched++;
+    }
   }
   return touched;
 }

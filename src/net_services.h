@@ -27,3 +27,10 @@ void net_services_ftp_restart(void);
  * Util para operacoes exclusivas no SD (ex.: formatacao).
  */
 void net_services_set_ftp_suspended(bool suspended);
+
+/**
+ * Ciclo FTP (SimpleFTPServer) + sondagem SD para iniciar FTP.
+ * Deve ser chamado apenas pela tarefa sd_io (sd_access.cpp) para evitar
+ * concorrencia com outros acessos ao SD.
+ */
+void net_services_sd_worker_tick(void);

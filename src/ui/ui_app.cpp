@@ -1,6 +1,6 @@
 /**
  * @file ui_app.cpp
- * @brief Ecra Wi-Fi (primeiro), principal com barra (Wi-Fi + forca aproximada, data/hora), definicoes, explorador SD.
+ * @brief Ecra Wi-Fi (primeiro), principal com barra, definicoes, explorador SD; portal HTTP no browser para configuracao.
  */
 #include "ui_app.h"
 #include <Arduino.h>
@@ -18,12 +18,10 @@
 #include "file_browser.h"
 #include "lvgl_port_v8.h"
 #include "net_services.h"
+#include "sd_access.h"
 #include "net_time.h"
 #include "net_wireguard.h"
 #include "ui/ui_loading.h"
-#if !USE_LVGL_REMOTE_SERVER
-#include "web_remote/web_remote.h"
-#endif
 
 static constexpr int kStatusBarH = 46;
 
@@ -71,13 +69,8 @@ static lv_obj_t *s_ta_wg_ep = nullptr;
 static lv_obj_t *s_ta_wg_port = nullptr;
 static lv_obj_t *s_wg_feedback_lbl = nullptr;
 static lv_obj_t *s_sett_wg_kb = nullptr;
-static lv_obj_t *s_vnc_scale_slider = nullptr;
-static lv_obj_t *s_vnc_quality_slider = nullptr;
-static lv_obj_t *s_vnc_interval_slider = nullptr;
-static lv_obj_t *s_vnc_scale_val_lbl = nullptr;
-static lv_obj_t *s_vnc_quality_val_lbl = nullptr;
-static lv_obj_t *s_vnc_interval_val_lbl = nullptr;
-static lv_obj_t *s_vnc_feedback_lbl = nullptr;
+/** Texto com URL do portal HTTP (porta 80) na aba Portal. */
+static lv_obj_t *s_portal_info_lbl = nullptr;
 static lv_obj_t *s_log_textarea = nullptr;
 static lv_obj_t *s_log_info_lbl = nullptr;
 static lv_obj_t *s_sd_format_status_lbl = nullptr;
@@ -94,6 +87,7 @@ static void settings_hide_ftp_keyboard(void);
 static void settings_hide_time_keyboard(void);
 static void settings_hide_wg_keyboard(void);
 static void settings_sd_format_status_refresh(const char *msg_override);
+static void settings_portal_info_refresh(void);
 
 typedef struct {
   int tries;
@@ -195,6 +189,14 @@ static void status_timer_cb(lv_timer_t *t) {
     }
     if (s_sett_ftp_info_lbl != nullptr) {
       refresh_settings_ftp_label();
+    }
+    settings_portal_info_refresh();
+  }
+  if (s_scr_main != nullptr && lv_disp_get_scr_act(nullptr) == s_scr_main) {
+    const uint32_t sd_mod = sd_access_last_modified_ms();
+    const uint32_t ui_ref = file_browser_last_refresh_ms();
+    if (sd_mod != 0 && (ui_ref == 0 || (int32_t)(sd_mod - ui_ref) > 0)) {
+      file_browser_refresh_silent();
     }
   }
 }
@@ -342,57 +344,23 @@ static void settings_font_slider_cb(lv_event_t *e) {
   ui_apply_font_everywhere();
 }
 
-static void settings_vnc_refresh_value_labels(void) {
-  if (s_vnc_scale_val_lbl != nullptr && s_vnc_scale_slider != nullptr) {
-    char b[24];
-    snprintf(b, sizeof b, "%dx", (int)lv_slider_get_value(s_vnc_scale_slider));
-    lv_label_set_text(s_vnc_scale_val_lbl, b);
-  }
-  if (s_vnc_quality_val_lbl != nullptr && s_vnc_quality_slider != nullptr) {
-    char b[24];
-    snprintf(b, sizeof b, "%d", (int)lv_slider_get_value(s_vnc_quality_slider));
-    lv_label_set_text(s_vnc_quality_val_lbl, b);
-  }
-  if (s_vnc_interval_val_lbl != nullptr && s_vnc_interval_slider != nullptr) {
-    char b[24];
-    snprintf(b, sizeof b, "%d ms", (int)lv_slider_get_value(s_vnc_interval_slider));
-    lv_label_set_text(s_vnc_interval_val_lbl, b);
-  }
-}
-
-static void settings_vnc_slider_changed_cb(lv_event_t *e) {
-  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) {
+/** Actualiza o texto da aba Portal com o IP actual (chamar ao entrar em definicoes e no timer da barra). */
+static void settings_portal_info_refresh(void) {
+  if (s_portal_info_lbl == nullptr) {
     return;
   }
-  settings_vnc_refresh_value_labels();
-}
-
-static void settings_save_vnc_cb(lv_event_t *e) {
-  (void)e;
-  if (s_vnc_scale_slider == nullptr || s_vnc_quality_slider == nullptr || s_vnc_interval_slider == nullptr) {
-    return;
+  if (WiFi.status() == WL_CONNECTED) {
+    char buf[192];
+    snprintf(buf, sizeof buf,
+             "Portal HTTP (porta 80):\n\nhttp://%s/\n\n"
+             "Definicoes, console de logs e explorador de arquivos do cartao SD no browser.",
+             WiFi.localIP().toString().c_str());
+    lv_label_set_text(s_portal_info_lbl, buf);
+  } else {
+    lv_label_set_text(s_portal_info_lbl,
+                      "Ligue o Wi-Fi para abrir o portal no browser (porta 80).\n\n"
+                      "La pode configurar o equipamento, ver logs e arquivos do cartao.");
   }
-  const uint8_t scale = (uint8_t)lv_slider_get_value(s_vnc_scale_slider);
-  const uint8_t quality = (uint8_t)lv_slider_get_value(s_vnc_quality_slider);
-  const uint16_t interval_ms = (uint16_t)lv_slider_get_value(s_vnc_interval_slider);
-
-  app_settings_set_vnc_scale(scale);
-  app_settings_set_vnc_jpeg_quality(quality);
-  app_settings_set_vnc_interval_ms(interval_ms);
-
-#if !USE_LVGL_REMOTE_SERVER
-  web_remote_stream_cfg_t cfg;
-  cfg.scale = scale;
-  cfg.jpeg_quality = quality;
-  cfg.interval_ms = interval_ms;
-  web_remote_set_stream_config(&cfg);
-#endif
-
-  if (s_vnc_feedback_lbl != nullptr) {
-    lv_label_set_text(s_vnc_feedback_lbl, "Guardado e aplicado no stream remoto.");
-  }
-  app_log_writef("INFO", "VNC atualizado: scale=%u quality=%u interval=%u", (unsigned)scale, (unsigned)quality,
-                 (unsigned)interval_ms);
 }
 
 static void settings_log_refresh_view(void) {
@@ -446,7 +414,7 @@ static void settings_sd_format_status_refresh(const char *msg_override) {
     lv_label_set_text(s_sd_format_status_lbl, msg_override);
     return;
   }
-  if (SD.cardType() == CARD_NONE) {
+  if (!sd_access_is_mounted()) {
     lv_label_set_text(s_sd_format_status_lbl, "Sem cartao SD montado. Insira um cartao FAT32/MBR.");
     return;
   }
@@ -475,19 +443,25 @@ static void settings_sd_format_exec_cb(lv_event_t *e) {
     settings_sd_format_status_refresh("Arme a confirmacao antes de executar.");
     return;
   }
-  if (SD.cardType() == CARD_NONE) {
+  if (!sd_access_is_mounted()) {
     settings_sd_format_status_refresh("Sem cartao SD montado.");
     return;
   }
 
   ui_loading_show(s_scr_settings, "A formatar cartao SD...");
   ui_loading_flush_display();
-  net_services_set_ftp_suspended(true);
 
-  const bool ok = SD.formatFAT();
+  bool ok = false;
+  sd_access_sync([&] {
+    net_services_set_ftp_suspended(true);
+    ok = SD.formatFAT();
+    if (ok) {
+      app_settings_sync_config_file_to_sd();
+    }
+    net_services_set_ftp_suspended(false);
+  });
 
   if (ok) {
-    app_settings_sync_config_file_to_sd();
     ensure_main_content_browser();
     settings_log_refresh_view();
     settings_sd_format_status_refresh("Formatacao concluida com sucesso.");
@@ -495,8 +469,6 @@ static void settings_sd_format_exec_cb(lv_event_t *e) {
   } else {
     settings_sd_format_status_refresh("Falha na formatacao. Verifique cartao e logs.");
   }
-
-  net_services_set_ftp_suspended(false);
   s_sd_format_armed = false;
   if (s_sd_format_confirm_btn != nullptr) {
     lv_obj_t *lbl = lv_obj_get_child(s_sd_format_confirm_btn, 0);
@@ -537,19 +509,7 @@ static void settings_screen_enter(void) {
   if (s_font_slider != nullptr) {
     lv_slider_set_value(s_font_slider, app_settings_font_index(), LV_ANIM_OFF);
   }
-  if (s_vnc_scale_slider != nullptr) {
-    lv_slider_set_value(s_vnc_scale_slider, app_settings_vnc_scale(), LV_ANIM_OFF);
-  }
-  if (s_vnc_quality_slider != nullptr) {
-    lv_slider_set_value(s_vnc_quality_slider, app_settings_vnc_jpeg_quality(), LV_ANIM_OFF);
-  }
-  if (s_vnc_interval_slider != nullptr) {
-    lv_slider_set_value(s_vnc_interval_slider, app_settings_vnc_interval_ms(), LV_ANIM_OFF);
-  }
-  settings_vnc_refresh_value_labels();
-  if (s_vnc_feedback_lbl != nullptr) {
-    lv_label_set_text(s_vnc_feedback_lbl, "");
-  }
+  settings_portal_info_refresh();
   if (s_sw_ntp != nullptr) {
     if (app_settings_ntp_enabled()) {
       lv_obj_add_state(s_sw_ntp, LV_STATE_CHECKED);
@@ -643,7 +603,7 @@ static void refresh_settings_ftp_label(void) {
     lv_label_set_text(s_sett_ftp_info_lbl, info);
     return;
   }
-  if (SD.cardType() == CARD_NONE) {
+  if (!sd_access_is_mounted()) {
     snprintf(info, sizeof info,
              "E necessario cartao SD montado (FAT32).\n\n"
              "Predefinicao: %s / %s",
@@ -1275,64 +1235,19 @@ static void create_settings_screen(void) {
   lv_obj_add_flag(s_sett_wg_kb, LV_OBJ_FLAG_HIDDEN);
   lv_keyboard_set_textarea(s_sett_wg_kb, nullptr);
 
-  /* --- Aba VNC (Web Remote) --- */
-  lv_obj_t *tab_vnc = lv_tabview_add_tab(tv, LV_SYMBOL_VIDEO " VNC");
-  lv_obj_set_layout(tab_vnc, LV_LAYOUT_FLEX);
-  lv_obj_set_flex_flow(tab_vnc, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(tab_vnc, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_all(tab_vnc, 6, 0);
-  lv_obj_set_style_pad_row(tab_vnc, 8, 0);
+  /* --- Aba Portal (servidor web de configuracao; sem stream de ecra) --- */
+  lv_obj_t *tab_portal = lv_tabview_add_tab(tv, LV_SYMBOL_WIFI " Portal");
+  lv_obj_set_layout(tab_portal, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(tab_portal, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(tab_portal, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_all(tab_portal, 6, 0);
+  lv_obj_set_style_pad_row(tab_portal, 8, 0);
 
-  lv_obj_t *vnc_help = lv_label_create(tab_vnc);
-  lv_label_set_long_mode(vnc_help, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(vnc_help, LV_PCT(100));
-  lv_label_set_text(vnc_help,
-                    "Ajusta o stream remoto via browser.\n"
-                    "Scale maior reduz resolucao/custo. Qualidade menor reduz tamanho.\n"
-                    "Intervalo menor aumenta FPS e uso de CPU/rede.");
-
-  lv_obj_t *ls = lv_label_create(tab_vnc);
-  lv_label_set_text(ls, "Scale (downscale):");
-  s_vnc_scale_slider = lv_slider_create(tab_vnc);
-  lv_obj_set_width(s_vnc_scale_slider, LV_PCT(100));
-  lv_slider_set_range(s_vnc_scale_slider, 1, 8);
-  lv_slider_set_value(s_vnc_scale_slider, app_settings_vnc_scale(), LV_ANIM_OFF);
-  lv_obj_add_event_cb(s_vnc_scale_slider, settings_vnc_slider_changed_cb, LV_EVENT_VALUE_CHANGED, nullptr);
-  s_vnc_scale_val_lbl = lv_label_create(tab_vnc);
-  lv_label_set_text(s_vnc_scale_val_lbl, "");
-
-  lv_obj_t *lq = lv_label_create(tab_vnc);
-  lv_label_set_text(lq, "Qualidade JPEG:");
-  s_vnc_quality_slider = lv_slider_create(tab_vnc);
-  lv_obj_set_width(s_vnc_quality_slider, LV_PCT(100));
-  lv_slider_set_range(s_vnc_quality_slider, 1, 100);
-  lv_slider_set_value(s_vnc_quality_slider, app_settings_vnc_jpeg_quality(), LV_ANIM_OFF);
-  lv_obj_add_event_cb(s_vnc_quality_slider, settings_vnc_slider_changed_cb, LV_EVENT_VALUE_CHANGED, nullptr);
-  s_vnc_quality_val_lbl = lv_label_create(tab_vnc);
-  lv_label_set_text(s_vnc_quality_val_lbl, "");
-
-  lv_obj_t *li = lv_label_create(tab_vnc);
-  lv_label_set_text(li, "Intervalo minimo entre frames (ms):");
-  s_vnc_interval_slider = lv_slider_create(tab_vnc);
-  lv_obj_set_width(s_vnc_interval_slider, LV_PCT(100));
-  lv_slider_set_range(s_vnc_interval_slider, 80, 2000);
-  lv_slider_set_value(s_vnc_interval_slider, app_settings_vnc_interval_ms(), LV_ANIM_OFF);
-  lv_obj_add_event_cb(s_vnc_interval_slider, settings_vnc_slider_changed_cb, LV_EVENT_VALUE_CHANGED, nullptr);
-  s_vnc_interval_val_lbl = lv_label_create(tab_vnc);
-  lv_label_set_text(s_vnc_interval_val_lbl, "");
-
-  lv_obj_t *bt_vnc = lv_btn_create(tab_vnc);
-  lv_obj_t *lbv = lv_label_create(bt_vnc);
-  lv_label_set_text(lbv, LV_SYMBOL_SAVE " Guardar VNC");
-  lv_obj_center(lbv);
-  lv_obj_add_event_cb(bt_vnc, settings_save_vnc_cb, LV_EVENT_CLICKED, nullptr);
-
-  s_vnc_feedback_lbl = lv_label_create(tab_vnc);
-  lv_label_set_long_mode(s_vnc_feedback_lbl, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(s_vnc_feedback_lbl, LV_PCT(100));
-  lv_label_set_text(s_vnc_feedback_lbl, "");
-
-  settings_vnc_refresh_value_labels();
+  s_portal_info_lbl = lv_label_create(tab_portal);
+  lv_label_set_long_mode(s_portal_info_lbl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(s_portal_info_lbl, LV_PCT(100));
+  lv_label_set_text(s_portal_info_lbl, "(A carregar...)");
+  settings_portal_info_refresh();
 
   /* --- Aba Logs --- */
   lv_obj_t *tab_logs = lv_tabview_add_tab(tv, LV_SYMBOL_FILE " Logs");

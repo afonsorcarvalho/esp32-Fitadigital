@@ -17,6 +17,7 @@
 #include "lvgl_port_v8.h"
 #include "app_settings.h"
 #include "app_log.h"
+#include "sd_access.h"
 #include "ui/ui_loading.h"
 
 static constexpr uintptr_t kUserDataParentDir = 0xFFFFFFFFu;
@@ -38,6 +39,8 @@ static bool s_entry_is_dir[kMaxListEntries];
 /** Texto da linha na lista (preenchido durante scan SD sem mutex LVGL). */
 static char s_entry_lines[kMaxListEntries][128];
 static unsigned s_entry_count = 0;
+/** Timestamp (millis) da ultima vez que a lista de ficheiros foi atualizada na UI. */
+static uint32_t s_last_refresh_ms = 0;
 static lv_obj_t *s_overlay = nullptr;
 /** Tabela do visualizador .txt (scroll); limpo ao fechar overlay. */
 static lv_obj_t *s_viewer_table = nullptr;
@@ -324,32 +327,34 @@ static void show_text_file(const char *full_path) {
   size_t total = 0;
 
   const uint32_t t0 = millis();
-  File f = SD.open(full_path, FILE_READ);
-  if (!f) {
-    open_fail = true;
-  } else if (f.isDirectory()) {
-    is_dir_file = true;
-    f.close();
-  } else {
-    size_t room = sizeof(text_buf) - 64;
-    while (nread < room) {
-      const size_t chunk = ((room - nread) > 512U) ? 512U : (room - nread);
-      const int got = f.read((uint8_t *)(text_buf + nread), chunk);
-      if (got <= 0) {
-        break;
+  sd_access_sync([&] {
+    File f = SD.open(full_path, FILE_READ);
+    if (!f) {
+      open_fail = true;
+    } else if (f.isDirectory()) {
+      is_dir_file = true;
+      f.close();
+    } else {
+      size_t room = sizeof(text_buf) - 64;
+      while (nread < room) {
+        const size_t chunk = ((room - nread) > 512U) ? 512U : (room - nread);
+        const int got = f.read((uint8_t *)(text_buf + nread), chunk);
+        if (got <= 0) {
+          break;
+        }
+        nread += (size_t)got;
       }
-      nread += (size_t)got;
+      total = f.size();
+      f.close();
+      text_buf[nread] = '\0';
+      normalize_text_buffer(text_buf);
+      if (total > nread) {
+        file_truncated = true;
+        snprintf(text_buf + nread, sizeof(text_buf) - nread, "\n[... +%u bytes nao lidos ...]\n",
+                   (unsigned)(total - (size_t)nread));
+      }
     }
-    total = f.size();
-    f.close();
-    text_buf[nread] = '\0';
-    normalize_text_buffer(text_buf);
-    if (total > nread) {
-      file_truncated = true;
-      snprintf(text_buf + nread, sizeof(text_buf) - nread, "\n[... +%u bytes nao lidos ...]\n",
-                 (unsigned)(total - (size_t)nread));
-    }
-  }
+  });
   const uint32_t dt_ms = millis() - t0;
   if (open_fail) {
     app_log_writef("WARN", "Leitura ficheiro texto falhou: %s", full_path);
@@ -509,53 +514,55 @@ static void refresh_file_list(bool show_loading_overlay) {
 
   unsigned scanned = 0;
   bool dir_ok = false;
-  File dir = SD.open(s_current_path);
-  if (dir && dir.isDirectory()) {
-    dir_ok = true;
-    for (;;) {
-      File entry = dir.openNextFile();
-      if (!entry) {
-        break;
-      }
-      if (scanned >= kMaxListEntries) {
+  sd_access_sync([&] {
+    File dir = SD.open(s_current_path);
+    if (dir && dir.isDirectory()) {
+      dir_ok = true;
+      for (;;) {
+        File entry = dir.openNextFile();
+        if (!entry) {
+          break;
+        }
+        if (scanned >= kMaxListEntries) {
+          entry.close();
+          break;
+        }
+        const char *fullpath = entry.path();
+        const char *name = entry.name();
+        if (fullpath == nullptr || name == nullptr || name[0] == '\0') {
+          entry.close();
+          continue;
+        }
+        if (strcmp(fullpath, s_current_path) == 0) {
+          entry.close();
+          continue;
+        }
+        if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+          entry.close();
+          continue;
+        }
+        strlcpy(s_entry_paths[scanned], fullpath, sizeof(s_entry_paths[0]));
+        s_entry_is_dir[scanned] = entry.isDirectory();
+        char short_name[48];
+        strlcpy(short_name, name, sizeof(short_name));
+        const time_t last_write = sd_access_fat_mtime(fullpath);
+        char date_buf[20];
+        format_entry_datetime(last_write, date_buf, sizeof(date_buf));
+        if (entry.isDirectory()) {
+          snprintf(s_entry_lines[scanned], sizeof(s_entry_lines[0]), "%s %-22s  <DIR>  %s", LV_SYMBOL_DIRECTORY,
+                   short_name, date_buf);
+        } else {
+          snprintf(s_entry_lines[scanned], sizeof(s_entry_lines[0]), "%s %-22s  %8lu B  %s", LV_SYMBOL_FILE,
+                   short_name, (unsigned long)entry.size(), date_buf);
+        }
         entry.close();
-        break;
+        scanned++;
       }
-      const char *fullpath = entry.path();
-      const char *name = entry.name();
-      if (fullpath == nullptr || name == nullptr || name[0] == '\0') {
-        entry.close();
-        continue;
-      }
-      if (strcmp(fullpath, s_current_path) == 0) {
-        entry.close();
-        continue;
-      }
-      if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
-        entry.close();
-        continue;
-      }
-      strlcpy(s_entry_paths[scanned], fullpath, sizeof(s_entry_paths[0]));
-      s_entry_is_dir[scanned] = entry.isDirectory();
-      char short_name[48];
-      strlcpy(short_name, name, sizeof(short_name));
-      const time_t last_write = entry.getLastWrite();
-      char date_buf[20];
-      format_entry_datetime(last_write, date_buf, sizeof(date_buf));
-      if (entry.isDirectory()) {
-        snprintf(s_entry_lines[scanned], sizeof(s_entry_lines[0]), "%s %-22s  <DIR>  %s", LV_SYMBOL_DIRECTORY,
-                 short_name, date_buf);
-      } else {
-        snprintf(s_entry_lines[scanned], sizeof(s_entry_lines[0]), "%s %-22s  %8lu B  %s", LV_SYMBOL_FILE,
-                 short_name, (unsigned long)entry.size(), date_buf);
-      }
-      entry.close();
-      scanned++;
     }
-  }
-  if (dir) {
-    dir.close();
-  }
+    if (dir) {
+      dir.close();
+    }
+  });
 
   (void)lvgl_port_lock(-1);
 
@@ -584,6 +591,10 @@ static void refresh_file_list(bool show_loading_overlay) {
   s_entry_count = scanned;
 
   update_path_label();
+  s_last_refresh_ms = millis();
+  if (s_last_refresh_ms == 0) {
+    s_last_refresh_ms = 1;
+  }
   if (show_loading_overlay) {
     ui_loading_hide();
   }
@@ -592,6 +603,12 @@ static void refresh_file_list(bool show_loading_overlay) {
 void file_browser_refresh(void) {
   refresh_file_list(true);
 }
+
+void file_browser_refresh_silent(void) {
+  refresh_file_list(false);
+}
+
+uint32_t file_browser_last_refresh_ms(void) { return s_last_refresh_ms; }
 
 void file_browser_apply_font(const lv_font_t *font) {
   if (font != nullptr) {
@@ -603,7 +620,7 @@ void file_browser_apply_font(const lv_font_t *font) {
 }
 
 bool file_browser_init(lv_obj_t *parent) {
-  if (parent == nullptr || SD.cardType() == CARD_NONE) {
+  if (parent == nullptr || !sd_access_is_mounted()) {
     return false;
   }
 

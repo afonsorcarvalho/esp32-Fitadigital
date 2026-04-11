@@ -24,13 +24,13 @@ lv_obj_t *s_step_tag_lbl[BOOT_STEP_COUNT] = {};
 lv_obj_t *s_footer = nullptr;
 
 static const char *k_step_left[BOOT_STEP_COUNT] = {
-    "1 SD",
-    "2 RTC",
-    "3 WIFI",
+    "1 SD Card",
+    "2 Real Time Clock",
+    "3 WiFi",
     "4 NTP",
-    "5 FTP",
-    "6 WG",
-    "7 WEB",
+    "5 FTP Server",
+    "6 WireGuard",
+    "7 HTTP Server",
 };
 
 /** Pontos para preencher o espaço central; o clip corta o excesso à direita. */

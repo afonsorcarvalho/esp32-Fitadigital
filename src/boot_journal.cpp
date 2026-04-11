@@ -1,5 +1,7 @@
 #include "boot_journal.h"
 
+#include "sd_access.h"
+
 #include <Arduino.h>
 #include <FS.h>
 #include <SD.h>
@@ -7,6 +9,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "freertos/FreeRTOS.h"
@@ -17,10 +20,14 @@ static const char *const kBootLogFlashPath = "/boot.log";
 static const char *const kBootLogSdPath = "/boot.log";
 static constexpr uint32_t kMirrorPollMs = 5000U;
 static constexpr size_t kCopyBufSize = 512U;
+/** Buffer em RAM até `boot_journal_flush_to_spiffs()` (evita SPIFFS open/close repetido com LVGL activo). */
+static constexpr size_t kBootJournalRamMax = 8192U;
 
 static SemaphoreHandle_t s_boot_log_mutex = nullptr;
 static TaskHandle_t s_boot_mirror_task = nullptr;
 static bool s_spiffs_ok = false;
+static char s_boot_journal_ram[kBootJournalRamMax];
+static size_t s_boot_journal_ram_len = 0U;
 
 static void boot_log_lock(void) {
   if (s_boot_log_mutex != nullptr) {
@@ -47,14 +54,14 @@ bool boot_journal_reset(void) {
     return false;
   }
   boot_log_lock();
-  SPIFFS.remove(kBootLogFlashPath);
-  File f = SPIFFS.open(kBootLogFlashPath, FILE_WRITE);
-  if (!f) {
-    boot_log_unlock();
-    return false;
+  s_boot_journal_ram_len = 0U;
+  {
+    const int n = snprintf(s_boot_journal_ram, kBootJournalRamMax, "BOOT START | ms=%lu\n",
+                           (unsigned long)millis());
+    if (n > 0 && (size_t)n < kBootJournalRamMax) {
+      s_boot_journal_ram_len = (size_t)n;
+    }
   }
-  f.printf("BOOT START | ms=%lu\n", (unsigned long)millis());
-  f.close();
   boot_log_unlock();
   return true;
 }
@@ -65,16 +72,40 @@ void boot_journal_append(const char *level, const char *message) {
   }
   const char *lvl = (level != nullptr && level[0] != '\0') ? level : "INFO";
   boot_log_lock();
-  File f = SPIFFS.open(kBootLogFlashPath, FILE_APPEND);
-  if (f) {
-    f.printf("%lu | %s | %s\n", (unsigned long)millis(), lvl, message);
-    f.close();
+  const size_t room = (kBootJournalRamMax > s_boot_journal_ram_len)
+                          ? (kBootJournalRamMax - s_boot_journal_ram_len - 1U)
+                          : 0U;
+  if (room < 48U) {
+    boot_log_unlock();
+    return;
+  }
+  const int n = snprintf(s_boot_journal_ram + s_boot_journal_ram_len, room, "%lu | %s | %s\n",
+                         (unsigned long)millis(), lvl, message);
+  if (n > 0 && (size_t)n <= room) {
+    s_boot_journal_ram_len += (size_t)n;
   }
   boot_log_unlock();
 }
 
+bool boot_journal_flush_to_spiffs(void) {
+  if (!s_spiffs_ok) {
+    return false;
+  }
+  boot_log_lock();
+  (void)SPIFFS.remove(kBootLogFlashPath);
+  File f = SPIFFS.open(kBootLogFlashPath, FILE_WRITE);
+  if (!f) {
+    boot_log_unlock();
+    return false;
+  }
+  const size_t w = f.write((const uint8_t *)s_boot_journal_ram, s_boot_journal_ram_len);
+  f.close();
+  boot_log_unlock();
+  return w == s_boot_journal_ram_len;
+}
+
 bool boot_journal_copy_to_sd(void) {
-  if (!s_spiffs_ok || SD.cardType() == CARD_NONE) {
+  if (!s_spiffs_ok) {
     return false;
   }
 
@@ -84,25 +115,33 @@ bool boot_journal_copy_to_sd(void) {
     boot_log_unlock();
     return false;
   }
-  SD.remove(kBootLogSdPath);
-  File dst = SD.open(kBootLogSdPath, FILE_WRITE);
-  if (!dst) {
+  const size_t sz = src.size();
+  uint8_t *const heap = (uint8_t *)malloc(sz);
+  if (heap == nullptr) {
     src.close();
     boot_log_unlock();
     return false;
   }
-  uint8_t buf[kCopyBufSize];
-  for (;;) {
-    const int n = src.read(buf, sizeof(buf));
-    if (n <= 0) {
-      break;
-    }
-    (void)dst.write(buf, (size_t)n);
-  }
-  dst.close();
+  const size_t nread = src.read(heap, sz);
   src.close();
   boot_log_unlock();
-  return true;
+
+  bool ok = false;
+  sd_access_sync([&] {
+    if (SD.cardType() == CARD_NONE) {
+      return;
+    }
+    SD.remove(kBootLogSdPath);
+    File dst = SD.open(kBootLogSdPath, FILE_WRITE);
+    if (!dst) {
+      return;
+    }
+    (void)dst.write(heap, nread);
+    dst.close();
+    ok = true;
+  });
+  free(heap);
+  return ok;
 }
 
 static void boot_journal_mirror_task(void * /*arg*/) {

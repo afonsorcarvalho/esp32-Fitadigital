@@ -6,11 +6,6 @@
 #include "esp_timer.h"
 #include "lvgl_port_v8.h"
 #include "ui_feedback.h"
-#if USE_LVGL_REMOTE_SERVER
-#include "lvgl_remote_server/lvgl_remote_server.h"
-#else
-#include "web_remote/web_remote.h"
-#endif
 
 #define LVGL_PORT_ENABLE_ROTATION_OPTIMIZED     (1)
 #define LVGL_PORT_BUFFER_NUM_MAX       (2)
@@ -401,15 +396,6 @@ static void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     }
 
-#if !USE_LVGL_REMOTE_SERVER
-    /* Web Remote: acumula dirty regions; envia no último flush do frame */
-    web_remote_flush(area, color_map, is_last);
-#endif
-#if USE_LVGL_REMOTE_SERVER
-    /* LVGLRemoteServer: envia RLE por região (cada chamada de flush). */
-    lvgl_remote_server_flush(area, color_map);
-#endif
-
     lv_disp_flush_ready(drv);
 }
 #endif /* LVGL_PORT_ROTATION_DEGREE */
@@ -654,32 +640,12 @@ static void touchpad_read(lv_indev_drv_t *indev_drv, lv_indev_data_t *data)
     static bool s_touch_was_pressed;
     bool pressed = false;
 
-#if USE_LVGL_REMOTE_SERVER
-    lvgl_remote_server_poll_input();
-#endif
-
-    /* Toque físico tem prioridade; senão ponteiro remoto (WebSocket ou viewer UDP). */
+    /* Toque físico no painel */
     int read_touch_result = tp->readPoints(&point, 1);
     if (read_touch_result > 0) {
         data->point.x = point.x;
         data->point.y = point.y;
         pressed = true;
-    } else {
-        lv_coord_t rx, ry;
-        bool rp;
-#if USE_LVGL_REMOTE_SERVER
-        if (lvgl_remote_server_get_pointer(&rx, &ry, &rp)) {
-            data->point.x = rx;
-            data->point.y = ry;
-            pressed = rp;
-        }
-#else
-        if (web_remote_get_pointer(&rx, &ry, &rp)) {
-            data->point.x = rx;
-            data->point.y = ry;
-            pressed = rp;
-        }
-#endif
     }
 
     if (pressed) {

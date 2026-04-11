@@ -1,6 +1,6 @@
 /**
  * @file app_settings.h
- * @brief Preferencias (NVS) — Wi-Fi, FTP, NTP/fuso, WireGuard, UI e parametros VNC/WebRemote.
+ * @brief Preferencias (NVS) — Wi-Fi, FTP, NTP/fuso, WireGuard e UI.
  * @note A palavra-passe Wi-Fi e' guardada em texto (NVS); adequado apenas a redes locais.
  */
 #pragma once
@@ -54,13 +54,3 @@ void app_settings_set_wg_endpoint(const char *host);
 uint16_t app_settings_wg_port(void);
 void app_settings_set_wg_port(uint16_t port);
 
-/**
- * Web Remote (VNC via browser): parametros de streaming JPEG.
- * scale: fator de downscale (1..8), quality: 1..100, interval_ms: 80..2000.
- */
-uint8_t app_settings_vnc_scale(void);
-void app_settings_set_vnc_scale(uint8_t scale);
-uint8_t app_settings_vnc_jpeg_quality(void);
-void app_settings_set_vnc_jpeg_quality(uint8_t quality);
-uint16_t app_settings_vnc_interval_ms(void);
-void app_settings_set_vnc_interval_ms(uint16_t interval_ms);

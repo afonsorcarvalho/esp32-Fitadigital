@@ -34,5 +34,12 @@ bool app_log_read_tail(char *buf, size_t buf_size, size_t *out_file_size, bool *
 /** Limpa o arquivo de log (mantem o arquivo criado vazio). */
 bool app_log_clear(void);
 
+/**
+ * Notificação opcional de cada linha escrita (mesmo texto que no ficheiro, sem \n final).
+ * Usado pelo portal web (WebSocket). Pode ser chamado a partir de qualquer tarefa.
+ */
+void app_log_set_line_notify(void (*fn)(const char *line, void *user), void *user);
+void app_log_clear_line_notify(void);
+
 const char *app_log_path(void);
 size_t app_log_max_size_bytes(void);
