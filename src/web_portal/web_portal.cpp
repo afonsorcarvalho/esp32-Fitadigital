@@ -23,8 +23,10 @@ static const char *TAG = "web_portal";
 static constexpr uint16_t kHttpPort = 80;
 static constexpr size_t kLogLineQ = 24;
 static constexpr size_t kLogLineMax = 384;
-/** Limite de leitura para /api/fs/file (resposta copiada para String no heap). */
+/** Ficheiros ate este tamanho: leitura unica para RAM + String (como antes). */
 static constexpr size_t kPortalFsMaxFileBytes = 512U * 1024U;
+/** Download HTTP acima de kPortalFsMaxFileBytes: streaming por callback (sem bufferizar o ficheiro inteiro). */
+static constexpr size_t kPortalFsStreamMaxFileBytes = 32U * 1024U * 1024U;
 
 static AsyncWebServer *s_srv = nullptr;
 static AsyncWebSocket *s_ws_logs = nullptr;
@@ -243,7 +245,7 @@ static void handle_logs_tail(AsyncWebServerRequest *request)
     bool trunc = false;
     bool ok_read = false;
     /* Leitura do ficheiro de log no mesmo contexto que o resto do SD (sd_io). */
-    sd_access_sync([&]() { ok_read = app_log_read_tail(buf, kLogTailHeapBytes, &fsz, &trunc); });
+    sd_access_sync_front([&]() { ok_read = app_log_read_tail(buf, kLogTailHeapBytes, &fsz, &trunc); });
     if (ok_read) {
         doc["text"] = buf;
         doc["truncated"] = trunc;
@@ -263,7 +265,7 @@ static void handle_logs_tail(AsyncWebServerRequest *request)
 static void handle_logs_delete(AsyncWebServerRequest *request)
 {
     bool ok = false;
-    sd_access_sync([&]() { ok = app_log_clear(); });
+    sd_access_sync_front([&]() { ok = app_log_clear(); });
     request->send(ok ? 200 : 500, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false}");
 }
 
@@ -281,7 +283,7 @@ static void handle_fs_list(AsyncWebServerRequest *request)
 
     String out;
     int list_http = 200;
-    sd_access_sync([&]() {
+    sd_access_sync_front([&]() {
         if (SD.cardType() == CARD_NONE) {
             list_http = 503;
             out = "{\"entries\":[]}";
@@ -318,6 +320,86 @@ static void handle_fs_list(AsyncWebServerRequest *request)
     request->send(list_http, "application/json", out);
 }
 
+/**
+ * Interpreta `Range: bytes=lo-hi` ou `bytes=lo-` (um intervalo). Sufixo `bytes=-n` nao suportado.
+ * @param[out] client_sent_range true se o cabecalho existir e for `bytes=...` valido para este ficheiro.
+ */
+static bool portal_parse_bytes_range(AsyncWebServerRequest *request, size_t file_sz, size_t *out_lo, size_t *out_hi,
+                                     bool *client_sent_range)
+{
+    *client_sent_range = false;
+    *out_lo = 0;
+    if (file_sz == 0U) {
+        *out_hi = 0;
+        return true;
+    }
+    *out_hi = file_sz - 1U;
+    if (request == nullptr) {
+        return true;
+    }
+    const AsyncWebHeader *hr = request->getHeader("Range");
+    if (hr == nullptr) {
+        return true;
+    }
+    String spec = hr->value();
+    spec.trim();
+    if (!spec.startsWith("bytes=")) {
+        return true;
+    }
+    spec = spec.substring(6);
+    spec.trim();
+    {
+        const int comma = spec.indexOf(',');
+        if (comma >= 0) {
+            spec = spec.substring(0, comma);
+            spec.trim();
+        }
+    }
+    if (spec.length() == 0U || spec.charAt(0) == '-') {
+        return false;
+    }
+    const int dash = spec.indexOf('-');
+    if (dash < 0) {
+        return false;
+    }
+    String s_lo = spec.substring(0, dash);
+    String s_hi = spec.substring(dash + 1);
+    s_lo.trim();
+    s_hi.trim();
+    if (s_lo.length() == 0U) {
+        return false;
+    }
+    const size_t lo = static_cast<size_t>(s_lo.toInt());
+    size_t hi = 0;
+    if (s_hi.length() == 0U) {
+        hi = file_sz - 1U;
+    } else {
+        hi = static_cast<size_t>(s_hi.toInt());
+    }
+    if (lo >= file_sz || hi >= file_sz || hi < lo) {
+        return false;
+    }
+    *client_sent_range = true;
+    *out_lo = lo;
+    *out_hi = hi;
+    return true;
+}
+
+/** Cabecalho Content-Disposition para download (nome = ultimo segmento do path). */
+static void portal_fs_set_download_name(AsyncWebServerResponse *resp, const String &vfs_path)
+{
+    if (resp == nullptr) {
+        return;
+    }
+    const int slash = vfs_path.lastIndexOf('/');
+    const char *fn = vfs_path.c_str();
+    if (slash >= 0) {
+        fn = vfs_path.c_str() + slash + 1;
+    }
+    const String cd = String("attachment; filename=\"") + fn + '"';
+    resp->addHeader("Content-Disposition", cd.c_str(), false);
+}
+
 static void handle_fs_file(AsyncWebServerRequest *request)
 {
     const String p = path_param_from_request(request);
@@ -332,9 +414,11 @@ static void handle_fs_file(AsyncWebServerRequest *request)
 
     uint8_t *heap_buf = nullptr;
     size_t heap_len = 0;
-    int err = 0; /* 0 ok, 1 no sd, 2 not found, 3 too big */
+    int err = 0; /* 0 ok, 1 no sd, 2 not found, 3 too big (acima do max de streaming) */
+    bool use_stream = false;
+    size_t stream_total = 0;
 
-    sd_access_sync([&]() {
+    sd_access_sync_front([&]() {
         if (SD.cardType() == CARD_NONE) {
             err = 1;
             return;
@@ -348,9 +432,15 @@ static void handle_fs_file(AsyncWebServerRequest *request)
             return;
         }
         const size_t sz = test.size();
-        if (sz > kPortalFsMaxFileBytes) {
+        if (sz > kPortalFsStreamMaxFileBytes) {
             test.close();
             err = 3;
+            return;
+        }
+        if (sz > kPortalFsMaxFileBytes) {
+            test.close();
+            stream_total = sz;
+            use_stream = true;
             return;
         }
         heap_buf = static_cast<uint8_t *>(heap_caps_malloc(sz, MALLOC_CAP_8BIT));
@@ -378,6 +468,70 @@ static void handle_fs_file(AsyncWebServerRequest *request)
         request->send(413, "text/plain", "file too large");
         return;
     }
+    if (use_stream) {
+        size_t range_lo = 0;
+        size_t range_hi = 0;
+        bool client_range = false;
+        if (!portal_parse_bytes_range(request, stream_total, &range_lo, &range_hi, &client_range)) {
+            AsyncWebServerResponse *r416 = request->beginResponse(416, "text/plain", "range not satisfiable");
+            if (r416 == nullptr) {
+                request->send(416, "text/plain", "range not satisfiable");
+                return;
+            }
+            {
+                const String cr = String("bytes */") + String(static_cast<unsigned long>(stream_total));
+                r416->addHeader("Content-Range", cr.c_str(), false);
+            }
+            request->send(r416);
+            return;
+        }
+        const size_t out_len = range_hi - range_lo + 1U;
+        const int http_code = client_range ? 206 : 200;
+        const String path_copy = p;
+        const size_t body_off = range_lo;
+        const size_t body_len = out_len;
+        AsyncWebServerResponse *resp = request->beginResponse(
+            "application/octet-stream", body_len,
+            [path_copy, body_off, body_len](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
+                if (index >= body_len || maxLen == 0U) {
+                    return 0;
+                }
+                size_t want = body_len - index;
+                if (want > maxLen) {
+                    want = maxLen;
+                }
+                size_t read_once = 0;
+                sd_access_sync_front([&]() {
+                    File f = SD.open(path_copy.c_str(), FILE_READ);
+                    if (!f || f.isDirectory()) {
+                        return;
+                    }
+                    const size_t file_pos = body_off + index;
+                    if (!f.seek(static_cast<uint32_t>(file_pos))) {
+                        f.close();
+                        return;
+                    }
+                    read_once = f.read(buffer, want);
+                    f.close();
+                });
+                return read_once;
+            });
+        if (resp == nullptr) {
+            request->send(500, "text/plain", "oom");
+            return;
+        }
+        resp->setCode(http_code);
+        if (http_code == 206) {
+            const String cr = String("bytes ") + String(static_cast<unsigned long>(range_lo)) + '-' +
+                              String(static_cast<unsigned long>(range_hi)) + '/' +
+                              String(static_cast<unsigned long>(stream_total));
+            resp->addHeader("Content-Range", cr.c_str(), false);
+        }
+        (void)resp->addHeader("Accept-Ranges", "bytes", true);
+        portal_fs_set_download_name(resp, p);
+        request->send(resp);
+        return;
+    }
     if (heap_buf == nullptr) {
         request->send(404, "text/plain", "not found");
         return;
@@ -403,7 +557,7 @@ static void on_ws_logs_event(AsyncWebSocket *server, AsyncWebSocketClient *clien
             size_t fsz = 0;
             bool trunc = false;
             bool ok_read = false;
-            sd_access_sync(
+            sd_access_sync_front(
                 [&]() { ok_read = app_log_read_tail(buf, kLogTailHeapBytes, &fsz, &trunc); });
             if (ok_read) {
                 client->text(buf);

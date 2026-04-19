@@ -23,15 +23,18 @@
 #include "lvgl_port_v8.h"
 #include "app_settings.h"
 #include "board_pins.h"
+#include "board_i2c0_bus_lock.h"
 #include "waveshare_sd_cs.h"
 #include "boot_journal.h"
 #include "SD.h"
 #include "app_log.h"
 #include "net_services.h"
 #include "sd_access.h"
+#include "cycles_rs485.h"
 #include "net_time.h"
 #include "ui_feedback.h"
 #include "ui/boot_screen.h"
+#include "ui/splash_screen.h"
 #include "ui/ui_app.h"
 #include "web_portal/web_portal.h"
 
@@ -174,6 +177,9 @@ void setup() {
   rgb_bus->configRgbBounceBufferSize(LVGL_PORT_RGB_BOUNCE_BUFFER_SIZE);
 #endif
   panel->begin();
+  /** I2C0 partilhado: CH422G (CS TF) + RTC; touch/painel tambem usam o bus (stack Espressif). */
+  board_i2c0_bus_lock_init();
+  board_i2c0_bus_quiet_ioexpander_serial_logs();
   ui_feedback_init();
   lvgl_port_init(panel->getLcd(), panel->getTouch());
   boot_screen_show();
@@ -194,14 +200,19 @@ void setup() {
       boot_log_step(BOOT_STEP_SD, "ERROR", "falha apos 3 tentativas");
     }
   }
-  /** A partir daqui, todo o I/O SD em segundo plano passa pela fila sd_io (FTP incluido). */
+  /** A partir daqui, todo o I/O SD em segundo plano passa pela fila sd_io. */
   sd_access_set_mounted(sd_ok);
+  sd_access_register_tick(net_services_sd_worker_tick);
   sd_access_start_task();
 
   if (rtc_probe_with_retries(3U)) {
     net_time_bootstrap_from_rtc_early();
   } else {
     boot_log_step(BOOT_STEP_RTC, "ERROR", "falha apos 3 tentativas");
+  }
+
+  if (sd_ok) {
+    cycles_rs485_init();
   }
 
   bool wifi_connected = false;
@@ -271,12 +282,21 @@ void setup() {
    */
   // boot_journal_start_sd_mirror_task();
 
+  /* Splash de boot: logo da empresa após o checklist, antes da UI principal.
+   * splash_screen_show() faz lv_scr_load e destrói o ecrã do checklist. */
+  const uint8_t splash_secs = app_settings_splash_seconds();
+  if (splash_secs > 0) {
+    splash_screen_show();
+    Serial.printf("[BOOT] Splash screen %u s\n", (unsigned)splash_secs);
+    vTaskDelay(pdMS_TO_TICKS((uint32_t)splash_secs * 1000U));
+  }
+
   /* Fail-safe: nunca sair do setup sem carregar a UI principal.
-   * O ecra de boot só pode ser destruído dentro de `ui_app_run` depois de `lv_scr_load`,
-   * senão o LVGL fica sem ecrã activo válido e o LCD pode ficar preso no arranque. */
+   * Se o splash esteve ativo, ui_app_run destrói o splash em vez do boot screen. */
   (void)lvgl_port_lock(-1);
-  ui_app_run(sd_ok);
+  ui_app_run(sd_ok, splash_secs > 0);
   (void)lvgl_port_unlock();
+  /** O .txt do dia so abre na UI quando chegar linha RS485 (apos timer no explorador). */
   /* Ceder tempo à tarefa LVGL para o primeiro frame (evita lv_refr_now com mutex + RGB). */
   delay(10);
 

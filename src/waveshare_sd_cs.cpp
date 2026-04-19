@@ -3,6 +3,7 @@
  * @brief Implementação do CS SD no CH422G (EXIO4), conforme documentação Waveshare.
  */
 #include "waveshare_sd_cs.h"
+#include "board_i2c0_bus_lock.h"
 #include "board_pins.h"
 #include "ESP_IOExpander.h"
 
@@ -16,5 +17,7 @@ void waveshare_sd_cs_set(bool high) {
   if (!s_sd_expander) {
     return;
   }
+  board_i2c0_bus_lock();
   s_sd_expander->digitalWrite(BOARD_TF_SD_CS_EXPANDER_PIN, high ? HIGH : LOW);
+  board_i2c0_bus_unlock();
 }

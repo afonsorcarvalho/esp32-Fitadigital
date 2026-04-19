@@ -1,9 +1,12 @@
 /**
  * @file sd_access.h
- * @brief Acesso exclusivo ao cartao SD: fila + tarefa unica (sem concorrencia com FTP/LVGL/web).
+ * @brief Acesso exclusivo ao cartao SD: fila + tarefa unica (sem concorrencia com LVGL/web/etc.).
  *
  * Qualquer operacao que use SD.open / SD.mkdir / FatFs deve passar por sd_access_sync()
  * ou correr na propria tarefa sd_io (reentrancia detetada automaticamente).
+ *
+ * Modulos externos que precisem de ciclos periodicos no contexto sd_io (ex.: FTP)
+ * registam-se via sd_access_register_tick() — o sd_access nao conhece nenhum deles.
  */
 #pragma once
 
@@ -11,11 +14,21 @@
 #include <stdint.h>
 #include <time.h>
 
+/** Ponteiro para funcao chamada a cada iteracao da tarefa sd_io (contexto exclusivo SD). */
+using SdWorkerTickFn = void (*)(void);
+
 /** Chamado apos SD.begin com sucesso (ou false se falhou). */
 void sd_access_set_mounted(bool mounted);
 
 /** Indica se o volume foi montado no arranque (sem tocar no hardware). */
 bool sd_access_is_mounted(void);
+
+/**
+ * Regista um ticker executado a cada iteracao da tarefa sd_io (~2 ms).
+ * Maximo de 4 tickers (suficiente para FTP + futuras extensoes).
+ * Chamar antes de sd_access_start_task(). Thread-safe apenas antes do start.
+ */
+void sd_access_register_tick(SdWorkerTickFn fn);
 
 /**
  * Inicia a tarefa FreeRTOS "sd_io" (fila + processamento em serie).
@@ -29,6 +42,13 @@ void sd_access_start_task(void);
  * Se ja estiver na tarefa sd_io, executa inline (evita deadlock).
  */
 void sd_access_sync(const std::function<void()> &fn);
+
+/**
+ * Igual a sd_access_sync, mas o trabalho entra na frente da fila (LIFO entre urgentes).
+ * Usar em callbacks da rede (ex.: async_tcp / portal HTTP) para nao ficar atras de
+ * indexacoes longas na UI que enfileiram muitos jobs normais — evita TWDT em async_tcp.
+ */
+void sd_access_sync_front(const std::function<void()> &fn);
 
 /** Variante async: enfileira sem bloquear; a ordem e preservada. */
 void sd_access_async(const std::function<void()> &fn);

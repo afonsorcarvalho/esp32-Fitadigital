@@ -1,11 +1,19 @@
 /**
  * @file file_browser.cpp
  * @brief Explorador tipo lista (Nome | Tamanho | Data). SD.open() usa raiz '/' (ver VFS Arduino).
+ * Listagem: cada job sd_io limita openNextFile; ao reabrir a pasta e' preciso saltar `consumed_entries`
+ * entradas com um contador local por job (evita duplicar a lista na raiz).
  *
- * Texto do visualizador .txt/.log: fonte monoespaçada nativa LVGL (Unscii 8/16), p.ex. leitura de logs.
+ * Visualizador .txt/.log com janela deslizante: indexa offsets de linhas no arquivo (PSRAM)
+ * e carrega apenas ~kWindowLines linhas por vez na lv_table, recarregando automaticamente
+ * conforme o usuario faz scroll (sliding window). Suporta arquivos de qualquer tamanho
+ * ate kMaxIndexLines linhas.
+ *
+ * Fonte monoespaçada nativa LVGL (Unscii 8/16).
  * Courier New em vários px requer gerar .c com https://lvgl.io/tools/fontconverter a partir de cour.ttf.
  */
 #include "file_browser.h"
+#include <atomic>
 #include <Arduino.h>
 #include <SD.h>
 #include <lvgl.h>
@@ -14,19 +22,53 @@
 #include <string.h>
 #include <strings.h>
 #include <time.h>
+#include <esp_heap_caps.h>
 #include "lvgl_port_v8.h"
 #include "app_settings.h"
 #include "app_log.h"
 #include "sd_access.h"
+#include "cycles_rs485.h"
 #include "ui/ui_loading.h"
+
+/* ── Constantes do explorador de ficheiros ────────────────────────────── */
 
 static constexpr uintptr_t kUserDataParentDir = 0xFFFFFFFFu;
 static constexpr unsigned kMaxListEntries = 48;
-static constexpr size_t kTxtMaxBytes = 8 * 1024;
-/** Linhas no visualizador .txt: tabela com numeração; limite evita picos de RAM/tempo na abertura. */
-static constexpr unsigned kMaxViewerLines = 220;
+/** Maximo de openNextFile() por job sd_io (skip + listagem); varios jobs permitem async_tcp (TWDT). */
+static constexpr unsigned kMaxOpenNextPerSdJob = 8;
+/** Limite de ciclos listagem (pastas enormes / anomalias). */
+static constexpr unsigned kMaxDirListBatches = 512;
 static constexpr unsigned kMaxCellChars = 120;
 static constexpr char kFsRoot[] = "/";
+
+/* ── Constantes do visualizador paginado ─────────────────────────────── */
+
+/** Tamanho do buffer reutilizado para leitura de janelas de texto. */
+static constexpr size_t kTextBufSize = 8 * 1024;
+/** Maximo de linhas indexaveis num arquivo (~60 KB de PSRAM para offsets). */
+static constexpr unsigned kMaxIndexLines = 15000;
+/** Linhas carregadas na lv_table por vez (janela deslizante). */
+static constexpr unsigned kWindowLines = 150;
+/** Linhas deslocadas ao atingir a borda da janela durante scroll. */
+static constexpr unsigned kWindowShift = 60;
+/** Pixels da borda da tabela para disparar recarga da janela. */
+static constexpr lv_coord_t kScrollThresholdPx = 80;
+/** Intervalo minimo entre recargas de janela (ms). */
+static constexpr uint32_t kReloadCooldownMs = 250;
+
+/* ── Estado do explorador de ficheiros ───────────────────────────────── */
+
+/** Timer para reindexar o .txt do dia quando o RS485 acrescenta dados (visualizador aberto). */
+static lv_timer_t *s_cycles_live_timer = nullptr;
+/** Contador de linhas RS485 gravadas; timer LVGL reage e abre/atualiza o .txt do dia no fim. */
+static std::atomic<uint32_t> s_rs485_saved_seq{0};
+static uint32_t s_rs485_saved_last_handled = 0;
+static lv_timer_t *s_rs485_open_timer = nullptr;
+/** One-shot LVGL: apos o atraso, activa `cycles_rs485_set_line_to_ui_follow(true)` (sistema estabilizado). */
+static constexpr uint32_t kRs485UiFollowArmDelayMs = 3000U;
+static lv_timer_t *s_rs485_ui_follow_arm_timer = nullptr;
+/** >0 durante show_text_file (fase de indexacao SD); evita refresh_silent a limpar a lista. */
+static int s_suppress_auto_file_list_refresh = 0;
 
 static lv_obj_t *s_root = nullptr;
 /** Fonte ativa (definições UI); nullptr usa LV_FONT_DEFAULT no visualizador. */
@@ -41,21 +83,66 @@ static char s_entry_lines[kMaxListEntries][128];
 static unsigned s_entry_count = 0;
 /** Timestamp (millis) da ultima vez que a lista de ficheiros foi atualizada na UI. */
 static uint32_t s_last_refresh_ms = 0;
+
+/* ── Estado do refresh assincrono da listagem SD ─────────────────────── */
+/**
+ * Listar o SD no callback LVGL bloqueava a task `lvgl` (~alguns segundos em pastas
+ * grandes / SD com contencao), congelando a UI e o toque. O scan corre agora na
+ * task `sd_io` em chunks (`kMaxOpenNextPerSdJob` entradas por job reagendado
+ * via `sd_access_async`), permitindo que outros jobs (async_tcp, FTP) intercalem
+ * e que `lv_timer_handler` continue a redesenhar e a animar o overlay.
+ */
+static std::atomic<bool> s_refresh_in_flight{false};
+static unsigned s_async_scanned = 0;
+static unsigned s_async_consumed = 0;
+static bool s_async_dir_ok = false;
+static bool s_async_show_overlay = false;
 static lv_obj_t *s_overlay = nullptr;
 /** Tabela do visualizador .txt (scroll); limpo ao fechar overlay. */
 static lv_obj_t *s_viewer_table = nullptr;
 
-/** Largura fixa da coluna de botões à direita do visualizador. */
+/* ── Estado do visualizador paginado (janela deslizante) ─────────────── */
+
+/** Offsets (bytes) do inicio de cada linha no arquivo; alocado em PSRAM. */
+static uint32_t *s_line_offsets = nullptr;
+static unsigned s_total_lines = 0;
+static size_t s_file_size = 0;
+/** Indice da primeira linha carregada na janela atual da tabela. */
+static unsigned s_window_start = 0;
+/** Quantidade de linhas efetivamente carregadas na janela atual. */
+static unsigned s_window_count = 0;
+static char s_viewer_path[256] = {};
+/** Titulo no leitor: nome do ficheiro + caminho completo. */
+static lv_obj_t *s_viewer_path_label = nullptr;
+/** Label com indicador de posicao ("Linhas X-Y de Z"). */
+static lv_obj_t *s_viewer_info_label = nullptr;
+static bool s_loading_window = false;
+static uint32_t s_last_reload_ms = 0;
+/** true se o indice de linhas foi truncado (arquivo > kMaxIndexLines). */
+static bool s_index_truncated = false;
+/** Buffer reutilizado para leitura de texto das janelas. */
+static char s_text_buf[kTextBufSize];
+/** Ponteiros para linhas dentro de s_text_buf (split_lines_inplace). */
+static char *s_line_ptrs[kWindowLines + 2];
+
+/* ── Constantes e estado dos botoes do visualizador ──────────────────── */
+
 static constexpr lv_coord_t kViewerBtnColW = 62;
-/** Altura de cada botão de navegação (toque confortável). */
 static constexpr lv_coord_t kViewerBtnH = 48;
-/** Margem entre botões (flex column + pad). */
 static constexpr lv_coord_t kViewerBtnPad = 6;
 
 static constexpr intptr_t kViewerNavUp = 1;
 static constexpr intptr_t kViewerNavDown = 2;
 static constexpr intptr_t kViewerNavTop = 3;
 static constexpr intptr_t kViewerNavEnd = 4;
+
+/* ── Forward declarations ────────────────────────────────────────────── */
+
+static bool load_viewer_window(unsigned first_line, unsigned count);
+static void update_viewer_info(void);
+static void show_text_file(const char *full_path, bool quiet_index = false, bool scroll_to_end = false);
+
+/* ── Funcoes auxiliares do visualizador ───────────────────────────────── */
 
 /**
  * Fonte monoespaçada para células do .txt: alinha ao índice de tamanho da UI (0=menor, 3=maior).
@@ -74,7 +161,7 @@ static const lv_font_t *viewer_monospace_font_for_settings(void) {
 #endif
 }
 
-/** Estilo “Voltar” tipo iOS: fundo transparente, texto azul, chevron + rótulo (símbolos FontAwesome na fonte UI). */
+/** Estilo "Voltar" tipo iOS: fundo transparente, texto azul, chevron + rótulo. */
 static void viewer_style_ios_back_button(lv_obj_t *btn, lv_obj_t *lbl, const lv_font_t *ui_font) {
   lv_obj_remove_style_all(btn);
   lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
@@ -93,11 +180,142 @@ static void viewer_style_ios_back_button(lv_obj_t *btn, lv_obj_t *lbl, const lv_
   lv_obj_center(lbl);
 }
 
+/**
+ * Calcula quantas linhas cabem no viewport visivel da tabela.
+ * Usa a altura do viewport e a altura total do conteudo para estimar.
+ */
+static unsigned viewer_visible_line_count(void) {
+  if (s_viewer_table == nullptr || s_window_count == 0) {
+    return 1;
+  }
+  lv_obj_update_layout(s_viewer_table);
+  const lv_coord_t viewport_h = lv_obj_get_height(s_viewer_table);
+  const lv_coord_t content_h = lv_obj_get_self_height(s_viewer_table);
+  if (content_h <= 0 || viewport_h <= 0) {
+    return 1;
+  }
+  unsigned vis = (unsigned)((uint32_t)viewport_h * s_window_count / (uint32_t)content_h);
+  return (vis < 1) ? 1 : vis;
+}
+
+/**
+ * Menor indice de linha (0-based) tal que o sufixo bytes[line..EOF] cabe em kTextBufSize.
+ * (Quanto menor o indice, mais linhas no sufixo.) Para ir ao fim do ficheiro sem truncar
+ * por buffer, comeca-se nesta linha e le-se ate EOF numa passagem.
+ */
+static unsigned viewer_tail_fit_first_line(void) {
+  if (s_line_offsets == nullptr || s_total_lines == 0 || s_file_size == 0) {
+    return 0;
+  }
+  const size_t cap = kTextBufSize - 64U;
+  unsigned best = s_total_lines - 1;
+  for (unsigned fl = 0; fl < s_total_lines; ++fl) {
+    const size_t sz = s_file_size - (size_t)s_line_offsets[fl];
+    if (sz <= cap) {
+      best = fl;
+      break; /* fl crescente: primeiro que cabe tem o sufixo mais longo possivel. */
+    }
+  }
+  return best;
+}
+
+/**
+ * Callback dos botoes de navegacao do visualizador.
+ * Page Up/Down avancam pela quantidade de linhas visiveis no viewport (nao o buffer inteiro).
+ * Home/End saltam para inicio/fim do arquivo.
+ * Se o destino cabe dentro da janela carregada, faz scroll local; caso contrario carrega nova janela.
+ */
 static void viewer_nav_btn_cb(lv_event_t *e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_viewer_table == nullptr) {
     return;
   }
   const intptr_t act = reinterpret_cast<intptr_t>(lv_event_get_user_data(e));
+
+  if (s_line_offsets != nullptr && s_total_lines > 0) {
+    lv_obj_update_layout(s_viewer_table);
+
+    const unsigned page_step = viewer_visible_line_count();
+
+    /* Linha do arquivo atualmente visivel no topo do viewport. */
+    const lv_coord_t scroll_y = lv_obj_get_scroll_y(s_viewer_table);
+    const lv_coord_t content_h = lv_obj_get_self_height(s_viewer_table);
+    unsigned cur_visible_line = s_window_start;
+    if (content_h > 0 && s_window_count > 0) {
+      cur_visible_line = s_window_start +
+                         (unsigned)((uint32_t)scroll_y * s_window_count / (uint32_t)content_h);
+    }
+
+    unsigned target_line = cur_visible_line;
+    bool jump_to_end = false;
+
+    if (act == kViewerNavUp) {
+      target_line = (cur_visible_line > page_step) ? cur_visible_line - page_step : 0;
+    } else if (act == kViewerNavDown) {
+      target_line = cur_visible_line + page_step;
+      /* Ultima pagina: ir para a ultima linha do arquivo e rolar ao fundo. */
+      if (target_line >= s_total_lines) {
+        target_line = (s_total_lines > 0) ? s_total_lines - 1 : 0;
+        jump_to_end = true;
+      }
+    } else if (act == kViewerNavTop) {
+      target_line = 0;
+    } else if (act == kViewerNavEnd) {
+      /* Ultima linha (0-based); rolar ao fundo do viewport. */
+      target_line = (s_total_lines > 0) ? s_total_lines - 1 : 0;
+      jump_to_end = true;
+    }
+
+    if (target_line >= s_total_lines && s_total_lines > 0) {
+      target_line = s_total_lines - 1;
+    }
+
+    /* Se a linha-alvo esta dentro da janela carregada, basta fazer scroll local. */
+    if (target_line >= s_window_start &&
+        target_line < s_window_start + s_window_count) {
+      const unsigned row_in_window = target_line - s_window_start;
+      const lv_coord_t new_total_h = lv_obj_get_self_height(s_viewer_table);
+      lv_coord_t target_y;
+      if (jump_to_end) {
+        target_y = LV_COORD_MAX;
+      } else {
+        target_y = (lv_coord_t)(
+            (uint32_t)row_in_window * (uint32_t)new_total_h / s_window_count);
+      }
+      lv_obj_scroll_to_y(s_viewer_table, target_y, LV_ANIM_ON);
+    } else {
+      /* Linha-alvo fora da janela: carregar nova janela centrada nela. */
+      unsigned new_start;
+      if (jump_to_end) {
+        /* Garantir que o trecho desde new_start ate EOF cabe no buffer (8 KiB). */
+        new_start = viewer_tail_fit_first_line();
+      } else {
+        const unsigned margin = kWindowLines / 4;
+        new_start = (target_line > margin) ? target_line - margin : 0;
+        if (new_start + kWindowLines > s_total_lines && s_total_lines > kWindowLines) {
+          new_start = viewer_tail_fit_first_line();
+        }
+      }
+
+      const unsigned max_lines = (s_total_lines > new_start) ? s_total_lines - new_start : 1;
+      load_viewer_window(new_start, max_lines);
+      lv_obj_update_layout(s_viewer_table);
+
+      if (jump_to_end) {
+        lv_obj_scroll_to_y(s_viewer_table, LV_COORD_MAX, LV_ANIM_OFF);
+      } else if (target_line >= s_window_start && s_window_count > 0) {
+        const unsigned row_in_window = target_line - s_window_start;
+        const lv_coord_t new_total_h = lv_obj_get_self_height(s_viewer_table);
+        const lv_coord_t target_y = (lv_coord_t)(
+            (uint32_t)row_in_window * (uint32_t)new_total_h / s_window_count);
+        lv_obj_scroll_to_y(s_viewer_table, target_y, LV_ANIM_OFF);
+      } else {
+        lv_obj_scroll_to_y(s_viewer_table, 0, LV_ANIM_OFF);
+      }
+    }
+    return;
+  }
+
+  /* Fallback: arquivo pequeno sem indice. */
   lv_obj_update_layout(s_viewer_table);
   const lv_coord_t h = lv_obj_get_height(s_viewer_table);
   const lv_coord_t step = LV_MAX(72, h / 3);
@@ -129,7 +347,7 @@ static lv_obj_t *viewer_make_nav_btn(lv_obj_t *col, const char *symbol, intptr_t
 /**
  * Pads e espaçamento entre linhas nas células da tabela.
  * Não limitar max_height: a lv_table calcula a altura pela fonte e pelo texto; um teto baixo
- * (ex.: lh/2) cortava descendentes e linhas com mais de uma linha visual (ver foto).
+ * (ex.: lh/2) cortava descendentes e linhas com mais de uma linha visual.
  */
 static void viewer_apply_compact_table_rows(lv_obj_t *table, const lv_font_t *font) {
   if (table == nullptr || font == nullptr) {
@@ -153,7 +371,6 @@ static void viewer_table_fit_width(lv_obj_t *table) {
     return;
   }
   lv_coord_t cw = lv_obj_get_content_width(table);
-  /* Espaço para ~4 dígitos sem quebra vertical (depende da fonte nas definições). */
   const lv_coord_t num_w = 96;
   if (cw < num_w + 48) {
     return;
@@ -229,14 +446,61 @@ static void format_entry_datetime(time_t ts, char *out, size_t out_sz) {
   }
 }
 
+/* ── Gerenciamento de estado do visualizador paginado ────────────────── */
+
+/** Libera recursos do visualizador paginado (PSRAM, estado). */
+static void viewer_free_state(void) {
+  if (s_line_offsets != nullptr) {
+    heap_caps_free(s_line_offsets);
+    s_line_offsets = nullptr;
+  }
+  s_total_lines = 0;
+  s_file_size = 0;
+  s_window_start = 0;
+  s_window_count = 0;
+  s_viewer_path[0] = '\0';
+  s_viewer_path_label = nullptr;
+  s_viewer_info_label = nullptr;
+  s_loading_window = false;
+  s_last_reload_ms = 0;
+  s_index_truncated = false;
+}
+
+/** Atualiza o label de posicao na barra superior do visualizador. */
+static void update_viewer_info(void) {
+  if (s_viewer_info_label == nullptr) {
+    return;
+  }
+  if (s_total_lines == 0) {
+    lv_label_set_text(s_viewer_info_label, "0 linhas");
+    return;
+  }
+  const unsigned first = s_window_start + 1;
+  unsigned last = s_window_start + s_window_count;
+  if (last > s_total_lines) {
+    last = s_total_lines;
+  }
+
+  if (s_file_size >= 1024) {
+    lv_label_set_text_fmt(s_viewer_info_label, "Linhas %u-%u de %u  (%u KB)",
+                          first, last, s_total_lines, (unsigned)(s_file_size / 1024));
+  } else {
+    lv_label_set_text_fmt(s_viewer_info_label, "Linhas %u-%u de %u  (%u B)",
+                          first, last, s_total_lines, (unsigned)s_file_size);
+  }
+}
+
 static void close_overlay_cb(lv_event_t *e) {
   (void)e;
   s_viewer_table = nullptr;
+  viewer_free_state();
   if (s_overlay != nullptr) {
     lv_obj_del(s_overlay);
     s_overlay = nullptr;
   }
 }
+
+/* ── Funcoes de manipulacao de texto ─────────────────────────────────── */
 
 /** Corta linha no buffer (ASCII .txt/.log) para caber na célula da tabela. */
 static void truncate_line_for_cell(char *line) {
@@ -272,7 +536,7 @@ static void normalize_text_buffer(char *buf) {
 
 /**
  * Parte o texto em linhas no próprio buffer (substitui '\n' por '\0').
- * @param truncated true se o ficheiro tiver mais linhas do que max_lines.
+ * @param truncated true se o buffer tiver mais linhas do que max_lines.
  */
 static unsigned split_lines_inplace(char *buf, char **out_lines, unsigned max_lines, bool *truncated) {
   *truncated = false;
@@ -301,71 +565,526 @@ static unsigned split_lines_inplace(char *buf, char **out_lines, unsigned max_li
   return n;
 }
 
-static void show_text_file(const char *full_path) {
-  static char text_buf[kTxtMaxBytes];
-  static char *line_ptrs[kMaxViewerLines];
+/* ── Janela deslizante: carga de trecho do arquivo ───────────────────── */
 
-  /** Mutex ja' detido pela tarefa LVGL (evento de clique). */
+/**
+ * Carrega uma janela de linhas do arquivo aberto e popula a lv_table.
+ * Faz unlock/lock do mutex LVGL internamente para acesso ao SD.
+ * @param first_line Indice (0-based) da primeira linha a carregar.
+ * @param count Numero maximo de linhas a carregar.
+ * @return true se a carga foi bem-sucedida.
+ */
+static bool load_viewer_window(unsigned first_line, unsigned count) {
+  if (s_viewer_table == nullptr || s_line_offsets == nullptr || s_total_lines == 0) {
+    return false;
+  }
 
-  const lv_font_t *ui_font = s_active_ui_font != nullptr ? s_active_ui_font : (const lv_font_t *)LV_FONT_DEFAULT;
-  const lv_font_t *mono_font = viewer_monospace_font_for_settings();
+  if (first_line >= s_total_lines) {
+    first_line = s_total_lines - 1;
+  }
+  if (first_line + count > s_total_lines) {
+    count = s_total_lines - first_line;
+  }
+  if (count == 0) {
+    return false;
+  }
 
-  /* Overlay no mesmo parent que o explorador (area abaixo da barra): barra de estado mantém-se visivel. */
-  lv_obj_t *const host = (s_root != nullptr) ? lv_obj_get_parent(s_root) : nullptr;
-  lv_obj_t *const ov_parent = (host != nullptr) ? host : lv_layer_top();
+  /* Calcular range de bytes a ler do arquivo. */
+  const uint32_t start_offset = s_line_offsets[first_line];
+  uint32_t end_offset;
+  if (first_line + count < s_total_lines) {
+    end_offset = s_line_offsets[first_line + count];
+  } else {
+    end_offset = (uint32_t)s_file_size;
+  }
 
-  ui_loading_show(ov_parent, "A ler ficheiro...");
-  ui_loading_flush_display();
+  size_t bytes_needed = end_offset - start_offset;
+
+  /* Se os dados excedem o buffer, reduzir a janela. */
+  while (bytes_needed > kTextBufSize - 64 && count > 1) {
+    count--;
+    if (first_line + count < s_total_lines) {
+      end_offset = s_line_offsets[first_line + count];
+    } else {
+      end_offset = (uint32_t)s_file_size;
+    }
+    bytes_needed = end_offset - start_offset;
+  }
+  if (bytes_needed > kTextBufSize - 64) {
+    bytes_needed = kTextBufSize - 64;
+  }
+
+  s_loading_window = true;
+
+  size_t nread = 0;
+  bool read_ok = false;
 
   lvgl_port_unlock();
 
-  memset(text_buf, 0, sizeof(text_buf));
-  bool file_truncated = false;
-  bool open_fail = false;
-  bool is_dir_file = false;
-  size_t nread = 0;
-  size_t total = 0;
-
-  const uint32_t t0 = millis();
   sd_access_sync([&] {
-    File f = SD.open(full_path, FILE_READ);
-    if (!f) {
-      open_fail = true;
-    } else if (f.isDirectory()) {
-      is_dir_file = true;
-      f.close();
-    } else {
-      size_t room = sizeof(text_buf) - 64;
-      while (nread < room) {
-        const size_t chunk = ((room - nread) > 512U) ? 512U : (room - nread);
-        const int got = f.read((uint8_t *)(text_buf + nread), chunk);
+    File f = SD.open(s_viewer_path, FILE_READ);
+    if (f) {
+      f.seek(start_offset);
+      while (nread < bytes_needed) {
+        const size_t chunk = ((bytes_needed - nread) > 512U) ? 512U : (bytes_needed - nread);
+        const int got = f.read((uint8_t *)(s_text_buf + nread), chunk);
         if (got <= 0) {
           break;
         }
         nread += (size_t)got;
       }
-      total = f.size();
       f.close();
-      text_buf[nread] = '\0';
-      normalize_text_buffer(text_buf);
-      if (total > nread) {
-        file_truncated = true;
-        snprintf(text_buf + nread, sizeof(text_buf) - nread, "\n[... +%u bytes nao lidos ...]\n",
-                   (unsigned)(total - (size_t)nread));
+      read_ok = true;
+    }
+  });
+
+  (void)lvgl_port_lock(-1);
+
+  if (!read_ok || nread == 0) {
+    s_loading_window = false;
+    return false;
+  }
+
+  s_text_buf[nread] = '\0';
+  normalize_text_buffer(s_text_buf);
+
+  bool dummy_trunc = false;
+  const unsigned nlines = split_lines_inplace(s_text_buf, s_line_ptrs, count, &dummy_trunc);
+
+  lv_obj_t *table = s_viewer_table;
+
+  const bool show_overflow = (s_index_truncated && first_line + nlines >= s_total_lines);
+  const unsigned extra = show_overflow ? 1u : 0u;
+
+  lv_table_set_row_cnt(table, (uint16_t)(nlines + extra));
+
+  char num[12];
+  for (unsigned i = 0; i < nlines; i++) {
+    truncate_line_for_cell(s_line_ptrs[i]);
+    snprintf(num, sizeof(num), "%u", first_line + i + 1);
+    lv_table_set_cell_value(table, i, 0, num);
+    lv_table_set_cell_value(table, i, 1, s_line_ptrs[i]);
+  }
+
+  if (show_overflow) {
+    lv_table_set_cell_value(table, nlines, 0, "!");
+    lv_table_set_cell_value(table, nlines, 1,
+                            "(Arquivo excede limite de linhas indexaveis.)");
+  }
+
+  s_window_start = first_line;
+  s_window_count = nlines;
+
+  update_viewer_info();
+
+  s_loading_window = false;
+  return true;
+}
+
+/**
+ * Callback de scroll na tabela do visualizador: detecta proximidade das bordas
+ * e carrega nova janela de linhas automaticamente (sliding window).
+ */
+static void viewer_scroll_event_cb(lv_event_t *e) {
+  if (lv_event_get_code(e) != LV_EVENT_SCROLL) {
+    return;
+  }
+  if (s_loading_window || s_total_lines == 0 || s_viewer_table == nullptr) {
+    return;
+  }
+  if (s_line_offsets == nullptr) {
+    return;
+  }
+
+  /* Cooldown para evitar recargas excessivas durante animacao de scroll. */
+  const uint32_t now = millis();
+  if (now - s_last_reload_ms < kReloadCooldownMs) {
+    return;
+  }
+
+  lv_obj_t *table = s_viewer_table;
+  lv_obj_update_layout(table);
+
+  const lv_coord_t scroll_y = lv_obj_get_scroll_y(table);
+  const lv_coord_t scroll_bottom = lv_obj_get_scroll_bottom(table);
+
+  unsigned new_start = s_window_start;
+
+  if (scroll_bottom < kScrollThresholdPx &&
+      s_window_start + s_window_count < s_total_lines) {
+    /* Perto do fim: deslocar janela para baixo. */
+    new_start = s_window_start + kWindowShift;
+    if (new_start + kWindowLines > s_total_lines && s_total_lines > kWindowLines) {
+      /* Usar inicio que faz o sufixo caber no buffer (nao s_total_lines - kWindowLines). */
+      new_start = viewer_tail_fit_first_line();
+    }
+  } else if (scroll_y < kScrollThresholdPx && s_window_start > 0) {
+    /* Perto do topo: deslocar janela para cima. */
+    new_start = (s_window_start > kWindowShift) ? s_window_start - kWindowShift : 0;
+  }
+
+  if (new_start == s_window_start) {
+    return;
+  }
+
+  s_last_reload_ms = now;
+
+  /* Calcular qual linha do arquivo esta visivel no topo do viewport. */
+  const lv_coord_t total_h = lv_obj_get_self_height(table);
+  unsigned visible_file_line = s_window_start;
+  if (total_h > 0 && s_window_count > 0) {
+    visible_file_line = s_window_start +
+                        (unsigned)((uint32_t)scroll_y * s_window_count / (uint32_t)total_h);
+  }
+
+  {
+    const unsigned max_lines = (s_total_lines > new_start) ? s_total_lines - new_start : 1;
+    load_viewer_window(new_start, max_lines);
+  }
+
+  /* Restaurar posicao de scroll para manter a mesma linha visivel. */
+  lv_obj_update_layout(table);
+  const lv_coord_t new_total_h = lv_obj_get_self_height(table);
+  if (new_total_h > 0 && s_window_count > 0 && visible_file_line >= s_window_start) {
+    const unsigned row_in_window = visible_file_line - s_window_start;
+    const lv_coord_t target_y = (lv_coord_t)(
+        (uint32_t)row_in_window * (uint32_t)new_total_h / s_window_count);
+    lv_obj_scroll_to_y(table, target_y, LV_ANIM_OFF);
+  }
+}
+
+/**
+ * Posiciona o visualizador na ultima pagina (equivalente ao botao Fim na barra lateral).
+ */
+static void viewer_scroll_to_last_page(void) {
+  if (s_viewer_table == nullptr || s_line_offsets == nullptr || s_total_lines == 0) {
+    return;
+  }
+  const unsigned new_start = viewer_tail_fit_first_line();
+  const unsigned max_lines = (s_total_lines > new_start) ? s_total_lines - new_start : 1U;
+  (void)load_viewer_window(new_start, max_lines);
+  lv_obj_update_layout(s_viewer_table);
+  lv_obj_scroll_to_y(s_viewer_table, LV_COORD_MAX, LV_ANIM_OFF);
+  update_viewer_info();
+}
+
+/**
+ * Se o mesmo .txt ja esta aberto e o ficheiro cresceu (append), estende apenas o indice
+ * de linhas a partir de s_file_size — muito mais rapido que reindexar tudo (fila sd_io).
+ * @return true se o caso foi tratado (ou nada a fazer); false para forcar show_text_file completo.
+ */
+static bool viewer_try_extend_index_after_grow(const char *path) {
+  if (path == nullptr || path[0] == '\0') {
+    return false;
+  }
+  if (s_overlay == nullptr || s_viewer_table == nullptr || s_line_offsets == nullptr) {
+    return false;
+  }
+  if (s_total_lines == 0U || strcmp(s_viewer_path, path) != 0 || s_index_truncated) {
+    return false;
+  }
+
+  const size_t old_sz = s_file_size;
+  size_t new_sz = old_sz;
+
+  lvgl_port_unlock();
+  sd_access_sync_front([&]() {
+    File f = SD.open(path, FILE_READ);
+    if (f && !f.isDirectory()) {
+      new_sz = f.size();
+    }
+    if (f) {
+      f.close();
+    }
+  });
+  (void)lvgl_port_lock(-1);
+
+  if (new_sz < old_sz) {
+    return false;
+  }
+  if (new_sz <= old_sz) {
+    return true;
+  }
+
+  static constexpr size_t kTailChunk = 2048U;
+  size_t scan_pos = old_sz;
+  while (scan_pos < new_sz) {
+    size_t to_read = new_sz - scan_pos;
+    if (to_read > kTailChunk) {
+      to_read = kTailChunk;
+    }
+    char chunk[kTailChunk];
+    int got = 0;
+    lvgl_port_unlock();
+    sd_access_sync_front([&]() {
+      File f = SD.open(path, FILE_READ);
+      if (!f || f.isDirectory()) {
+        return;
+      }
+      if (!f.seek(scan_pos)) {
+        f.close();
+        return;
+      }
+      got = f.read(reinterpret_cast<uint8_t *>(chunk), to_read);
+      f.close();
+    });
+    (void)lvgl_port_lock(-1);
+
+    if (got <= 0) {
+      return false;
+    }
+    for (int i = 0; i < got; ++i) {
+      if (chunk[i] != '\n') {
+        continue;
+      }
+      if (s_total_lines >= kMaxIndexLines) {
+        return false;
+      }
+      const uint32_t next_off = static_cast<uint32_t>(scan_pos + static_cast<size_t>(i) + 1U);
+      uint32_t *grown = static_cast<uint32_t *>(
+          heap_caps_realloc(s_line_offsets, (s_total_lines + 1U) * sizeof(uint32_t), MALLOC_CAP_SPIRAM));
+      if (grown == nullptr) {
+        return false;
+      }
+      s_line_offsets = grown;
+      s_line_offsets[s_total_lines] = next_off;
+      s_total_lines++;
+    }
+    scan_pos += static_cast<size_t>(got);
+  }
+
+  s_file_size = new_sz;
+  while (s_total_lines > 1U && s_line_offsets[s_total_lines - 1U] >= static_cast<uint32_t>(s_file_size)) {
+    s_total_lines--;
+  }
+  viewer_scroll_to_last_page();
+  return true;
+}
+
+/**
+ * Apos cada linha RS485 gravada (contador na tarefa sd_io), reabre o .txt do dia no
+ * visualizador com scroll no fim (mutex LVGL detido pelo handler de timer).
+ */
+static void rs485_open_timer_cb(lv_timer_t * /*t*/) {
+  const uint32_t seq = s_rs485_saved_seq.load(std::memory_order_relaxed);
+  if (seq == s_rs485_saved_last_handled) {
+    return;
+  }
+  s_rs485_saved_last_handled = seq;
+  if (s_root == nullptr || !sd_access_is_mounted()) {
+    return;
+  }
+  char path[256];
+  if (!cycles_rs485_format_today_path(path, sizeof path)) {
+    return;
+  }
+  bool exists = false;
+  lvgl_port_unlock();
+  sd_access_sync_front([&path, &exists]() {
+    if (SD.exists(path)) {
+      File probe = SD.open(path, FILE_READ);
+      if (probe && !probe.isDirectory()) {
+        exists = true;
+      }
+      if (probe) {
+        probe.close();
       }
     }
   });
+  (void)lvgl_port_lock(-1);
+  if (exists) {
+    if (!viewer_try_extend_index_after_grow(path)) {
+      show_text_file(path, true, true);
+    }
+  }
+}
+
+/**
+ * Se o overlay mostra o ficheiro .txt do dia em /CICLOS e o tamanho na SD aumentou,
+ * reindexa e salta para o fim (novas linhas RS485 visiveis).
+ */
+static void cycles_live_timer_cb(lv_timer_t * /*t*/) {
+  if (s_overlay == nullptr || s_viewer_path[0] == '\0' || s_loading_window) {
+    return;
+  }
+  char today[256];
+  if (!cycles_rs485_format_today_path(today, sizeof today)) {
+    return;
+  }
+  if (strcmp(s_viewer_path, today) != 0) {
+    return;
+  }
+  size_t sz = 0;
+  lvgl_port_unlock();
+  sd_access_sync_front([&sz]() {
+    File f = SD.open(s_viewer_path, FILE_READ);
+    if (f) {
+      sz = f.size();
+      f.close();
+    }
+  });
+  (void)lvgl_port_lock(-1);
+
+  if (sz > s_file_size) {
+    if (!viewer_try_extend_index_after_grow(today)) {
+      show_text_file(s_viewer_path, true, true);
+    }
+  }
+}
+
+/* ── Visualizador de arquivo texto (.txt / .log) ─────────────────────── */
+
+static void show_text_file(const char *full_path, bool quiet_index, bool scroll_to_end) {
+  struct SuppressAutoFileListRefreshGuard {
+    SuppressAutoFileListRefreshGuard() { ++s_suppress_auto_file_list_refresh; }
+    ~SuppressAutoFileListRefreshGuard() { --s_suppress_auto_file_list_refresh; }
+  } suppress_list_refresh;
+
+  char path_work[256];
+  strlcpy(path_work, full_path != nullptr ? full_path : "", sizeof(path_work));
+
+  const lv_font_t *ui_font = s_active_ui_font != nullptr
+                                  ? s_active_ui_font
+                                  : (const lv_font_t *)LV_FONT_DEFAULT;
+  const lv_font_t *mono_font = viewer_monospace_font_for_settings();
+
+  lv_obj_t *const host = (s_root != nullptr) ? lv_obj_get_parent(s_root) : nullptr;
+  lv_obj_t *const ov_parent = (host != nullptr) ? host : lv_layer_top();
+
+  if (s_overlay != nullptr) {
+    s_viewer_table = nullptr;
+    lv_obj_del(s_overlay);
+    s_overlay = nullptr;
+  }
+  viewer_free_state();
+  strlcpy(s_viewer_path, path_work, sizeof(s_viewer_path));
+
+  if (!quiet_index) {
+    ui_loading_show(ov_parent, "Indexando arquivo...");
+    /* Sem lv_refr_now aqui: com o mutex LVGL detido pelo setup ou pela tarefa LVGL, o flush
+     * sincrono pode bloquear a tarefa lvgl (RGB) e congelar barra de estado / touch. */
+  }
+
+  /* ── Fase 1: indexar offsets de linhas (sem mutex LVGL) ──────────── */
+
+  lvgl_port_unlock();
+
+  bool open_fail = false;
+  bool is_dir_file = false;
+
+  uint32_t *offsets = static_cast<uint32_t *>(
+      heap_caps_malloc(kMaxIndexLines * sizeof(uint32_t), MALLOC_CAP_SPIRAM));
+
+  if (offsets == nullptr) {
+    app_log_writef("WARN", "PSRAM: falha ao alocar indice de linhas (%u bytes)",
+                   (unsigned)(kMaxIndexLines * sizeof(uint32_t)));
+    open_fail = true;
+  }
+
+  const uint32_t t0 = millis();
+
+  if (!open_fail) {
+    /* Abrir e obter tamanho num job curto; a leitura completa nao pode ficar num unico
+     * sd_access_sync — bloqueia sd_io durante segundos (ficheiros MB numa linha) e
+     * outros clientes (ex.: async_tcp a servir /api/fs/file) disparam o task WDT. */
+    sd_access_sync([&] {
+      File f = SD.open(path_work, FILE_READ);
+      if (!f) {
+        open_fail = true;
+        return;
+      }
+      if (f.isDirectory()) {
+        is_dir_file = true;
+        f.close();
+        return;
+      }
+      s_file_size = f.size();
+      f.close();
+    });
+  }
+
+  if (!open_fail && !is_dir_file) {
+    /* Chunks maiores = menos jobs na fila sd_io. O portal HTTP usa sd_access_sync_front()
+     * para saltar a frente desta fila (evita TWDT em async_tcp durante indexacao longa). */
+    static constexpr size_t kScanChunk = 16384;
+    /* static: evita stack grande na task LVGL; show_text_file nao e reentrante. */
+    static char scan_buf[kScanChunk];
+    offsets[0] = 0;
+    unsigned line_count = 1;
+    size_t pos = 0;
+
+    while (pos < s_file_size && line_count < kMaxIndexLines) {
+      int got = 0;
+      sd_access_sync([&] {
+        File f = SD.open(path_work, FILE_READ);
+        if (!f) {
+          open_fail = true;
+          return;
+        }
+        if (!f.seek(static_cast<uint32_t>(pos))) {
+          f.close();
+          open_fail = true;
+          return;
+        }
+        size_t to_read = kScanChunk;
+        if (pos + to_read > s_file_size) {
+          to_read = s_file_size - pos;
+        }
+        got = f.read(reinterpret_cast<uint8_t *>(scan_buf), to_read);
+        f.close();
+      });
+      if (open_fail || got <= 0) {
+        break;
+      }
+      for (int i = 0; i < got && line_count < kMaxIndexLines; i++) {
+        if (scan_buf[i] == '\n') {
+          offsets[line_count++] = static_cast<uint32_t>(pos + static_cast<size_t>(i) + 1U);
+        }
+      }
+      pos += static_cast<size_t>(got);
+    }
+
+    if (!open_fail) {
+      /* Remover ultima linha se for vazia (trailing newline). */
+      if (line_count > 1 && offsets[line_count - 1] >= static_cast<uint32_t>(s_file_size)) {
+        line_count--;
+      }
+      s_total_lines = line_count;
+      s_index_truncated = (line_count >= kMaxIndexLines);
+    }
+  }
+
   const uint32_t dt_ms = millis() - t0;
-  if (open_fail) {
-    app_log_writef("WARN", "Leitura ficheiro texto falhou: %s", full_path);
-  } else if (!is_dir_file) {
-    app_log_writef("INFO", "Leitura ficheiro texto: %s (%u/%u bytes, %ums)", full_path, (unsigned)nread,
-                   (unsigned)total, (unsigned)dt_ms);
+
+  if (open_fail || is_dir_file) {
+    s_total_lines = 0;
+    s_file_size = 0;
+    if (offsets != nullptr) {
+      heap_caps_free(offsets);
+    }
+    s_line_offsets = nullptr;
+  } else {
+    /* Reduzir alocacao ao tamanho efetivo. */
+    if (s_total_lines > 0 && s_total_lines < kMaxIndexLines) {
+      uint32_t *shrunk = static_cast<uint32_t *>(
+          heap_caps_realloc(offsets, s_total_lines * sizeof(uint32_t), MALLOC_CAP_SPIRAM));
+      if (shrunk != nullptr) {
+        offsets = shrunk;
+      }
+    }
+    s_line_offsets = offsets;
+
+    app_log_writef("INFO", "Indexacao arquivo: %s (%u linhas, %u bytes, %ums)",
+                   path_work, s_total_lines, (unsigned)s_file_size, (unsigned)dt_ms);
   }
 
   (void)lvgl_port_lock(-1);
 
-  ui_loading_hide();
+  if (!quiet_index) {
+    ui_loading_hide();
+  }
+
+  /* ── Fase 2: criar overlay e widgets ─────────────────────────────── */
 
   s_overlay = lv_obj_create(ov_parent);
   lv_obj_set_size(s_overlay, LV_PCT(100), LV_PCT(100));
@@ -377,17 +1096,44 @@ static void show_text_file(const char *full_path) {
   lv_obj_set_style_pad_all(s_overlay, 4, 0);
   lv_obj_set_style_pad_row(s_overlay, 4, 0);
 
+  /* Barra superior: Voltar + nome/caminho do ficheiro + indicador de linhas. */
   lv_obj_t *back_row = lv_obj_create(s_overlay);
   lv_obj_remove_style_all(back_row);
   lv_obj_set_width(back_row, LV_PCT(100));
   lv_obj_set_height(back_row, LV_SIZE_CONTENT);
   lv_obj_clear_flag(back_row, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_layout(back_row, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(back_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(back_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(back_row, 8, 0);
 
   lv_obj_t *back = lv_btn_create(back_row);
   lv_obj_t *back_lbl = lv_label_create(back);
   viewer_style_ios_back_button(back, back_lbl, ui_font);
   lv_obj_add_event_cb(back, close_overlay_cb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_align(back, LV_ALIGN_LEFT_MID, 0, 0);
+
+  s_viewer_path_label = lv_label_create(back_row);
+  /** Uma linha: caminho VFS completo (inclui o nome do ficheiro); DOT corta com "..." se nao couber. */
+  lv_label_set_long_mode(s_viewer_path_label, LV_LABEL_LONG_DOT);
+  lv_obj_set_flex_grow(s_viewer_path_label, 1);
+  if (path_work[0] == '\0') {
+    lv_label_set_text(s_viewer_path_label, "—");
+  } else {
+    lv_label_set_text(s_viewer_path_label, path_work);
+  }
+  lv_obj_set_style_text_color(s_viewer_path_label, lv_color_hex(0xCCCCCC), LV_PART_MAIN);
+  if (ui_font != nullptr) {
+    lv_obj_set_style_text_font(s_viewer_path_label, ui_font, LV_PART_MAIN);
+  }
+
+  s_viewer_info_label = lv_label_create(back_row);
+  lv_label_set_text(s_viewer_info_label, "");
+  lv_obj_set_style_text_color(s_viewer_info_label, lv_color_hex(0x888888), LV_PART_MAIN);
+  if (ui_font != nullptr) {
+    lv_obj_set_style_text_font(s_viewer_info_label, ui_font, LV_PART_MAIN);
+  }
+  lv_label_set_long_mode(s_viewer_info_label, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(s_viewer_info_label, LV_SIZE_CONTENT);
 
   /* Linha principal: tabela (flex grow) + coluna de botões à direita. */
   lv_obj_t *viewer_row = lv_obj_create(s_overlay);
@@ -407,6 +1153,9 @@ static void show_text_file(const char *full_path) {
   lv_obj_add_event_cb(table, viewer_table_on_size_cb, LV_EVENT_SIZE_CHANGED, nullptr);
   lv_obj_set_scrollbar_mode(table, LV_SCROLLBAR_MODE_AUTO);
 
+  /* Registrar callback de scroll para janela deslizante. */
+  lv_obj_add_event_cb(table, viewer_scroll_event_cb, LV_EVENT_SCROLL, nullptr);
+
   lv_obj_t *btn_col = lv_obj_create(viewer_row);
   lv_obj_remove_style_all(btn_col);
   lv_obj_set_size(btn_col, kViewerBtnColW, LV_PCT(100));
@@ -422,50 +1171,37 @@ static void show_text_file(const char *full_path) {
 
   s_viewer_table = table;
 
-  /* Início: LV_SYMBOL_HOME (doc lv_symbol_def.h). Fim: LV_SYMBOL_NEXT (último segmento). */
   viewer_make_nav_btn(btn_col, LV_SYMBOL_UP, kViewerNavUp, ui_font);
   viewer_make_nav_btn(btn_col, LV_SYMBOL_DOWN, kViewerNavDown, ui_font);
   viewer_make_nav_btn(btn_col, LV_SYMBOL_HOME, kViewerNavTop, ui_font);
   viewer_make_nav_btn(btn_col, LV_SYMBOL_NEXT, kViewerNavEnd, ui_font);
 
+  /* ── Fase 3: popular a tabela ────────────────────────────────────── */
+
   if (open_fail) {
     lv_table_set_row_cnt(table, 1);
     lv_table_set_cell_value(table, 0, 0, "-");
-    lv_table_set_cell_value(table, 0, 1, "(Nao foi possivel abrir o ficheiro.)");
+    lv_table_set_cell_value(table, 0, 1, "(Nao foi possivel abrir o arquivo.)");
   } else if (is_dir_file) {
     lv_table_set_row_cnt(table, 1);
     lv_table_set_cell_value(table, 0, 0, "-");
-    lv_table_set_cell_value(table, 0, 1, "(E uma pasta, nao um ficheiro.)");
+    lv_table_set_cell_value(table, 0, 1, "(E uma pasta, nao um arquivo.)");
+  } else if (s_total_lines == 0) {
+    lv_table_set_row_cnt(table, 1);
+    lv_table_set_cell_value(table, 0, 0, "1");
+    lv_table_set_cell_value(table, 0, 1, "(vazio)");
+  } else if (scroll_to_end) {
+    viewer_scroll_to_last_page();
   } else {
-    bool lines_truncated = false;
-    unsigned nlines = split_lines_inplace(text_buf, line_ptrs, kMaxViewerLines, &lines_truncated);
-    if (nlines == 0) {
-      lv_table_set_row_cnt(table, 1);
-      lv_table_set_cell_value(table, 0, 0, "1");
-      lv_table_set_cell_value(table, 0, 1, "(vazio)");
-    } else {
-      unsigned extra_rows = (file_truncated || lines_truncated) ? 1u : 0u;
-      lv_table_set_row_cnt(table, (uint16_t)(nlines + extra_rows));
-      char num[12];
-      for (unsigned i = 0; i < nlines; i++) {
-        truncate_line_for_cell(line_ptrs[i]);
-        snprintf(num, sizeof(num), "%u", i + 1);
-        lv_table_set_cell_value(table, i, 0, num);
-        lv_table_set_cell_value(table, i, 1, line_ptrs[i]);
-      }
-      if (extra_rows) {
-        lv_table_set_cell_value(table, nlines, 0, "!");
-        const char *msg = lines_truncated
-                              ? "(Mais linhas no ficheiro; mostradas apenas as primeiras.)"
-                              : "(Conteudo do ficheiro foi truncado na leitura.)";
-        lv_table_set_cell_value(table, nlines, 1, msg);
-      }
-    }
+    /* Carregar primeira janela de linhas. */
+    load_viewer_window(0, kWindowLines);
   }
 
   lv_obj_update_layout(s_overlay);
   viewer_table_fit_width(table);
 }
+
+/* ── Explorador de ficheiros (lista de directorio) ───────────────────── */
 
 static void refresh_file_list(bool show_loading_overlay);
 
@@ -497,107 +1233,198 @@ static void on_list_btn_clicked(lv_event_t *e) {
   }
 }
 
-static void refresh_file_list(bool show_loading_overlay) {
+/**
+ * Finaliza a listagem na task LVGL (executado via lv_async_call).
+ * Preenche `s_list` a partir dos buffers preenchidos pelo scan sd_io.
+ */
+static void refresh_file_list_finish_cb(void * /*user_data*/) {
+  /* UI pode ter sido desmontada enquanto o scan corria. */
   if (s_list == nullptr || s_path_label == nullptr) {
+    s_refresh_in_flight = false;
     return;
-  }
-
-  if (show_loading_overlay) {
-    ui_loading_show(file_browser_loading_parent(), "A carregar ficheiros da pasta...");
-    ui_loading_flush_display();
   }
 
   lv_obj_clean(s_list);
   s_entry_count = 0;
 
-  lvgl_port_unlock();
-
-  unsigned scanned = 0;
-  bool dir_ok = false;
-  sd_access_sync([&] {
-    File dir = SD.open(s_current_path);
-    if (dir && dir.isDirectory()) {
-      dir_ok = true;
-      for (;;) {
-        File entry = dir.openNextFile();
-        if (!entry) {
-          break;
-        }
-        if (scanned >= kMaxListEntries) {
-          entry.close();
-          break;
-        }
-        const char *fullpath = entry.path();
-        const char *name = entry.name();
-        if (fullpath == nullptr || name == nullptr || name[0] == '\0') {
-          entry.close();
-          continue;
-        }
-        if (strcmp(fullpath, s_current_path) == 0) {
-          entry.close();
-          continue;
-        }
-        if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
-          entry.close();
-          continue;
-        }
-        strlcpy(s_entry_paths[scanned], fullpath, sizeof(s_entry_paths[0]));
-        s_entry_is_dir[scanned] = entry.isDirectory();
-        char short_name[48];
-        strlcpy(short_name, name, sizeof(short_name));
-        const time_t last_write = sd_access_fat_mtime(fullpath);
-        char date_buf[20];
-        format_entry_datetime(last_write, date_buf, sizeof(date_buf));
-        if (entry.isDirectory()) {
-          snprintf(s_entry_lines[scanned], sizeof(s_entry_lines[0]), "%s %-22s  <DIR>  %s", LV_SYMBOL_DIRECTORY,
-                   short_name, date_buf);
-        } else {
-          snprintf(s_entry_lines[scanned], sizeof(s_entry_lines[0]), "%s %-22s  %8lu B  %s", LV_SYMBOL_FILE,
-                   short_name, (unsigned long)entry.size(), date_buf);
-        }
-        entry.close();
-        scanned++;
-      }
-    }
-    if (dir) {
-      dir.close();
-    }
-  });
-
-  (void)lvgl_port_lock(-1);
-
-  if (!dir_ok) {
+  if (!s_async_dir_ok) {
     app_log_writef("WARN", "Falha ao abrir diretorio no SD: %s", s_current_path);
     if (strcmp(s_current_path, kFsRoot) == 0) {
       lv_label_set_text(s_path_label, "/sd (erro ao abrir)");
     } else {
       lv_label_set_text_fmt(s_path_label, "/sd%s (erro)", s_current_path);
     }
-    if (show_loading_overlay) {
+    if (s_async_show_overlay) {
       ui_loading_hide();
     }
+    s_refresh_in_flight = false;
     return;
   }
 
   if (strcmp(s_current_path, kFsRoot) != 0) {
     lv_obj_t *up = lv_list_add_btn(s_list, LV_SYMBOL_UP, "..  <DIR>");
-    lv_obj_add_event_cb(up, on_list_btn_clicked, LV_EVENT_CLICKED, reinterpret_cast<void *>(kUserDataParentDir));
+    lv_obj_add_event_cb(up, on_list_btn_clicked, LV_EVENT_CLICKED,
+                        reinterpret_cast<void *>(kUserDataParentDir));
   }
 
-  for (unsigned i = 0; i < scanned; i++) {
+  for (unsigned i = 0; i < s_async_scanned; i++) {
     lv_obj_t *btn = lv_list_add_btn(s_list, nullptr, s_entry_lines[i]);
-    lv_obj_add_event_cb(btn, on_list_btn_clicked, LV_EVENT_CLICKED, reinterpret_cast<void *>(static_cast<uintptr_t>(i)));
+    lv_obj_add_event_cb(btn, on_list_btn_clicked, LV_EVENT_CLICKED,
+                        reinterpret_cast<void *>(static_cast<uintptr_t>(i)));
   }
-  s_entry_count = scanned;
+  s_entry_count = s_async_scanned;
 
   update_path_label();
   s_last_refresh_ms = millis();
   if (s_last_refresh_ms == 0) {
     s_last_refresh_ms = 1;
   }
-  if (show_loading_overlay) {
+  if (s_async_show_overlay) {
     ui_loading_hide();
   }
+  s_refresh_in_flight = false;
+}
+
+/**
+ * Publica a finalizacao na task LVGL. Pode ser chamado a partir da task sd_io.
+ * lv_async_call tem fila propria; protegido com lvgl_port_lock para serializar
+ * acesso ao core LVGL (LVGL 8.3 nao exige mutex para lv_async_call, mas o
+ * projeto ja utiliza port_lock como barreira geral de thread-safety).
+ */
+static void refresh_file_list_post_finish(void) {
+  if (lvgl_port_lock(500)) {
+    lv_async_call(refresh_file_list_finish_cb, nullptr);
+    lvgl_port_unlock();
+  } else {
+    /* Fallback: se o lock LVGL nao pode ser obtido, libera a flag para evitar
+     * ficar preso; o proximo clique volta a tentar. */
+    s_refresh_in_flight = false;
+  }
+}
+
+/**
+ * Executa toda a listagem num unico job sd_io. Evita recursao:
+ * `sd_access_async` executa inline quando o chamador ja esta na task sd_io,
+ * logo re-enfileirar a partir de si proprio converte-se em recursao directa
+ * e estoura a stack. Em vez disso fazemos um loop simples e intercalamos
+ * vTaskDelay(1) a cada algumas entradas para ceder CPU a async_tcp/FTP
+ * (evita TWDT). `kMaxListEntries`=48 mantem o tempo total < 1s tipico.
+ */
+static void refresh_scan_worker(void) {
+  /**
+   * VFS Arduino abre um FILE* (newlib fopen) por cada entrada listada, e cada
+   * fopen aloca um mutex recursivo via xSemaphoreCreateRecursiveMutex. Se o
+   * heap interno estiver baixo, o newlib chama abort() em lock_init_generic.
+   * Rejeitamos o scan com aviso quando ha menos de kMinInternalHeapBytes livres.
+   */
+  static constexpr uint32_t kMinInternalHeapBytes = 12U * 1024U;
+  const uint32_t heap_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  Serial.printf("[fb] scan start: heap_int_free=%u\n", (unsigned)heap_free);
+  if (heap_free < kMinInternalHeapBytes) {
+    app_log_writef("WARN",
+                   "File browser: heap interno baixo (%u B), scan abortado",
+                   (unsigned)heap_free);
+    s_async_dir_ok = false;
+    refresh_file_list_post_finish();
+    return;
+  }
+
+  File dir = SD.open(s_current_path);
+  if (!dir || !dir.isDirectory()) {
+    s_async_dir_ok = false;
+    if (dir) {
+      dir.close();
+    }
+    refresh_file_list_post_finish();
+    return;
+  }
+  s_async_dir_ok = true;
+
+  while (s_async_scanned < kMaxListEntries) {
+    File entry = dir.openNextFile();
+    if (!entry) {
+      break;
+    }
+    s_async_consumed++;
+
+    const char *fullpath = entry.path();
+    const char *name = entry.name();
+    if (fullpath == nullptr || name == nullptr || name[0] == '\0' ||
+        strcmp(fullpath, s_current_path) == 0 || strcmp(name, ".") == 0 ||
+        strcmp(name, "..") == 0) {
+      entry.close();
+      continue;
+    }
+    strlcpy(s_entry_paths[s_async_scanned], fullpath, sizeof(s_entry_paths[0]));
+    s_entry_is_dir[s_async_scanned] = entry.isDirectory();
+    char short_name[48];
+    strlcpy(short_name, name, sizeof(short_name));
+    const time_t last_write = entry.getLastWrite();
+    char date_buf[20];
+    format_entry_datetime(last_write, date_buf, sizeof(date_buf));
+    if (entry.isDirectory()) {
+      snprintf(s_entry_lines[s_async_scanned], sizeof(s_entry_lines[0]),
+               "%s %-22s  <DIR>  %s", LV_SYMBOL_DIRECTORY, short_name, date_buf);
+    } else {
+      snprintf(s_entry_lines[s_async_scanned], sizeof(s_entry_lines[0]),
+               "%s %-22s  %8lu B  %s", LV_SYMBOL_FILE, short_name,
+               (unsigned long)entry.size(), date_buf);
+    }
+    entry.close();
+    s_async_scanned++;
+
+    /* Ceder CPU periodicamente para async_tcp/FTP/LVGL em outros cores. */
+    if ((s_async_scanned & 0x03U) == 0U) {
+      vTaskDelay(1);
+    }
+  }
+  dir.close();
+  refresh_file_list_post_finish();
+}
+
+static void refresh_file_list(bool show_loading_overlay) {
+  if (s_list == nullptr || s_path_label == nullptr) {
+    return;
+  }
+
+  bool expected = false;
+  if (!s_refresh_in_flight.compare_exchange_strong(expected, true)) {
+    /* Refresh ja em curso — ignorar para evitar duplicar scan. */
+    return;
+  }
+
+  s_async_scanned = 0;
+  s_async_consumed = 0;
+  s_async_dir_ok = false;
+  s_async_show_overlay = show_loading_overlay;
+
+  if (show_loading_overlay) {
+    ui_loading_show(file_browser_loading_parent(), "Carregando arquivos da pasta...");
+    ui_loading_flush_display();
+  }
+
+  /**
+   * Scan enfileirado via async: a task LVGL retorna imediatamente e continua
+   * a redesenhar o overlay / responder a toque enquanto a task sd_io executa
+   * o worker. vTaskDelay(1) periodico dentro do worker evita TWDT noutras
+   * tasks (async_tcp / FTP).
+   */
+  sd_access_async([] { refresh_scan_worker(); });
+}
+
+void file_browser_detach_stale_widgets(void) {
+  if (s_rs485_ui_follow_arm_timer != nullptr) {
+    lv_timer_del(s_rs485_ui_follow_arm_timer);
+    s_rs485_ui_follow_arm_timer = nullptr;
+  }
+  cycles_rs485_set_line_to_ui_follow(false);
+  s_viewer_table = nullptr;
+  s_overlay = nullptr;
+  s_list = nullptr;
+  s_path_label = nullptr;
+  s_root = nullptr;
+  s_entry_count = 0;
+  viewer_free_state();
 }
 
 void file_browser_refresh(void) {
@@ -606,6 +1433,10 @@ void file_browser_refresh(void) {
 
 void file_browser_refresh_silent(void) {
   refresh_file_list(false);
+}
+
+bool file_browser_should_skip_auto_list_refresh(void) {
+  return s_suppress_auto_file_list_refresh > 0 || s_overlay != nullptr;
 }
 
 uint32_t file_browser_last_refresh_ms(void) { return s_last_refresh_ms; }
@@ -619,9 +1450,29 @@ void file_browser_apply_font(const lv_font_t *font) {
   }
 }
 
+/** Apos o atraso pos-explorador, permite que linhas RS485 abram/atualizem o .txt do dia na UI. */
+static void rs485_ui_follow_arm_timer_cb(lv_timer_t *t) {
+  cycles_rs485_set_line_to_ui_follow(true);
+  lv_timer_del(t);
+  s_rs485_ui_follow_arm_timer = nullptr;
+}
+
 bool file_browser_init(lv_obj_t *parent) {
   if (parent == nullptr || !sd_access_is_mounted()) {
     return false;
+  }
+
+  if (s_rs485_ui_follow_arm_timer != nullptr) {
+    lv_timer_del(s_rs485_ui_follow_arm_timer);
+    s_rs485_ui_follow_arm_timer = nullptr;
+  }
+  cycles_rs485_set_line_to_ui_follow(false);
+
+  if (s_overlay != nullptr) {
+    s_viewer_table = nullptr;
+    lv_obj_del(s_overlay);
+    s_overlay = nullptr;
+    viewer_free_state();
   }
 
   if (s_root != nullptr) {
@@ -643,7 +1494,8 @@ bool file_browser_init(lv_obj_t *parent) {
   lv_obj_set_style_pad_row(s_root, 4, 0);
 
   s_path_label = lv_label_create(s_root);
-  lv_label_set_long_mode(s_path_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
+  /** CLIP evita SCROLL_CIRCULAR mostrar fragmentos confusos (ex. parte de ".txt") como "text". */
+  lv_label_set_long_mode(s_path_label, LV_LABEL_LONG_CLIP);
   lv_obj_set_width(s_path_label, LV_PCT(100));
 
   lv_obj_t *hdr = lv_obj_create(s_root);
@@ -664,5 +1516,47 @@ bool file_browser_init(lv_obj_t *parent) {
 
   /** Sem overlay no 1.o arranque: o setup corre com mutex LVGL; SD aqui libertava a tarefa LVGL. */
   refresh_file_list(false);
+
+  if (s_cycles_live_timer == nullptr) {
+    s_cycles_live_timer = lv_timer_create(cycles_live_timer_cb, 800, nullptr);
+  }
+  if (s_rs485_open_timer == nullptr) {
+    s_rs485_open_timer = lv_timer_create(rs485_open_timer_cb, 40, nullptr);
+  }
+
+  s_rs485_ui_follow_arm_timer = lv_timer_create(rs485_ui_follow_arm_timer_cb, kRs485UiFollowArmDelayMs, nullptr);
+
   return true;
+}
+
+void file_browser_open_today_cycles_txt(void) {
+  if (!sd_access_is_mounted() || s_root == nullptr) {
+    return;
+  }
+  char path[256];
+  if (!cycles_rs485_format_today_path(path, sizeof path)) {
+    return;
+  }
+  bool exists = false;
+  lvgl_port_unlock();
+  sd_access_sync([&path, &exists]() {
+    if (SD.exists(path)) {
+      File probe = SD.open(path, FILE_READ);
+      if (probe && !probe.isDirectory()) {
+        exists = true;
+      }
+      if (probe) {
+        probe.close();
+      }
+    }
+  });
+  (void)lvgl_port_lock(-1);
+  if (exists) {
+    show_text_file(path, false, true);
+  }
+}
+
+void file_browser_on_rs485_line_saved(void) {
+  /* Contexto sd_io / RS485: apenas sinalizar; LVGL em rs485_open_timer_cb. */
+  s_rs485_saved_seq.fetch_add(1u, std::memory_order_relaxed);
 }

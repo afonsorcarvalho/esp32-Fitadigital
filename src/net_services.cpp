@@ -200,21 +200,45 @@ static void ftp_stop(void) {
 
 }
 
+/**
+ * Intervalo de polling quando nenhum cliente FTP esta conectado.
+ * Apenas verifica ftpServer.accept(); custo desprezivel, mas reduz chamadas de ~500/s para ~10/s.
+ */
+static constexpr uint32_t kFtpIdlePollIntervalMs = 100U;
+
+/** Mascara para extrair cmdStage dos 3 bits inferiores do retorno de handleFTP(). */
+static constexpr uint8_t kFtpCmdStageMask = 0x07U;
+
 void net_services_sd_worker_tick(void) {
 
   if (WiFi.status() != WL_CONNECTED || s_ftp_suspended) {
-
     return;
-
   }
 
   ftp_try_start();
 
-  if (s_ftp_running) {
-
-    s_ftp.handleFTP();
-
+  if (!s_ftp_running) {
+    return;
   }
+
+  /*
+   * Polling adaptativo: handleFTP() retorna cmdStage | (transferStage << 3) | (dataConn << 6).
+   * FTP_Client (2) = idle, aguardando conexao TCP. Nesse estado so' faz accept() e retorna.
+   * Qualquer valor > FTP_Client indica cliente conectado ou transferencia ativa.
+   */
+  static uint32_t s_ftp_last_idle_poll_ms = 0;
+  static bool s_ftp_client_active = false;
+
+  if (!s_ftp_client_active) {
+    const uint32_t now = millis();
+    if ((now - s_ftp_last_idle_poll_ms) < kFtpIdlePollIntervalMs) {
+      return;
+    }
+    s_ftp_last_idle_poll_ms = now;
+  }
+
+  const uint8_t state = s_ftp.handleFTP();
+  s_ftp_client_active = (state & kFtpCmdStageMask) > FTP_Client;
 
 }
 

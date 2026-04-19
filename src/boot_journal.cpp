@@ -12,9 +12,29 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "esp_system.h"
+#include "esp_rom_sys.h"
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+
+static const char *reset_reason_to_str(esp_reset_reason_t r) {
+  switch (r) {
+    case ESP_RST_POWERON:   return "POWERON";
+    case ESP_RST_EXT:       return "EXT_PIN";
+    case ESP_RST_SW:        return "SW_RESET";
+    case ESP_RST_PANIC:     return "PANIC";
+    case ESP_RST_INT_WDT:   return "INT_WDT";
+    case ESP_RST_TASK_WDT:  return "TASK_WDT";
+    case ESP_RST_WDT:       return "OTHER_WDT";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+    case ESP_RST_BROWNOUT:  return "BROWNOUT";
+    case ESP_RST_SDIO:      return "SDIO";
+    case ESP_RST_UNKNOWN:   /* fallthrough */
+    default:                return "UNKNOWN";
+  }
+}
 
 static const char *const kBootLogFlashPath = "/boot.log";
 static const char *const kBootLogSdPath = "/boot.log";
@@ -53,16 +73,25 @@ bool boot_journal_reset(void) {
   if (!s_spiffs_ok) {
     return false;
   }
+  const esp_reset_reason_t reason = esp_reset_reason();
   boot_log_lock();
   s_boot_journal_ram_len = 0U;
   {
-    const int n = snprintf(s_boot_journal_ram, kBootJournalRamMax, "BOOT START | ms=%lu\n",
-                           (unsigned long)millis());
+    const int n = snprintf(s_boot_journal_ram, kBootJournalRamMax,
+                           "BOOT START | ms=%lu | prev_reset=%s(%d) | heap=%lu/%lu\n",
+                           (unsigned long)millis(), reset_reason_to_str(reason), (int)reason,
+                           (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getHeapSize());
     if (n > 0 && (size_t)n < kBootJournalRamMax) {
       s_boot_journal_ram_len = (size_t)n;
     }
   }
   boot_log_unlock();
+  /**
+   * Reset reason tambem para Serial: facilita correlacionar com o monitor sem
+   * depender do flush SPIFFS/SD.
+   */
+  Serial.printf("[BOOT] prev_reset=%s(%d) free_heap=%lu\n", reset_reason_to_str(reason), (int)reason,
+                (unsigned long)ESP.getFreeHeap());
   return true;
 }
 

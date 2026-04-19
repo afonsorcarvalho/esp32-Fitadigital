@@ -65,7 +65,7 @@ void ui_loading_show(lv_obj_t *parent, const char *message) {
   lv_obj_t *lbl = lv_label_create(s_loading_root);
   lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(lbl, LV_PCT(85));
-  lv_label_set_text(lbl, message != nullptr ? message : "A aguardar...");
+  lv_label_set_text(lbl, message != nullptr ? message : "Aguardando...");
   lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
 
   (void)sp;

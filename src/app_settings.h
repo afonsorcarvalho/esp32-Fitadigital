@@ -1,6 +1,6 @@
 /**
  * @file app_settings.h
- * @brief Preferencias (NVS) — Wi-Fi, FTP, NTP/fuso, WireGuard e UI.
+ * @brief Preferencias (NVS) — Wi-Fi, FTP, NTP/fuso, WireGuard, UI e RS485.
  * @note A palavra-passe Wi-Fi e' guardada em texto (NVS); adequado apenas a redes locais.
  */
 #pragma once
@@ -40,6 +40,10 @@ void app_settings_set_ntp_server(const char *host);
 int32_t app_settings_tz_offset_sec(void);
 void app_settings_set_tz_offset_sec(int32_t sec);
 
+/** Duração do splash de boot em segundos (0 = desativado, máximo 10). Default: 3. */
+uint8_t app_settings_splash_seconds(void);
+void app_settings_set_splash_seconds(uint8_t secs);
+
 /** WireGuard (biblioteca ciniml/WireGuard-ESP32): requer Wi-Fi e hora valida (NTP). */
 bool app_settings_wireguard_enabled(void);
 void app_settings_set_wireguard_enabled(bool on);
@@ -53,4 +57,21 @@ String app_settings_wg_endpoint(void);
 void app_settings_set_wg_endpoint(const char *host);
 uint16_t app_settings_wg_port(void);
 void app_settings_set_wg_port(uint16_t port);
+
+/**
+ * Serial1 (RS485): velocidade em baud (valor da lista padrao ou o ultimo guardado).
+ * @see app_settings_rs485_std_baud_count
+ */
+uint32_t app_settings_rs485_baud(void);
+/**
+ * Perfil de trama UART (data / paridade / stop), 0..7:
+ * 0=8N1, 1=8E1, 2=8O1, 3=8N2, 4=7N1, 5=7E1, 6=7O1, 7=7N2 (convencao Arduino `SERIAL_*`).
+ */
+uint8_t app_settings_rs485_frame_profile(void);
+void app_settings_set_rs485(uint32_t baud, uint8_t frame_profile);
+/** Quantidade de bauds pre-definidos (mesma ordem que o roller na UI). */
+size_t app_settings_rs485_std_baud_count(void);
+uint32_t app_settings_rs485_std_baud(size_t index);
+/** Indice do baud mais proximo na lista (para posicionar o roller). */
+size_t app_settings_rs485_std_baud_nearest_index(uint32_t baud);
 

@@ -3,6 +3,7 @@
  * @brief Implementacao NTP e hora (ESP32 Arduino).
  */
 #include "net_time.h"
+#include "board_i2c0_bus_lock.h"
 #include "app_log.h"
 #include "app_settings.h"
 #include "fs/fs_time_fix.h"
@@ -74,8 +75,10 @@ static bool rtc_read_frame(uint8_t *buf, size_t len) {
     return false;
   }
   const uint8_t reg = kRtcRegSeconds;
+  board_i2c0_bus_lock();
   const esp_err_t err = i2c_master_write_read_device(kRtcI2cPort, kRtcAddr, &reg, 1, buf, kRtcFrameLen,
                                                       kRtcI2cTimeoutTicks);
+  board_i2c0_bus_unlock();
   if (err != ESP_OK) {
     return false;
   }
@@ -91,7 +94,11 @@ static bool rtc_write_frame(const uint8_t *buf, size_t len) {
   for (uint8_t i = 0; i < kRtcFrameLen; ++i) {
     tx[1 + i] = buf[i];
   }
-  return i2c_master_write_to_device(kRtcI2cPort, kRtcAddr, tx, sizeof(tx), kRtcI2cTimeoutTicks) == ESP_OK;
+  board_i2c0_bus_lock();
+  const bool ok =
+      i2c_master_write_to_device(kRtcI2cPort, kRtcAddr, tx, sizeof(tx), kRtcI2cTimeoutTicks) == ESP_OK;
+  board_i2c0_bus_unlock();
+  return ok;
 }
 
 static bool rtc_read_tm_utc(struct tm *out_tm) {
@@ -318,7 +325,8 @@ void net_time_loop(void) {
     return;
   }
   const uint32_t now = millis();
-  if (now - s_last_resync_ms < 3600000U) {
+  static constexpr uint32_t kResyncIntervalMs = 3600000U;
+  if (now - s_last_resync_ms < kResyncIntervalMs) {
     if (!s_sd_time_fix_done && !s_rtc_sd_sync_blocked && net_time_is_valid()) {
       sd_access_sync([&] {
         if (SD.cardType() == CARD_NONE) {
@@ -352,8 +360,29 @@ void net_time_loop(void) {
     return;
   }
   s_last_resync_ms = now;
-  net_time_apply_settings();
+  /**
+   * SNTP continua a correr com os mesmos servidores e offset configurados em
+   * net_time_on_wifi_connected(). Reiniciar o SNTP (configTime → sntp_stop + sntp_init)
+   * aloca/libera buffers de SRAM interna — combinado com o log_write que se segue,
+   * pode ultrapassar o heap interno disponivel e crashar em lock_init_generic (abort).
+   * Apenas atualizar o RTC e' suficiente: a hora do sistema ja esta a ser ajustada pelo SNTP.
+   */
   rtc_push_system_time_if_valid("ntp-resync-1h");
+  /**
+   * Telemetria horaria: heap livre + timeouts I2C0 acumulados. Permite detetar
+   * no fdigi.log fugas de heap (tendencia descendente) ou contencao grave no
+   * bus I2C (contador crescente) que correlacionam com reboots periodicos.
+   */
+  static uint32_t s_last_i2c0_timeouts = 0U;
+  const uint32_t cur_timeouts = board_i2c0_bus_lock_timeouts();
+  const uint32_t delta = cur_timeouts - s_last_i2c0_timeouts;
+  s_last_i2c0_timeouts = cur_timeouts;
+  app_log_feature_writef("INFO", "HEALTH",
+                         "heap_free=%lu min_free=%lu i2c0_timeouts_total=%lu (+%lu na ultima hora)",
+                         (unsigned long)ESP.getFreeHeap(),
+                         (unsigned long)ESP.getMinFreeHeap(),
+                         (unsigned long)cur_timeouts,
+                         (unsigned long)delta);
 }
 
 bool net_time_sync_now_blocking(char *msg, size_t msg_len) {

@@ -30,7 +30,8 @@ void net_services_set_ftp_suspended(bool suspended);
 
 /**
  * Ciclo FTP (SimpleFTPServer) + sondagem SD para iniciar FTP.
- * Deve ser chamado apenas pela tarefa sd_io (sd_access.cpp) para evitar
- * concorrencia com outros acessos ao SD.
+ * Registado em sd_access via sd_access_register_tick() no app.cpp;
+ * executado exclusivamente pela tarefa sd_io para evitar concorrencia.
+ * Usa polling adaptativo: ~10 Hz sem cliente, frequencia maxima com cliente ativo.
  */
 void net_services_sd_worker_tick(void);

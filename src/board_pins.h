@@ -24,3 +24,11 @@
  * a um GPIO livre e defina o numero aqui. -1 = desactivado.
  */
 #define BOARD_UI_BEEP_GPIO (-1)
+
+/**
+ * RS485 (transceiver onboard): tabela "RS485 interface" na wiki Waveshare ESP32-S3-Touch-LCD-4.3B.
+ * https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-4.3B
+ * Arduino de exemplo usa Serial1 com estes pinos.
+ */
+#define BOARD_RS485_RX_GPIO (43)
+#define BOARD_RS485_TX_GPIO (44)

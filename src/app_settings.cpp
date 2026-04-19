@@ -64,7 +64,12 @@ static bool parse_bool_val(const char *v, bool *out) {
   return false;
 }
 
-/** Secoes: 0 antes de qualquer [secao], 1 wifi, 2 ui, 3 ftp, 4 time, 5 wireguard. */
+/** Bauds pre-definidos para Serial1 (RS485); mesma ordem que o roller em `ui_app.cpp`. */
+static const uint32_t kRs485StdBauds[] = {1200,  2400,   4800,   9600,   19200,  38400,
+                                          57600, 115200, 230400, 460800, 921600};
+static constexpr size_t kRs485StdBaudCount = sizeof(kRs485StdBauds) / sizeof(kRs485StdBauds[0]);
+
+/** Secoes: 0 antes de qualquer [secao], 1 wifi, 2 ui, 3 ftp, 4 time, 5 wireguard, 6 rs485. */
 typedef struct {
   bool have_fmt;
   int fmt;
@@ -76,6 +81,8 @@ typedef struct {
   bool wifi_ok;
   bool have_font;
   uint8_t font;
+  bool have_splash;
+  uint8_t splash;
   bool have_ftp_u;
   char ftp_u[16];
   bool have_ftp_p;
@@ -98,6 +105,10 @@ typedef struct {
   char wg_ep[128];
   bool have_wg_pt;
   uint32_t wg_pt;
+  bool have_rs_baud;
+  uint32_t rs_baud;
+  bool have_rs_frm;
+  uint8_t rs_frm;
 } ParsedSdCfg;
 
 static bool copy_key_str(char *dst, size_t cap, const char *val) {
@@ -161,6 +172,15 @@ static bool cfg_parse_kv(int sec, const char *key, const char *val, ParsedSdCfg 
       }
       c->font = (uint8_t)u;
       c->have_font = true;
+      return true;
+    }
+    if (!strcmp(key, "splash_s")) {
+      unsigned long u = strtoul(val, nullptr, 10);
+      if (u > 10UL) {
+        return false;
+      }
+      c->splash = (uint8_t)u;
+      c->have_splash = true;
       return true;
     }
     return true;
@@ -272,6 +292,26 @@ static bool cfg_parse_kv(int sec, const char *key, const char *val, ParsedSdCfg 
       return true;
     }
     return true;
+  case 6: /* [rs485] */
+    if (!strcmp(key, "baud")) {
+      unsigned long b = strtoul(val, nullptr, 10);
+      if (b < 300UL || b > 921600UL) {
+        return false;
+      }
+      c->rs_baud = (uint32_t)b;
+      c->have_rs_baud = true;
+      return true;
+    }
+    if (!strcmp(key, "frame")) {
+      unsigned long f = strtoul(val, nullptr, 10);
+      if (f > 7UL) {
+        return false;
+      }
+      c->rs_frm = (uint8_t)f;
+      c->have_rs_frm = true;
+      return true;
+    }
+    return true;
   default:
     return true;
   }
@@ -315,6 +355,10 @@ static bool cfg_parse_section_line(const char *line, int *sec) {
     *sec = 5;
     return true;
   }
+  if (!strcmp(name, "rs485")) {
+    *sec = 6;
+    return true;
+  }
   return false;
 }
 
@@ -330,6 +374,9 @@ static void cfg_apply_parsed(const ParsedSdCfg *c) {
   }
   if (c->have_font) {
     s_prefs.putUChar("font_i", c->font);
+  }
+  if (c->have_splash) {
+    s_prefs.putUChar("splash_s", c->splash);
   }
   if (c->have_ftp_u || c->have_ftp_p) {
     String u = c->have_ftp_u ? String(c->ftp_u) : app_settings_ftp_user();
@@ -362,6 +409,12 @@ static void cfg_apply_parsed(const ParsedSdCfg *c) {
   }
   if (c->have_wg_pt) {
     s_prefs.putUInt("wg_pt", c->wg_pt);
+  }
+  if (c->have_rs_baud) {
+    s_prefs.putUInt("rs_baud", c->rs_baud);
+  }
+  if (c->have_rs_frm) {
+    s_prefs.putUChar("rs_frm", c->rs_frm);
   }
 }
 
@@ -457,7 +510,8 @@ void app_settings_sync_config_file_to_sd(void) {
     f.print("\npass=");
     f.print(app_settings_wifi_pass().c_str());
     f.print("\n\n[ui]\n");
-    f.printf("font_i=%u\n\n", (unsigned)app_settings_font_index());
+    f.printf("font_i=%u\n", (unsigned)app_settings_font_index());
+    f.printf("splash_s=%u\n\n", (unsigned)app_settings_splash_seconds());
     f.print("[ftp]\nftp_u=");
     f.print(app_settings_ftp_user().c_str());
     f.print("\nftp_p=");
@@ -478,6 +532,9 @@ void app_settings_sync_config_file_to_sd(void) {
     f.print("\nwg_ep=");
     f.print(app_settings_wg_endpoint().c_str());
     f.printf("\nwg_pt=%u\n\n", (unsigned)app_settings_wg_port());
+    f.print("[rs485]\n");
+    f.printf("baud=%lu\n", (unsigned long)app_settings_rs485_baud());
+    f.printf("frame=%u\n\n", (unsigned)app_settings_rs485_frame_profile());
     f.close();
   });
 }
@@ -595,6 +652,22 @@ void app_settings_set_tz_offset_sec(int32_t sec) {
   app_settings_sync_config_file_to_sd();
 }
 
+uint8_t app_settings_splash_seconds(void) {
+  uint8_t v = s_prefs.getUChar("splash_s", 3);
+  if (v > 10) {
+    v = 3;
+  }
+  return v;
+}
+
+void app_settings_set_splash_seconds(uint8_t secs) {
+  if (secs > 10) {
+    secs = 10;
+  }
+  s_prefs.putUChar("splash_s", secs);
+  app_settings_sync_config_file_to_sd();
+}
+
 bool app_settings_wireguard_enabled(void) {
   return s_prefs.getBool("wg_on", false);
 }
@@ -666,4 +739,74 @@ void app_settings_set_wg_port(uint16_t port) {
   }
   s_prefs.putUInt("wg_pt", port);
   app_settings_sync_config_file_to_sd();
+}
+
+static uint32_t rs485_nearest_std_baud(uint32_t baud) {
+  if (kRs485StdBaudCount == 0U) {
+    return 115200U;
+  }
+  uint32_t best = kRs485StdBauds[0];
+  uint32_t best_diff = (baud > best) ? (baud - best) : (best - baud);
+  for (size_t i = 1U; i < kRs485StdBaudCount; i++) {
+    const uint32_t b = kRs485StdBauds[i];
+    const uint32_t d = (baud > b) ? (baud - b) : (b - baud);
+    if (d < best_diff) {
+      best_diff = d;
+      best = b;
+    }
+  }
+  return best;
+}
+
+uint32_t app_settings_rs485_baud(void) {
+  uint32_t v = s_prefs.getUInt("rs_baud", 115200);
+  if (v < 300U || v > 921600U) {
+    v = 115200U;
+  }
+  return v;
+}
+
+uint8_t app_settings_rs485_frame_profile(void) {
+  uint8_t f = s_prefs.getUChar("rs_frm", 0);
+  if (f > 7U) {
+    f = 0;
+  }
+  return f;
+}
+
+void app_settings_set_rs485(uint32_t baud, uint8_t frame_profile) {
+  if (frame_profile > 7U) {
+    frame_profile = 0;
+  }
+  baud = rs485_nearest_std_baud(baud);
+  s_prefs.putUInt("rs_baud", baud);
+  s_prefs.putUChar("rs_frm", frame_profile);
+  app_settings_sync_config_file_to_sd();
+}
+
+size_t app_settings_rs485_std_baud_count(void) { return kRs485StdBaudCount; }
+
+uint32_t app_settings_rs485_std_baud(size_t index) {
+  if (index >= kRs485StdBaudCount) {
+    return 115200U;
+  }
+  return kRs485StdBauds[index];
+}
+
+size_t app_settings_rs485_std_baud_nearest_index(uint32_t baud) {
+  if (kRs485StdBaudCount == 0U) {
+    return 0U;
+  }
+  size_t best_i = 0U;
+  uint32_t best = kRs485StdBauds[0];
+  uint32_t best_diff = (baud > best) ? (baud - best) : (best - baud);
+  for (size_t i = 1U; i < kRs485StdBaudCount; i++) {
+    const uint32_t b = kRs485StdBauds[i];
+    const uint32_t d = (baud > b) ? (baud - b) : (b - baud);
+    if (d < best_diff) {
+      best_diff = d;
+      best_i = i;
+    }
+  }
+  return best_i;
 }

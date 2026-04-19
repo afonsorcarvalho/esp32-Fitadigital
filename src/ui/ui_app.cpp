@@ -1,6 +1,6 @@
 /**
  * @file ui_app.cpp
- * @brief Ecra Wi-Fi (primeiro), principal com barra, definicoes, explorador SD; portal HTTP no browser para configuracao.
+ * @brief Ecra Wi-Fi (primeiro), principal com barra, definicoes, explorador SD; portal HTTP continua disponivel na rede.
  */
 #include "ui_app.h"
 #include <Arduino.h>
@@ -13,8 +13,10 @@
 
 #include "app_settings.h"
 #include "app_settings_sd.h"
+#include "cycles_rs485.h"
 #include "app_log.h"
 #include "boot_screen.h"
+#include "splash_screen.h"
 #include "file_browser.h"
 #include "lvgl_port_v8.h"
 #include "net_services.h"
@@ -69,8 +71,10 @@ static lv_obj_t *s_ta_wg_ep = nullptr;
 static lv_obj_t *s_ta_wg_port = nullptr;
 static lv_obj_t *s_wg_feedback_lbl = nullptr;
 static lv_obj_t *s_sett_wg_kb = nullptr;
-/** Texto com URL do portal HTTP (porta 80) na aba Portal. */
-static lv_obj_t *s_portal_info_lbl = nullptr;
+/** Aba RS485: velocidade e trama UART (NVS + reinicio da Serial1). */
+static lv_obj_t *s_rs485_roller_baud = nullptr;
+static lv_obj_t *s_rs485_roller_frame = nullptr;
+static lv_obj_t *s_rs485_feedback_lbl = nullptr;
 static lv_obj_t *s_log_textarea = nullptr;
 static lv_obj_t *s_log_info_lbl = nullptr;
 static lv_obj_t *s_sd_format_status_lbl = nullptr;
@@ -87,7 +91,7 @@ static void settings_hide_ftp_keyboard(void);
 static void settings_hide_time_keyboard(void);
 static void settings_hide_wg_keyboard(void);
 static void settings_sd_format_status_refresh(const char *msg_override);
-static void settings_portal_info_refresh(void);
+static void settings_rs485_sync_ui_from_settings(void);
 
 typedef struct {
   int tries;
@@ -190,12 +194,12 @@ static void status_timer_cb(lv_timer_t *t) {
     if (s_sett_ftp_info_lbl != nullptr) {
       refresh_settings_ftp_label();
     }
-    settings_portal_info_refresh();
   }
   if (s_scr_main != nullptr && lv_disp_get_scr_act(nullptr) == s_scr_main) {
     const uint32_t sd_mod = sd_access_last_modified_ms();
     const uint32_t ui_ref = file_browser_last_refresh_ms();
-    if (sd_mod != 0 && (ui_ref == 0 || (int32_t)(sd_mod - ui_ref) > 0)) {
+    if (!file_browser_should_skip_auto_list_refresh() && sd_mod != 0 &&
+        (ui_ref == 0 || (int32_t)(sd_mod - ui_ref) > 0)) {
       file_browser_refresh_silent();
     }
   }
@@ -212,10 +216,15 @@ static void ensure_main_content_browser(void) {
   if (s_main_content == nullptr) {
     return;
   }
+  /**
+   * Ordem: esconder overlay de loading (ponteiro global em ui_loading), anular estaticos
+   * do file_browser, depois clean — caso contrario lv_obj_del duplo ou ponteiro pendente
+   * corrompe LVGL (ecra preso, touch morto, timers sem efeito).
+   */
+  ui_loading_hide();
+  file_browser_detach_stale_widgets();
   lv_obj_clean(s_main_content);
-  if (s_sd_at_boot && file_browser_init(s_main_content)) {
-    /* explorador criado */
-  } else {
+  if (!(s_sd_at_boot && file_browser_init(s_main_content))) {
     lv_obj_t *msg = lv_label_create(s_main_content);
     lv_label_set_text(msg, s_sd_at_boot ? "Nao foi possivel listar o SD." : "SD nao montado.\nUse cartao FAT32 MBR.");
     lv_obj_center(msg);
@@ -344,22 +353,15 @@ static void settings_font_slider_cb(lv_event_t *e) {
   ui_apply_font_everywhere();
 }
 
-/** Actualiza o texto da aba Portal com o IP actual (chamar ao entrar em definicoes e no timer da barra). */
-static void settings_portal_info_refresh(void) {
-  if (s_portal_info_lbl == nullptr) {
-    return;
+/** Posiciona os rollers RS485 segundo a NVS (chamar ao entrar em definicoes). */
+static void settings_rs485_sync_ui_from_settings(void) {
+  if (s_rs485_roller_baud != nullptr) {
+    const size_t idx = app_settings_rs485_std_baud_nearest_index(app_settings_rs485_baud());
+    lv_roller_set_selected(s_rs485_roller_baud, (uint16_t)idx, LV_ANIM_OFF);
   }
-  if (WiFi.status() == WL_CONNECTED) {
-    char buf[192];
-    snprintf(buf, sizeof buf,
-             "Portal HTTP (porta 80):\n\nhttp://%s/\n\n"
-             "Definicoes, console de logs e explorador de arquivos do cartao SD no browser.",
-             WiFi.localIP().toString().c_str());
-    lv_label_set_text(s_portal_info_lbl, buf);
-  } else {
-    lv_label_set_text(s_portal_info_lbl,
-                      "Ligue o Wi-Fi para abrir o portal no browser (porta 80).\n\n"
-                      "La pode configurar o equipamento, ver logs e arquivos do cartao.");
+  if (s_rs485_roller_frame != nullptr) {
+    const uint16_t f = (uint16_t)app_settings_rs485_frame_profile();
+    lv_roller_set_selected(s_rs485_roller_frame, f > 7U ? 0U : f, LV_ANIM_OFF);
   }
 }
 
@@ -419,7 +421,7 @@ static void settings_sd_format_status_refresh(const char *msg_override) {
     return;
   }
   lv_label_set_text(s_sd_format_status_lbl,
-                    "Pronto para formatar.\nA operacao recria o sistema FAT e apaga todos os ficheiros.");
+                    "Pronto para formatar.\nA operacao recria o sistema FAT e apaga todos os arquivos.");
 }
 
 static void settings_sd_format_arm_cb(lv_event_t *e) {
@@ -448,8 +450,11 @@ static void settings_sd_format_exec_cb(lv_event_t *e) {
     return;
   }
 
-  ui_loading_show(s_scr_settings, "A formatar cartao SD...");
+  ui_loading_show(s_scr_settings, "Formatando cartao SD...");
   ui_loading_flush_display();
+
+  /** Sem libertar o mutex, a tarefa LVGL nao corre `lv_timer_handler` e o spinner fica estatico. */
+  lvgl_port_unlock();
 
   bool ok = false;
   sd_access_sync([&] {
@@ -460,6 +465,8 @@ static void settings_sd_format_exec_cb(lv_event_t *e) {
     }
     net_services_set_ftp_suspended(false);
   });
+
+  (void)lvgl_port_lock(-1);
 
   if (ok) {
     ensure_main_content_browser();
@@ -509,7 +516,7 @@ static void settings_screen_enter(void) {
   if (s_font_slider != nullptr) {
     lv_slider_set_value(s_font_slider, app_settings_font_index(), LV_ANIM_OFF);
   }
-  settings_portal_info_refresh();
+  settings_rs485_sync_ui_from_settings();
   if (s_sw_ntp != nullptr) {
     if (app_settings_ntp_enabled()) {
       lv_obj_add_state(s_sw_ntp, LV_STATE_CHECKED);
@@ -733,6 +740,32 @@ static void settings_save_ftp_cb(lv_event_t *e) {
 }
 
 static char s_tz_roller_buf[512];
+/** Opcoes do roller de baud RS485 (geradas a partir de `app_settings_rs485_std_baud`). */
+static char s_rs485_baud_roller_buf[256];
+
+static void build_rs485_baud_roller_options(void) {
+  char *p = s_rs485_baud_roller_buf;
+  const char *const end = s_rs485_baud_roller_buf + sizeof(s_rs485_baud_roller_buf);
+  const size_t n = app_settings_rs485_std_baud_count();
+  for (size_t i = 0U; i < n; i++) {
+    if (i > 0U) {
+      if (p >= end - 1) {
+        break;
+      }
+      *p++ = '\n';
+    }
+    const int w = snprintf(p, (size_t)(end - p), "%lu", (unsigned long)app_settings_rs485_std_baud(i));
+    if (w < 0 || (size_t)w >= (size_t)(end - p)) {
+      break;
+    }
+    p += (size_t)w;
+  }
+  if (p < end) {
+    *p = '\0';
+  } else {
+    s_rs485_baud_roller_buf[sizeof(s_rs485_baud_roller_buf) - 1U] = '\0';
+  }
+}
 
 static void build_tz_roller_options(void) {
   char *p = s_tz_roller_buf;
@@ -795,12 +828,14 @@ static void settings_save_time_cb(lv_event_t *e) {
   net_time_apply_settings();
   char msg[80];
   if (ntp_on && WiFi.status() == WL_CONNECTED) {
-    ui_loading_show(s_scr_settings, "A sincronizar com o servidor NTP...");
+    ui_loading_show(s_scr_settings, "Sincronizando com o servidor NTP...");
     ui_loading_flush_display();
+    lvgl_port_unlock();
     (void)net_time_sync_now_blocking(msg, sizeof msg);
+    (void)lvgl_port_lock(-1);
     ui_loading_hide();
   } else {
-    snprintf(msg, sizeof msg, "Guardado (NTP %s).", ntp_on ? "ativo" : "inativo");
+    snprintf(msg, sizeof msg, "Salvo (NTP %s).", ntp_on ? "ativo" : "inativo");
   }
   lv_label_set_text(s_time_feedback_lbl, msg);
   update_bar_wifi_text();
@@ -861,7 +896,35 @@ static void settings_save_wg_cb(lv_event_t *e) {
     app_settings_set_wg_port((uint16_t)pt);
   }
   net_wireguard_apply();
-  lv_label_set_text(s_wg_feedback_lbl, "Guardado.");
+  lv_label_set_text(s_wg_feedback_lbl, "Salvo.");
+}
+
+/** Mesma ordem que `uart_config_for_profile` em cycles_rs485.cpp (indices 0..7 na NVS). */
+static const char *const kRs485FrameRollerOpts =
+    "8N1\n"
+    "8E1\n"
+    "8O1\n"
+    "8N2\n"
+    "7N1\n"
+    "7E1\n"
+    "7O1\n"
+    "7N2";
+
+static void settings_save_rs485_cb(lv_event_t *e) {
+  (void)e;
+  if (s_rs485_roller_baud == nullptr || s_rs485_roller_frame == nullptr || s_rs485_feedback_lbl == nullptr) {
+    return;
+  }
+  const uint32_t baud = app_settings_rs485_std_baud((size_t)lv_roller_get_selected(s_rs485_roller_baud));
+  const uint8_t frame = (uint8_t)lv_roller_get_selected(s_rs485_roller_frame);
+  app_settings_set_rs485(baud, frame);
+  if (sd_access_is_mounted()) {
+    cycles_rs485_apply_settings();
+    lv_label_set_text(s_rs485_feedback_lbl, "Guardado. Serial1 reiniciada com a nova configuracao.");
+  } else {
+    lv_label_set_text(s_rs485_feedback_lbl,
+                      "Guardado na NVS. Monte o SD e volte a salvar para aplicar na UART.");
+  }
 }
 
 /**
@@ -1001,7 +1064,7 @@ static void create_settings_screen(void) {
   refresh_settings_ftp_label();
 
   lv_obj_t *lu = lv_label_create(ftp_scroll);
-  lv_label_set_text(lu, "Utilizador FTP:");
+  lv_label_set_text(lu, "Usuario FTP:");
 
   s_ta_ftp_user = lv_textarea_create(ftp_scroll);
   lv_textarea_set_one_line(s_ta_ftp_user, true);
@@ -1027,7 +1090,7 @@ static void create_settings_screen(void) {
 
   lv_obj_t *bt_save_ftp = lv_btn_create(ftp_scroll);
   lv_obj_t *lbs = lv_label_create(bt_save_ftp);
-  lv_label_set_text(lbs, LV_SYMBOL_SAVE " Guardar FTP");
+  lv_label_set_text(lbs, LV_SYMBOL_SAVE " Salvar FTP");
   lv_obj_center(lbs);
   lv_obj_add_event_cb(bt_save_ftp, settings_save_ftp_cb, LV_EVENT_CLICKED, nullptr);
 
@@ -1103,7 +1166,7 @@ static void create_settings_screen(void) {
 
   lv_obj_t *bt_save_time = lv_btn_create(time_scroll);
   lv_obj_t *lbst = lv_label_create(bt_save_time);
-  lv_label_set_text(lbst, LV_SYMBOL_SAVE " Guardar e sincronizar");
+  lv_label_set_text(lbst, LV_SYMBOL_SAVE " Salvar e sincronizar");
   lv_obj_center(lbst);
   lv_obj_add_event_cb(bt_save_time, settings_save_time_cb, LV_EVENT_CLICKED, nullptr);
 
@@ -1220,7 +1283,7 @@ static void create_settings_screen(void) {
 
   lv_obj_t *bt_wg = lv_btn_create(wg_scroll);
   lv_obj_t *lbw = lv_label_create(bt_wg);
-  lv_label_set_text(lbw, LV_SYMBOL_SAVE " Guardar WireGuard");
+  lv_label_set_text(lbw, LV_SYMBOL_SAVE " Salvar WireGuard");
   lv_obj_center(lbw);
   lv_obj_add_event_cb(bt_wg, settings_save_wg_cb, LV_EVENT_CLICKED, nullptr);
 
@@ -1235,19 +1298,47 @@ static void create_settings_screen(void) {
   lv_obj_add_flag(s_sett_wg_kb, LV_OBJ_FLAG_HIDDEN);
   lv_keyboard_set_textarea(s_sett_wg_kb, nullptr);
 
-  /* --- Aba Portal (servidor web de configuracao; sem stream de ecra) --- */
-  lv_obj_t *tab_portal = lv_tabview_add_tab(tv, LV_SYMBOL_WIFI " Portal");
-  lv_obj_set_layout(tab_portal, LV_LAYOUT_FLEX);
-  lv_obj_set_flex_flow(tab_portal, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(tab_portal, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_all(tab_portal, 6, 0);
-  lv_obj_set_style_pad_row(tab_portal, 8, 0);
+  /* --- Aba RS485 (Serial1: baud e trama; start bit UART e' sempre 1) --- */
+  lv_obj_t *tab_rs485 = lv_tabview_add_tab(tv, LV_SYMBOL_LOOP " RS485");
+  lv_obj_set_layout(tab_rs485, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(tab_rs485, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(tab_rs485, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_all(tab_rs485, 6, 0);
+  lv_obj_set_style_pad_row(tab_rs485, 8, 0);
 
-  s_portal_info_lbl = lv_label_create(tab_portal);
-  lv_label_set_long_mode(s_portal_info_lbl, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(s_portal_info_lbl, LV_PCT(100));
-  lv_label_set_text(s_portal_info_lbl, "(A carregar...)");
-  settings_portal_info_refresh();
+  lv_obj_t *rs485_help = lv_label_create(tab_rs485);
+  lv_label_set_long_mode(rs485_help, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(rs485_help, LV_PCT(100));
+  lv_label_set_text(rs485_help,
+                    "Leitura na Serial1 (pinos em board_pins.h).\n"
+                    "UART: 1 start bit (fixo), dados, paridade e stop conforme o perfil.\n"
+                    "Gravacao de linhas em /CICLOS/ no SD (cartao montado).\n"
+                    "O leitor do .txt do dia abre na UI apos o arranque e quando chegar uma linha.");
+
+  lv_obj_t *lb_baud = lv_label_create(tab_rs485);
+  lv_label_set_text(lb_baud, "Velocidade (baud):");
+  build_rs485_baud_roller_options();
+  s_rs485_roller_baud = lv_roller_create(tab_rs485);
+  lv_roller_set_options(s_rs485_roller_baud, s_rs485_baud_roller_buf, LV_ROLLER_MODE_NORMAL);
+  lv_obj_set_width(s_rs485_roller_baud, LV_PCT(100));
+
+  lv_obj_t *lb_frame = lv_label_create(tab_rs485);
+  lv_label_set_text(lb_frame, "Trama (dados / paridade / stop):");
+  s_rs485_roller_frame = lv_roller_create(tab_rs485);
+  lv_roller_set_options(s_rs485_roller_frame, kRs485FrameRollerOpts, LV_ROLLER_MODE_NORMAL);
+  lv_obj_set_width(s_rs485_roller_frame, LV_PCT(100));
+
+  lv_obj_t *bt_rs485 = lv_btn_create(tab_rs485);
+  lv_obj_t *lbl_rs485_save = lv_label_create(bt_rs485);
+  lv_label_set_text(lbl_rs485_save, LV_SYMBOL_SAVE " Salvar RS485");
+  lv_obj_center(lbl_rs485_save);
+  lv_obj_add_event_cb(bt_rs485, settings_save_rs485_cb, LV_EVENT_CLICKED, nullptr);
+
+  s_rs485_feedback_lbl = lv_label_create(tab_rs485);
+  lv_label_set_long_mode(s_rs485_feedback_lbl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(s_rs485_feedback_lbl, LV_PCT(100));
+  lv_label_set_text(s_rs485_feedback_lbl, "");
+  settings_rs485_sync_ui_from_settings();
 
   /* --- Aba Logs --- */
   lv_obj_t *tab_logs = lv_tabview_add_tab(tv, LV_SYMBOL_FILE " Logs");
@@ -1312,7 +1403,7 @@ static void create_settings_screen(void) {
   lv_obj_set_width(sd_help, LV_PCT(100));
   lv_label_set_text(sd_help,
                     "Formato: FAT (FatFs).\n"
-                    "A operacao apaga todos os ficheiros do cartao.\n"
+                    "A operacao apaga todos os arquivos do cartao.\n"
                     "Recomendado: cartao em tabela MBR.");
 
   s_sd_format_confirm_btn = lv_btn_create(tab_sd);
@@ -1444,7 +1535,7 @@ static void create_wifi_screen(void) {
 
   lv_obj_t *bt = lv_btn_create(s_scr_wifi);
   lv_obj_t *btl = lv_label_create(bt);
-  lv_label_set_text(btl, LV_SYMBOL_OK " Guardar e ligar");
+  lv_label_set_text(btl, LV_SYMBOL_OK " Salvar e ligar");
   lv_obj_center(btl);
   lv_obj_add_event_cb(bt, wifi_save_connect_cb, LV_EVENT_CLICKED, nullptr);
 
@@ -1458,7 +1549,7 @@ static void create_wifi_screen(void) {
   lv_keyboard_set_textarea(s_wifi_kb, nullptr);
 }
 
-void ui_app_run(bool sd_mounted) {
+void ui_app_run(bool sd_mounted, bool splash_active) {
   s_sd_at_boot = sd_mounted;
   app_settings_init();
   /** Com SD montado: importa fdigi.cfg se valido; senao cria/atualiza ficheiro com a NVS actual. */
@@ -1484,13 +1575,19 @@ void ui_app_run(bool sd_mounted) {
   const bool show_main_first = wifi_saved || sd_mounted;
   if (show_main_first) {
     lv_scr_load(s_scr_main);
-    boot_screen_destroy();
+    if (splash_active) {
+      splash_screen_destroy();
+    } else {
+      boot_screen_destroy();
+    }
     ensure_main_content_browser();
-    /* Não usar lv_refr_now aqui: ui_app_run corre com lvgl_port_lock (setup) e em RGB pode
-     * bloquear em VSYNC, impedindo a tarefa LVGL de correr — ecrã/toque ficam congelados. */
   } else {
     lv_scr_load(s_scr_wifi);
-    boot_screen_destroy();
+    if (splash_active) {
+      splash_screen_destroy();
+    } else {
+      boot_screen_destroy();
+    }
     lv_textarea_set_text(s_ta_wifi_ssid, "");
     lv_textarea_set_text(s_ta_wifi_pass, "");
     lv_label_set_text(s_wifi_status_lbl, "Introduza a rede e a senha. Toque num campo para o teclado.");
@@ -1499,3 +1596,5 @@ void ui_app_run(bool sd_mounted) {
   ui_apply_font_everywhere();
   update_bar_wifi_text();
 }
+
+void ui_app_open_cycles_txt_if_exists(void) { file_browser_open_today_cycles_txt(); }

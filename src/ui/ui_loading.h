@@ -1,8 +1,9 @@
 /**
  * @file ui_loading.h
  * @brief Overlay reutilizavel: fundo semitransparente, spinner e mensagem (accao lenta na UI).
- * @note Chamar com o mutex LVGL detido. O explorador liberta o mutex durante I/O ao SD para a
- *       tarefa LVGL poder atualizar a barra (relogio/Wi-Fi) no arranque.
+ * @note Chamar com o mutex LVGL detido. Antes de trabalho bloqueante (SD, rede, etc.), chame
+ *       `lvgl_port_unlock()` e depois `lvgl_port_lock(-1)` ao voltar — senao a tarefa LVGL nao
+ *       executa `lv_timer_handler` e o spinner (animacao) fica estatico.
  */
 #pragma once
 
