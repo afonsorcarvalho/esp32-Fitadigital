@@ -28,6 +28,7 @@
 #include "boot_journal.h"
 #include "SD.h"
 #include "app_log.h"
+#include "net_monitor.h"
 #include "net_services.h"
 #include "sd_access.h"
 #include "cycles_rs485.h"
@@ -261,6 +262,8 @@ void setup() {
 
   boot_log_step(BOOT_STEP_WEB_PORTAL, "INFO", "%s",
                 "portal HTTP (config, logs, ficheiros SD) na porta 80");
+
+  net_monitor_init();
 
   boot_log_plain("INFO", "Boot concluido. A carregar interface principal...");
   boot_screen_set_footer("A carregar interface principal...");

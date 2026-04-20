@@ -16,6 +16,14 @@ String app_settings_wifi_pass(void);
 /** Grava credenciais e marca rede como configurada. */
 void app_settings_set_wifi(const char *ssid, const char *pass);
 
+/**
+ * IP/hostname alvo para monitorizacao de conectividade (ping ICMP).
+ * String vazia = monitorizacao desligada (icone da status bar oculto).
+ * Max. 63 caracteres para suportar IPv4 ou hostname curto.
+ */
+String app_settings_monitor_ip(void);
+void app_settings_set_monitor_ip(const char *host);
+
 /** 0 = 14px, 1 = 16, 2 = 18, 3 = 20 (Montserrat em lv_conf.h). */
 uint8_t app_settings_font_index(void);
 void app_settings_set_font_index(uint8_t idx);

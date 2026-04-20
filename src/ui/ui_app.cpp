@@ -19,6 +19,7 @@
 #include "splash_screen.h"
 #include "file_browser.h"
 #include "lvgl_port_v8.h"
+#include "net_monitor.h"
 #include "net_services.h"
 #include "sd_access.h"
 #include "net_time.h"
@@ -30,6 +31,10 @@ static constexpr int kStatusBarH = 46;
 static lv_obj_t *s_scr_main = nullptr;
 static lv_obj_t *s_scr_settings = nullptr;
 static lv_obj_t *s_scr_wifi = nullptr;
+/** Barra principal: oblongo de conectividade remota (Conectado/Desconectado/Configure). */
+static lv_obj_t *s_bar_monitor_pill = nullptr;
+/** Barra definicoes: oblongo de conectividade remota. */
+static lv_obj_t *s_bar_settings_monitor_pill = nullptr;
 /** Barra principal: icone Wi-Fi + forca do sinal (%). */
 static lv_obj_t *s_bar_wifi_lbl = nullptr;
 /** Barra principal: data e hora (DD/MM/AAAA HH:MM). */
@@ -45,6 +50,11 @@ static lv_obj_t *s_ta_wifi_pass = nullptr;
 static lv_obj_t *s_wifi_status_lbl = nullptr;
 static lv_obj_t *s_wifi_kb = nullptr;
 static lv_obj_t *s_wifi_back_btn = nullptr;
+
+/** Aba Wi-Fi (em Definicoes): campo "IP de monitorizacao" + teclado partilhado. */
+static lv_obj_t *s_ta_mon_ip = nullptr;
+static lv_obj_t *s_sett_wifi_kb = nullptr;
+static lv_obj_t *s_mon_feedback_lbl = nullptr;
 
 /** Raiz do conteudo de definicoes (filho do ecra s_scr_settings, abaixo da barra). */
 static lv_obj_t *s_settings_root = nullptr;
@@ -87,6 +97,7 @@ static bool s_sd_at_boot = false;
 
 static void refresh_settings_wifi_label(void);
 static void refresh_settings_ftp_label(void);
+static void settings_hide_wifi_keyboard(void);
 static void settings_hide_ftp_keyboard(void);
 static void settings_hide_time_keyboard(void);
 static void settings_hide_wg_keyboard(void);
@@ -177,11 +188,122 @@ static void bar_label_set_date_time(lv_obj_t *lbl) {
   lv_label_set_text(lbl, tline);
 }
 
+/**
+ * Cria o oblongo (pill) central da status bar com o rotulo do estado de
+ * conectividade. O tamanho e' ~1/5 da largura do ecra; flutua sobre o flex
+ * do pai (posicao absoluta no centro, nao interfere com os filhos laterais).
+ */
+static lv_obj_t *create_monitor_pill(lv_obj_t *parent) {
+  if (parent == nullptr) {
+    return nullptr;
+  }
+  const lv_coord_t scr_w = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t pill_w = scr_w / 5;
+  const lv_coord_t pill_h = 30;
+
+  lv_obj_t *p = lv_obj_create(parent);
+  if (p == nullptr) {
+    return nullptr;
+  }
+  lv_obj_set_size(p, pill_w, pill_h);
+  lv_obj_set_style_radius(p, pill_h / 2, 0); /* cantos totalmente arredondados */
+  lv_obj_set_style_border_width(p, 0, 0);
+  lv_obj_set_style_pad_all(p, 0, 0);
+  lv_obj_set_style_bg_color(p, lv_color_hex(0x808080), 0);
+  lv_obj_set_style_bg_opa(p, LV_OPA_COVER, 0);
+  lv_obj_clear_flag(p, LV_OBJ_FLAG_SCROLLABLE);
+  /* Fora do fluxo flex do pai: centralizado absolutamente no meio da barra. */
+  lv_obj_add_flag(p, LV_OBJ_FLAG_FLOATING);
+  lv_obj_align(p, LV_ALIGN_CENTER, 0, 0);
+
+  lv_obj_t *lbl = lv_label_create(p);
+  lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
+  lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
+  lv_label_set_text(lbl, "Configure");
+  lv_obj_center(lbl);
+  /* O label guarda-se em user_data para `update_monitor_pill` o alcancar. */
+  lv_obj_set_user_data(p, lbl);
+  return p;
+}
+
+/** Callback de animacao: varia a opacidade do fundo do oblongo (respiracao). */
+static void monitor_pill_bg_opa_exec(void *var, int32_t v) {
+  lv_obj_set_style_bg_opa(static_cast<lv_obj_t *>(var), static_cast<lv_opa_t>(v), 0);
+}
+
+/**
+ * Liga/desliga a animacao de respiracao (800 ms por ciclo, ease-in-out) para
+ * o oblongo. Idempotente: chamar repetidamente com `on=true` nao reinicia a
+ * animacao (evita flickering a cada tick do timer de status).
+ */
+static void monitor_pill_set_breathing(lv_obj_t *pill, bool on) {
+  if (pill == nullptr) {
+    return;
+  }
+  const bool running = (lv_anim_get(pill, monitor_pill_bg_opa_exec) != nullptr);
+  if (on && !running) {
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, pill);
+    lv_anim_set_exec_cb(&a, monitor_pill_bg_opa_exec);
+    lv_anim_set_values(&a, LV_OPA_COVER, LV_OPA_30);
+    lv_anim_set_time(&a, 400);          /* 400 ms de ida */
+    lv_anim_set_playback_time(&a, 400); /* 400 ms de volta (total 800 ms) */
+    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+    lv_anim_start(&a);
+  } else if (!on && running) {
+    lv_anim_del(pill, monitor_pill_bg_opa_exec);
+    lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
+  }
+}
+
+/**
+ * Atualiza cor de fundo e texto do oblongo conforme `net_monitor_status()`.
+ * Sempre visivel: quando desligado mostra "Configure" como call-to-action.
+ * Estado "Desconectado" ganha animacao de respiracao (opacidade pulsa).
+ */
+static void update_monitor_pill(lv_obj_t *pill) {
+  if (pill == nullptr) {
+    return;
+  }
+  lv_obj_t *lbl = static_cast<lv_obj_t *>(lv_obj_get_user_data(pill));
+  const NetMonitorStatus st = net_monitor_status();
+  uint32_t color = 0x808080u;
+  const char *text = "Configure";
+  switch (st) {
+    case NetMonitorStatus::Ok:
+      color = 0x2E7D32u; /* verde escuro */
+      text = "Conectado";
+      break;
+    case NetMonitorStatus::Fail:
+      color = 0xC62828u; /* vermelho industrial */
+      text = "Desconectado";
+      break;
+    case NetMonitorStatus::Pending:
+      color = 0xF5B841u; /* ambar */
+      text = "A testar...";
+      break;
+    case NetMonitorStatus::Disabled:
+    default:
+      color = 0x808080u; /* cinza neutro */
+      text = "Configure";
+      break;
+  }
+  lv_obj_set_style_bg_color(pill, lv_color_hex(color), 0);
+  if (lbl != nullptr) {
+    lv_label_set_text(lbl, text);
+  }
+  monitor_pill_set_breathing(pill, st == NetMonitorStatus::Fail);
+}
+
 static void update_bar_wifi_text(void) {
   bar_label_set_signal_only(s_bar_wifi_lbl);
   bar_label_set_date_time(s_bar_time_lbl);
   bar_label_set_signal_only(s_bar_settings_wifi_lbl);
   bar_label_set_date_time(s_bar_settings_time_lbl);
+  update_monitor_pill(s_bar_monitor_pill);
+  update_monitor_pill(s_bar_settings_monitor_pill);
 }
 
 static void status_timer_cb(lv_timer_t *t) {
@@ -504,9 +626,13 @@ static void settings_back_cb(lv_event_t *e) {
  * Atualiza campos ao voltar ao ecra de definicoes (valores NVS / estado atual).
  */
 static void settings_screen_enter(void) {
+  settings_hide_wifi_keyboard();
   settings_hide_ftp_keyboard();
   settings_hide_time_keyboard();
   settings_hide_wg_keyboard();
+  if (s_ta_mon_ip != nullptr) {
+    lv_textarea_set_text(s_ta_mon_ip, app_settings_monitor_ip().c_str());
+  }
   if (s_ta_ftp_user != nullptr) {
     lv_textarea_set_text(s_ta_ftp_user, app_settings_ftp_user().c_str());
   }
@@ -653,6 +779,7 @@ static void settings_hide_wg_keyboard(void) {
 }
 
 /** Indices usados para ocultar teclados ao trocar de aba. */
+static constexpr uint32_t kSettingsTabWifi = 0;
 static constexpr uint32_t kSettingsTabFtp = 1;
 static constexpr uint32_t kSettingsTabTime = 2;
 static constexpr uint32_t kSettingsTabWg = 3;
@@ -664,6 +791,9 @@ static void settings_tab_btns_cb(lv_event_t *e) {
   }
   lv_obj_t *btns = lv_event_get_target(e);
   const uint32_t sel = lv_btnmatrix_get_selected_btn(btns);
+  if (sel != kSettingsTabWifi) {
+    settings_hide_wifi_keyboard();
+  }
   if (sel != kSettingsTabFtp) {
     settings_hide_ftp_keyboard();
   }
@@ -698,6 +828,45 @@ static void settings_tabview_swipe_cb(lv_event_t *e) {
   } else if (dir == LV_DIR_RIGHT && cur > 0U) {
     lv_tabview_set_act(tv, cur - 1U, LV_ANIM_ON);
     lv_indev_wait_release(indev);
+  }
+}
+
+static void settings_hide_wifi_keyboard(void) {
+  if (s_sett_wifi_kb != nullptr) {
+    lv_obj_add_flag(s_sett_wifi_kb, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+/** Teclado da aba Wi-Fi (apenas para "IP de monitorizacao" por agora). */
+static void settings_wifi_ta_kb_event_cb(lv_event_t *e) {
+  if (s_sett_wifi_kb == nullptr) {
+    return;
+  }
+  const lv_event_code_t code = lv_event_get_code(e);
+  lv_obj_t *ta = lv_event_get_target(e);
+  if (code == LV_EVENT_FOCUSED) {
+    lv_keyboard_set_textarea(s_sett_wifi_kb, ta);
+    lv_obj_clear_flag(s_sett_wifi_kb, LV_OBJ_FLAG_HIDDEN);
+  } else if (code == LV_EVENT_DEFOCUSED) {
+    settings_hide_wifi_keyboard();
+  }
+}
+
+static void settings_save_monitor_cb(lv_event_t *e) {
+  (void)e;
+  if (s_ta_mon_ip == nullptr) {
+    return;
+  }
+  const char *ip = lv_textarea_get_text(s_ta_mon_ip);
+  app_settings_set_monitor_ip(ip != nullptr ? ip : "");
+  net_monitor_apply_settings();
+  if (s_mon_feedback_lbl != nullptr) {
+    const String saved = app_settings_monitor_ip();
+    if (saved.length() > 0) {
+      lv_label_set_text_fmt(s_mon_feedback_lbl, "A monitorizar %s.", saved.c_str());
+    } else {
+      lv_label_set_text(s_mon_feedback_lbl, "Monitorizacao desligada.");
+    }
   }
 }
 
@@ -972,6 +1141,8 @@ static void create_settings_screen(void) {
   lv_obj_set_style_pad_all(bar, 4, 0);
   lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
 
+  s_bar_settings_monitor_pill = create_monitor_pill(bar);
+
   s_bar_settings_wifi_lbl = lv_label_create(bar);
   lv_label_set_long_mode(s_bar_settings_wifi_lbl, LV_LABEL_LONG_CLIP);
   lv_label_set_text(s_bar_settings_wifi_lbl, LV_SYMBOL_WIFI " ...");
@@ -1032,6 +1203,39 @@ static void create_settings_screen(void) {
   lv_label_set_text(lb1, LV_SYMBOL_WIFI " Alterar Wi-Fi");
   lv_obj_center(lb1);
   lv_obj_add_event_cb(bt_wifi, settings_change_wifi_cb, LV_EVENT_CLICKED, nullptr);
+
+  /* --- Monitorizacao remota (ping ICMP) --- */
+  lv_obj_t *lbl_mon_sec = lv_label_create(tab_wifi);
+  lv_label_set_text(lbl_mon_sec, "Monitorizacao remota (ping):");
+
+  lv_obj_t *lbl_mon_ip = lv_label_create(tab_wifi);
+  lv_label_set_text(lbl_mon_ip, "IP / host (deixe vazio para desligar):");
+
+  s_ta_mon_ip = lv_textarea_create(tab_wifi);
+  lv_textarea_set_one_line(s_ta_mon_ip, true);
+  lv_textarea_set_max_length(s_ta_mon_ip, 63);
+  lv_textarea_set_placeholder_text(s_ta_mon_ip, "ex. 192.168.0.1");
+  lv_textarea_set_text(s_ta_mon_ip, app_settings_monitor_ip().c_str());
+  lv_obj_set_width(s_ta_mon_ip, LV_PCT(100));
+  lv_obj_add_event_cb(s_ta_mon_ip, settings_wifi_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
+  lv_obj_add_event_cb(s_ta_mon_ip, settings_wifi_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
+
+  lv_obj_t *bt_save_mon = lv_btn_create(tab_wifi);
+  lv_obj_t *lb_save_mon = lv_label_create(bt_save_mon);
+  lv_label_set_text(lb_save_mon, LV_SYMBOL_SAVE " Salvar monitorizacao");
+  lv_obj_center(lb_save_mon);
+  lv_obj_add_event_cb(bt_save_mon, settings_save_monitor_cb, LV_EVENT_CLICKED, nullptr);
+
+  s_mon_feedback_lbl = lv_label_create(tab_wifi);
+  lv_label_set_long_mode(s_mon_feedback_lbl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(s_mon_feedback_lbl, LV_PCT(100));
+
+  /* Teclado especifico da aba Wi-Fi (monitor IP por agora). */
+  s_sett_wifi_kb = lv_keyboard_create(tab_wifi);
+  lv_obj_set_size(s_sett_wifi_kb, LV_PCT(100), (lv_coord_t)(vh * 30 / 100));
+  lv_keyboard_set_mode(s_sett_wifi_kb, LV_KEYBOARD_MODE_TEXT_LOWER);
+  lv_obj_add_flag(s_sett_wifi_kb, LV_OBJ_FLAG_HIDDEN);
+  lv_keyboard_set_textarea(s_sett_wifi_kb, nullptr);
 
   /* --- Aba FTP --- */
   lv_obj_t *tab_ftp = lv_tabview_add_tab(tv, LV_SYMBOL_DRIVE " FTP");
@@ -1466,6 +1670,8 @@ static void create_main_screen(void) {
   lv_obj_set_style_pad_column(bar, 8, 0);
   lv_obj_set_style_pad_all(bar, 4, 0);
   lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+
+  s_bar_monitor_pill = create_monitor_pill(bar);
 
   s_bar_wifi_lbl = lv_label_create(bar);
   lv_label_set_long_mode(s_bar_wifi_lbl, LV_LABEL_LONG_CLIP);

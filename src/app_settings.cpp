@@ -27,6 +27,7 @@ const char *const kAppSettingsFtpDefaultUser = "esp32";
 const char *const kAppSettingsFtpDefaultPass = "esp32";
 
 static constexpr size_t kNtpSrvMax = 63U;
+static constexpr size_t kMonitorIpMax = 63U;
 static constexpr size_t kWgIpMax = 19U;
 static constexpr size_t kWgKeyMax = 127U;
 static constexpr size_t kWgEpMax = 127U;
@@ -109,6 +110,8 @@ typedef struct {
   uint32_t rs_baud;
   bool have_rs_frm;
   uint8_t rs_frm;
+  bool have_mon_ip;
+  char mon_ip[kMonitorIpMax + 1U];
 } ParsedSdCfg;
 
 static bool copy_key_str(char *dst, size_t cap, const char *val) {
@@ -312,6 +315,18 @@ static bool cfg_parse_kv(int sec, const char *key, const char *val, ParsedSdCfg 
       return true;
     }
     return true;
+  case 7: /* [net] */
+    if (!strcmp(key, "mon_ip")) {
+      if (strlen(val) > kMonitorIpMax) {
+        return false;
+      }
+      if (!copy_key_str(c->mon_ip, sizeof(c->mon_ip), val)) {
+        return false;
+      }
+      c->have_mon_ip = true;
+      return true;
+    }
+    return true;
   default:
     return true;
   }
@@ -357,6 +372,10 @@ static bool cfg_parse_section_line(const char *line, int *sec) {
   }
   if (!strcmp(name, "rs485")) {
     *sec = 6;
+    return true;
+  }
+  if (!strcmp(name, "net")) {
+    *sec = 7;
     return true;
   }
   return false;
@@ -415,6 +434,9 @@ static void cfg_apply_parsed(const ParsedSdCfg *c) {
   }
   if (c->have_rs_frm) {
     s_prefs.putUChar("rs_frm", c->rs_frm);
+  }
+  if (c->have_mon_ip) {
+    s_prefs.putString("mon_ip", c->mon_ip);
   }
 }
 
@@ -535,6 +557,9 @@ void app_settings_sync_config_file_to_sd(void) {
     f.print("[rs485]\n");
     f.printf("baud=%lu\n", (unsigned long)app_settings_rs485_baud());
     f.printf("frame=%u\n\n", (unsigned)app_settings_rs485_frame_profile());
+    f.print("[net]\nmon_ip=");
+    f.print(app_settings_monitor_ip().c_str());
+    f.print("\n");
     f.close();
   });
 }
@@ -576,6 +601,28 @@ void app_settings_set_wifi(const char *ssid, const char *pass) {
   s_prefs.putString("ssid", ssid ? ssid : "");
   s_prefs.putString("pass", pass ? pass : "");
   s_prefs.putBool("wifi_ok", true);
+  app_settings_sync_config_file_to_sd();
+}
+
+String app_settings_monitor_ip(void) {
+  return s_prefs.getString("mon_ip", "");
+}
+
+void app_settings_set_monitor_ip(const char *host) {
+  char buf[kMonitorIpMax + 1U] = {0};
+  if (host != nullptr) {
+    strncpy(buf, host, kMonitorIpMax);
+  }
+  /* Trim leading/trailing whitespace: entrada de UI pode vir com espacos. */
+  char *p = buf;
+  while (*p == ' ' || *p == '\t') {
+    p++;
+  }
+  size_t n = strlen(p);
+  while (n > 0U && (p[n - 1U] == ' ' || p[n - 1U] == '\t')) {
+    p[--n] = '\0';
+  }
+  s_prefs.putString("mon_ip", p);
   app_settings_sync_config_file_to_sd();
 }
 
