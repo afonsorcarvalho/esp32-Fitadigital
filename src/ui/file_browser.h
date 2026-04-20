@@ -28,6 +28,12 @@ void file_browser_detach_stale_widgets(void);
 void file_browser_open_today_cycles_txt(void);
 
 /**
+ * Tenta abrir `/CICLOS/AAAA/MM/AAAAMMDD.txt` no viewer com scroll no fim.
+ * @return false se o ficheiro nao existe ou o SD nao esta montado.
+ */
+bool file_browser_open_cycle_by_date(int year, int month, int day);
+
+/**
  * Chamado apos gravar uma linha RS485 no SD (contexto sd_io). Sem LVGL: apenas sinaliza
  * para a tarefa LVGL reabrir o .txt do dia com scroll no fim.
  */

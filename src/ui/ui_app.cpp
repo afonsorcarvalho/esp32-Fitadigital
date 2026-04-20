@@ -619,6 +619,30 @@ static void dashboard_refresh_values(void) {
 
 static void dashboard_btn_today_cb(lv_event_t *e) {
   (void)e;
+  /* Verifica se ha ciclo gravado hoje ANTES de sair do dashboard. Se nao, toast. */
+  char path[256];
+  if (!cycles_rs485_format_today_path(path, sizeof path)) {
+    ui_toast_show(ToastKind::Warn, "Data do sistema invalida");
+    return;
+  }
+  bool exists = false;
+  lvgl_port_unlock();
+  sd_access_sync([&path, &exists]() {
+    if (SD.exists(path)) {
+      File f = SD.open(path, FILE_READ);
+      if (f && !f.isDirectory()) {
+        exists = true;
+      }
+      if (f) {
+        f.close();
+      }
+    }
+  });
+  (void)lvgl_port_lock(-1);
+  if (!exists) {
+    ui_toast_show(ToastKind::Info, "Sem ciclo gravado hoje ainda");
+    return;
+  }
   ensure_main_content_browser();
   file_browser_open_today_cycles_txt();
 }

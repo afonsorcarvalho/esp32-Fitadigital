@@ -133,6 +133,21 @@ tipico: 300+ dias de historico.
 Botao "Ir para linha N". Util em ciclos longos (2h autoclave = centenas de
 linhas).
 
+### TODO rapidos (polimento do modal "Ir para data")
+
+**Contexto:** no teste do Item 7, o modal ficou maior que a tela apos as
+tweaks de tamanho. Tambem faltam atalhos rapidos para os ciclos mais
+comuns.
+
+- **a) Ajustar altura do modal "Ir para data":** actualmente esta a
+  estourar a altura do ecra (800x480). Recalcular para caber com margem.
+- **b) Estender range do ano ate 2050** (hoje e' janela de 10 anos
+  centrada no actual).
+- **c) Acrescentar botoes de atalho "Hoje" e "Ontem"** no modal. Ao
+  tocar, pre-seleccionam as datas e podem optar por: (i) apenas preencher
+  os rollers, deixando o user confirmar com "Ir"; ou (ii) abrir
+  directamente (acao rapida). Decidir no momento de implementar.
+
 ---
 
 ## Tier 3 — Polimento visual

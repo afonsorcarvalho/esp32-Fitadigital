@@ -28,6 +28,7 @@
 #include "app_log.h"
 #include "sd_access.h"
 #include "cycles_rs485.h"
+#include "ui/ui_date_goto.h"
 #include "ui/ui_loading.h"
 #include "ui/ui_share_qr.h"
 
@@ -77,6 +78,8 @@ static const lv_font_t *s_active_ui_font = nullptr;
 static lv_obj_t *s_path_label = nullptr;
 /** Barra de breadcrumbs (chips) no topo do explorador, substitui `s_path_label`. */
 static lv_obj_t *s_breadcrumb = nullptr;
+/** Botao "Ir para data": so visivel dentro de /CICLOS. */
+static lv_obj_t *s_date_goto_btn = nullptr;
 static lv_obj_t *s_list = nullptr;
 static char s_current_path[256];
 static char s_entry_paths[kMaxListEntries][192];
@@ -164,19 +167,12 @@ static const lv_font_t *viewer_monospace_font_for_settings(void) {
 #endif
 }
 
-/** Estilo "Voltar" tipo iOS: fundo transparente, texto azul, chevron + rótulo. */
+/** Estilo "Voltar" no padrao verde primario dos restantes botoes. */
 static void viewer_style_ios_back_button(lv_obj_t *btn, lv_obj_t *lbl, const lv_font_t *ui_font) {
-  lv_obj_remove_style_all(btn);
-  lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, LV_STATE_PRESSED);
-  lv_obj_set_style_shadow_width(btn, 0, LV_PART_MAIN);
-  lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN);
-  lv_obj_set_style_pad_hor(btn, 6, LV_PART_MAIN);
-  lv_obj_set_style_pad_ver(btn, 4, LV_PART_MAIN);
-  lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(btn, lv_color_hex(0x449D48), 0);
+  lv_obj_set_style_pad_hor(btn, 12, LV_PART_MAIN);
   lv_label_set_text(lbl, LV_SYMBOL_LEFT " Voltar");
-  lv_obj_set_style_text_color(lbl, lv_color_hex(0x007AFF), LV_PART_MAIN);
+  lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
   if (ui_font != nullptr) {
     lv_obj_set_style_text_font(lbl, ui_font, LV_PART_MAIN);
   }
@@ -337,6 +333,7 @@ static void viewer_nav_btn_cb(lv_event_t *e) {
 static lv_obj_t *viewer_make_nav_btn(lv_obj_t *col, const char *symbol, intptr_t act, const lv_font_t *font) {
   lv_obj_t *btn = lv_btn_create(col);
   lv_obj_set_size(btn, kViewerBtnColW - 8, kViewerBtnH);
+  lv_obj_set_style_bg_color(btn, lv_color_hex(0x449D48), 0); /* cor primaria (padrao) */
   lv_obj_t *lbl = lv_label_create(btn);
   lv_label_set_text(lbl, symbol);
   lv_obj_center(lbl);
@@ -473,6 +470,16 @@ static lv_obj_t *breadcrumb_add_chip(const char *label, intptr_t keep, bool is_c
 static void update_breadcrumb(void) {
   if (s_breadcrumb == nullptr) {
     return;
+  }
+  /* Botao "Ir para data" visivel apenas dentro de /CICLOS (ou a sua raiz). */
+  if (s_date_goto_btn != nullptr) {
+    const bool in_ciclos = (strncmp(s_current_path, "/CICLOS", 7) == 0) &&
+                           (s_current_path[7] == '\0' || s_current_path[7] == '/');
+    if (in_ciclos) {
+      lv_obj_clear_flag(s_date_goto_btn, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(s_date_goto_btn, LV_OBJ_FLAG_HIDDEN);
+    }
   }
   lv_obj_clean(s_breadcrumb);
 
@@ -1538,6 +1545,7 @@ void file_browser_detach_stale_widgets(void) {
   s_list = nullptr;
   s_path_label = nullptr;
   s_breadcrumb = nullptr;
+  s_date_goto_btn = nullptr;
   s_root = nullptr;
   s_entry_count = 0;
   viewer_free_state();
@@ -1604,6 +1612,7 @@ bool file_browser_init(lv_obj_t *parent) {
     s_root = nullptr;
     s_path_label = nullptr;
     s_breadcrumb = nullptr;
+    s_date_goto_btn = nullptr;
     s_list = nullptr;
   }
 
@@ -1618,10 +1627,22 @@ bool file_browser_init(lv_obj_t *parent) {
   lv_obj_set_style_pad_all(s_root, 4, 0);
   lv_obj_set_style_pad_row(s_root, 4, 0);
 
-  /** Caminho: barra de chips substitui o label de texto. */
+  /** Caminho: barra de chips + botao "Ir para data" (em `nav_row`). */
   s_path_label = nullptr;
-  s_breadcrumb = lv_obj_create(s_root);
-  lv_obj_set_width(s_breadcrumb, LV_PCT(100));
+  lv_obj_t *nav_row = lv_obj_create(s_root);
+  lv_obj_set_width(nav_row, LV_PCT(100));
+  lv_obj_set_height(nav_row, LV_SIZE_CONTENT);
+  lv_obj_set_layout(nav_row, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(nav_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(nav_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(nav_row, 0, 0);
+  lv_obj_set_style_pad_column(nav_row, 6, 0);
+  lv_obj_set_style_border_width(nav_row, 0, 0);
+  lv_obj_set_style_bg_opa(nav_row, LV_OPA_TRANSP, 0);
+  lv_obj_clear_flag(nav_row, LV_OBJ_FLAG_SCROLLABLE);
+
+  s_breadcrumb = lv_obj_create(nav_row);
+  lv_obj_set_flex_grow(s_breadcrumb, 1);
   lv_obj_set_height(s_breadcrumb, LV_SIZE_CONTENT);
   lv_obj_set_layout(s_breadcrumb, LV_LAYOUT_FLEX);
   lv_obj_set_flex_flow(s_breadcrumb, LV_FLEX_FLOW_ROW);
@@ -1631,6 +1652,19 @@ bool file_browser_init(lv_obj_t *parent) {
   lv_obj_set_style_border_width(s_breadcrumb, 0, 0);
   lv_obj_set_style_bg_opa(s_breadcrumb, LV_OPA_TRANSP, 0);
   lv_obj_clear_flag(s_breadcrumb, LV_OBJ_FLAG_SCROLLABLE);
+
+  s_date_goto_btn = lv_btn_create(nav_row);
+  lv_obj_set_size(s_date_goto_btn, LV_SIZE_CONTENT, 36);
+  lv_obj_set_style_bg_color(s_date_goto_btn, lv_color_hex(0x449D48), 0);
+  lv_obj_set_style_pad_hor(s_date_goto_btn, 12, 0);
+  lv_obj_t *date_lbl = lv_label_create(s_date_goto_btn);
+  lv_label_set_text(date_lbl, LV_SYMBOL_LIST " Ir para data");
+  lv_obj_center(date_lbl);
+  lv_obj_add_event_cb(
+      s_date_goto_btn,
+      [](lv_event_t * /*e*/) { ui_date_goto_show(); },
+      LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_flag(s_date_goto_btn, LV_OBJ_FLAG_HIDDEN);
 
   lv_obj_t *hdr = lv_obj_create(s_root);
   lv_obj_set_width(hdr, LV_PCT(100));
@@ -1662,6 +1696,36 @@ bool file_browser_init(lv_obj_t *parent) {
 
   s_rs485_ui_follow_arm_timer = lv_timer_create(rs485_ui_follow_arm_timer_cb, kRs485UiFollowArmDelayMs, nullptr);
 
+  return true;
+}
+
+bool file_browser_open_cycle_by_date(int year, int month, int day) {
+  if (!sd_access_is_mounted() || s_root == nullptr) {
+    return false;
+  }
+  if (year < 2000 || year > 2099 || month < 1 || month > 12 || day < 1 || day > 31) {
+    return false;
+  }
+  char path[64];
+  (void)snprintf(path, sizeof(path), "/CICLOS/%04d/%02d/%04d%02d%02d.txt", year, month, year, month, day);
+  bool exists = false;
+  lvgl_port_unlock();
+  sd_access_sync([&path, &exists]() {
+    if (SD.exists(path)) {
+      File probe = SD.open(path, FILE_READ);
+      if (probe && !probe.isDirectory()) {
+        exists = true;
+      }
+      if (probe) {
+        probe.close();
+      }
+    }
+  });
+  (void)lvgl_port_lock(-1);
+  if (!exists) {
+    return false;
+  }
+  show_text_file(path, false, true);
   return true;
 }
 
