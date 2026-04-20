@@ -74,6 +74,8 @@ static lv_obj_t *s_root = nullptr;
 /** Fonte ativa (definições UI); nullptr usa LV_FONT_DEFAULT no visualizador. */
 static const lv_font_t *s_active_ui_font = nullptr;
 static lv_obj_t *s_path_label = nullptr;
+/** Barra de breadcrumbs (chips) no topo do explorador, substitui `s_path_label`. */
+static lv_obj_t *s_breadcrumb = nullptr;
 static lv_obj_t *s_list = nullptr;
 static char s_current_path[256];
 static char s_entry_paths[kMaxListEntries][192];
@@ -412,15 +414,102 @@ static void go_parent_dir(void) {
   }
 }
 
-static void update_path_label(void) {
-  if (s_path_label == nullptr) {
+static void refresh_file_list(bool show_loading_overlay);
+
+/** Handler de clique num chip: user_data = nivel a manter (0 = root). */
+static void breadcrumb_chip_cb(lv_event_t *e) {
+  const intptr_t keep = reinterpret_cast<intptr_t>(lv_event_get_user_data(e));
+  char target[sizeof(s_current_path)];
+  if (keep <= 0) {
+    strlcpy(target, kFsRoot, sizeof(target));
+  } else {
+    strlcpy(target, s_current_path, sizeof(target));
+    intptr_t count = 0;
+    for (size_t i = 1; target[i] != '\0'; i++) {
+      if (target[i] == '/') {
+        count++;
+        if (count == keep) {
+          target[i] = '\0';
+          break;
+        }
+      }
+    }
+  }
+  strlcpy(s_current_path, target, sizeof(s_current_path));
+  refresh_file_list(true);
+}
+
+/** Cria um chip (botao arredondado) no breadcrumb. `keep` = segmento alvo; `is_current` = ativo. */
+static lv_obj_t *breadcrumb_add_chip(const char *label, intptr_t keep, bool is_current) {
+  if (is_current) {
+    lv_obj_t *lbl = lv_label_create(s_breadcrumb);
+    lv_label_set_text(lbl, label);
+    lv_obj_set_style_pad_ver(lbl, 4, 0);
+    lv_obj_set_style_pad_hor(lbl, 10, 0);
+    lv_obj_set_style_radius(lbl, 14, 0);
+    lv_obj_set_style_bg_color(lbl, lv_color_hex(0x449D48), 0);
+    lv_obj_set_style_bg_opa(lbl, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
+    return lbl;
+  }
+  lv_obj_t *btn = lv_btn_create(s_breadcrumb);
+  lv_obj_set_size(btn, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_style_pad_ver(btn, 4, 0);
+  lv_obj_set_style_pad_hor(btn, 10, 0);
+  lv_obj_set_style_radius(btn, 14, 0);
+  lv_obj_set_style_bg_color(btn, lv_color_hex(0xE8F1E9), 0);
+  lv_obj_set_style_text_color(btn, lv_color_hex(0x2A6B2E), 0);
+  lv_obj_set_style_shadow_width(btn, 0, 0);
+  lv_obj_t *lbl = lv_label_create(btn);
+  lv_label_set_text(lbl, label);
+  lv_obj_center(lbl);
+  lv_obj_add_event_cb(btn, breadcrumb_chip_cb, LV_EVENT_CLICKED,
+                      reinterpret_cast<void *>(keep));
+  return btn;
+}
+
+/** Reconstroi a barra de breadcrumbs a partir de `s_current_path`. Trunca com "..." se profunda. */
+static void update_breadcrumb(void) {
+  if (s_breadcrumb == nullptr) {
     return;
   }
-  if (strcmp(s_current_path, kFsRoot) == 0) {
-    lv_label_set_text(s_path_label, LV_SYMBOL_DRIVE " /sd");
-  } else {
-    lv_label_set_text_fmt(s_path_label, LV_SYMBOL_DRIVE " /sd%s", s_current_path);
+  lv_obj_clean(s_breadcrumb);
+
+  const bool at_root = (strcmp(s_current_path, kFsRoot) == 0);
+  breadcrumb_add_chip(LV_SYMBOL_HOME " sd", 0, at_root);
+  if (at_root) {
+    return;
   }
+
+  /* Tokeniza s_current_path em segmentos. */
+  char buf[sizeof(s_current_path)];
+  strlcpy(buf, s_current_path, sizeof(buf));
+  const char *tokens[16];
+  int cnt = 0;
+  char *save = nullptr;
+  for (char *tok = strtok_r(buf, "/", &save); tok != nullptr && cnt < 16;
+       tok = strtok_r(nullptr, "/", &save)) {
+    tokens[cnt++] = tok;
+  }
+
+  constexpr int kMaxVisible = 3; /* max. segmentos para alem do Home antes de truncar */
+  int start = 0;
+  if (cnt > kMaxVisible) {
+    lv_obj_t *ell = lv_label_create(s_breadcrumb);
+    lv_label_set_text(ell, "...");
+    lv_obj_set_style_pad_hor(ell, 4, 0);
+    lv_obj_set_style_text_color(ell, lv_color_hex(0x888888), 0);
+    start = cnt - kMaxVisible;
+  }
+  for (int i = start; i < cnt; i++) {
+    const bool is_current = (i == cnt - 1);
+    breadcrumb_add_chip(tokens[i], i + 1, is_current);
+  }
+}
+
+static void update_path_label(void) {
+  /* Compat: o caminho e' agora mostrado via breadcrumb (chips). */
+  update_breadcrumb();
 }
 
 static bool is_text_preview_file(const char *full_path) {
@@ -1251,7 +1340,7 @@ static void on_list_btn_clicked(lv_event_t *e) {
  */
 static void refresh_file_list_finish_cb(void * /*user_data*/) {
   /* UI pode ter sido desmontada enquanto o scan corria. */
-  if (s_list == nullptr || s_path_label == nullptr) {
+  if (s_list == nullptr || s_breadcrumb == nullptr) {
     s_refresh_in_flight = false;
     return;
   }
@@ -1261,11 +1350,7 @@ static void refresh_file_list_finish_cb(void * /*user_data*/) {
 
   if (!s_async_dir_ok) {
     app_log_writef("WARN", "Falha ao abrir diretorio no SD: %s", s_current_path);
-    if (strcmp(s_current_path, kFsRoot) == 0) {
-      lv_label_set_text(s_path_label, "/sd (erro ao abrir)");
-    } else {
-      lv_label_set_text_fmt(s_path_label, "/sd%s (erro)", s_current_path);
-    }
+    update_breadcrumb();
     if (s_async_show_overlay) {
       ui_loading_hide();
     }
@@ -1273,14 +1358,18 @@ static void refresh_file_list_finish_cb(void * /*user_data*/) {
     return;
   }
 
-  if (strcmp(s_current_path, kFsRoot) != 0) {
-    lv_obj_t *up = lv_list_add_btn(s_list, LV_SYMBOL_UP, "..  <DIR>");
-    lv_obj_add_event_cb(up, on_list_btn_clicked, LV_EVENT_CLICKED,
-                        reinterpret_cast<void *>(kUserDataParentDir));
-  }
+  /* Sem entrada ".." na lista: navegacao ascendente e' feita pelo breadcrumb. */
 
   for (unsigned i = 0; i < s_async_scanned; i++) {
-    lv_obj_t *btn = lv_list_add_btn(s_list, nullptr, s_entry_lines[i]);
+    const char *icon = s_entry_is_dir[i] ? LV_SYMBOL_DIRECTORY : LV_SYMBOL_FILE;
+    lv_obj_t *btn = lv_list_add_btn(s_list, icon, s_entry_lines[i]);
+    /* Linha ~29% mais alta e icone maior em cor primaria (pasta e ficheiro). */
+    lv_obj_set_style_min_height(btn, 52, 0);
+    lv_obj_t *icon_lbl = lv_obj_get_child(btn, 0);
+    if (icon_lbl != nullptr) {
+      lv_obj_set_style_text_font(icon_lbl, &lv_font_montserrat_20, 0);
+      lv_obj_set_style_text_color(icon_lbl, lv_color_hex(0x449D48), 0);
+    }
     lv_obj_add_event_cb(btn, on_list_btn_clicked, LV_EVENT_CLICKED,
                         reinterpret_cast<void *>(static_cast<uintptr_t>(i)));
   }
@@ -1374,12 +1463,13 @@ static void refresh_scan_worker(void) {
     const time_t last_write = entry.getLastWrite();
     char date_buf[20];
     format_entry_datetime(last_write, date_buf, sizeof(date_buf));
+    /* Icone passa a ser parametro separado de lv_list_add_btn (permite recolor). */
     if (entry.isDirectory()) {
       snprintf(s_entry_lines[s_async_scanned], sizeof(s_entry_lines[0]),
-               "%s %-22s  <DIR>  %s", LV_SYMBOL_DIRECTORY, short_name, date_buf);
+               "%-22s  <DIR>  %s", short_name, date_buf);
     } else {
       snprintf(s_entry_lines[s_async_scanned], sizeof(s_entry_lines[0]),
-               "%s %-22s  %8lu B  %s", LV_SYMBOL_FILE, short_name,
+               "%-22s  %8lu B  %s", short_name,
                (unsigned long)entry.size(), date_buf);
     }
     entry.close();
@@ -1395,7 +1485,7 @@ static void refresh_scan_worker(void) {
 }
 
 static void refresh_file_list(bool show_loading_overlay) {
-  if (s_list == nullptr || s_path_label == nullptr) {
+  if (s_list == nullptr || s_breadcrumb == nullptr) {
     return;
   }
 
@@ -1434,6 +1524,7 @@ void file_browser_detach_stale_widgets(void) {
   s_overlay = nullptr;
   s_list = nullptr;
   s_path_label = nullptr;
+  s_breadcrumb = nullptr;
   s_root = nullptr;
   s_entry_count = 0;
   viewer_free_state();
@@ -1499,6 +1590,7 @@ bool file_browser_init(lv_obj_t *parent) {
     lv_obj_del(s_root);
     s_root = nullptr;
     s_path_label = nullptr;
+    s_breadcrumb = nullptr;
     s_list = nullptr;
   }
 
@@ -1513,10 +1605,19 @@ bool file_browser_init(lv_obj_t *parent) {
   lv_obj_set_style_pad_all(s_root, 4, 0);
   lv_obj_set_style_pad_row(s_root, 4, 0);
 
-  s_path_label = lv_label_create(s_root);
-  /** CLIP evita SCROLL_CIRCULAR mostrar fragmentos confusos (ex. parte de ".txt") como "text". */
-  lv_label_set_long_mode(s_path_label, LV_LABEL_LONG_CLIP);
-  lv_obj_set_width(s_path_label, LV_PCT(100));
+  /** Caminho: barra de chips substitui o label de texto. */
+  s_path_label = nullptr;
+  s_breadcrumb = lv_obj_create(s_root);
+  lv_obj_set_width(s_breadcrumb, LV_PCT(100));
+  lv_obj_set_height(s_breadcrumb, LV_SIZE_CONTENT);
+  lv_obj_set_layout(s_breadcrumb, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(s_breadcrumb, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(s_breadcrumb, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(s_breadcrumb, 4, 0);
+  lv_obj_set_style_pad_column(s_breadcrumb, 6, 0);
+  lv_obj_set_style_border_width(s_breadcrumb, 0, 0);
+  lv_obj_set_style_bg_opa(s_breadcrumb, LV_OPA_TRANSP, 0);
+  lv_obj_clear_flag(s_breadcrumb, LV_OBJ_FLAG_SCROLLABLE);
 
   lv_obj_t *hdr = lv_obj_create(s_root);
   lv_obj_set_width(hdr, LV_PCT(100));

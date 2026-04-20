@@ -65,7 +65,7 @@ para onde inserir o QR code do #6.
 
 ---
 
-### 3. Breadcrumb + voltar sempre visivel  `Pendente`
+### 3. Breadcrumb + voltar sempre visivel  `Feito`
 
 No file_browser, quando em `/CICLOS/2026/04`:
 - Header com breadcrumb clicavel: `sd > CICLOS > 2026 > 04`
@@ -194,6 +194,18 @@ Ao inves de `"..."` como label, fazer pulse no icone + animar barras.
   - Item 6: URL de download configuravel (com `?path=`).
   - Item 9: cor primaria `#449D48`. Accent a decidir.
   - Ordem de execucao: A (Tier 1 completo, um a um) → B → C.
+- **2026-04-20** — Item 3 concluido. Decisoes:
+  - Tipo chips (botoes arredondados) com cor primaria para segmento atual
+    e verde-claro (#E8F1E9 + #2A6B2E) para segmentos navegaveis.
+  - Separadores subtis via pad_column (6 px). Sem chevrons explicitos.
+  - Primeiro chip e' "Home sd" (icone home + "sd"); navega para raiz.
+  - Truncagem: se houver mais de 3 segmentos alem do Home, aparece "..."
+    e mostram-se so os ultimos 3. Chip final (pasta atual) nao e' clicavel.
+  - Removida entrada "..  <DIR>" da lista (`go_parent_dir` agora morto).
+  - Lista: linha +29% (min_height=52 px), icone de pasta/ficheiro a 20 px
+    em cor primaria via lv_list_add_btn(..., icon, ...) + acesso ao primeiro
+    filho para recolorir.
+
 - **2026-04-19** — Item 2 concluido. Decisoes e refinamentos:
   - Substitui tela principal: main = dashboard; ficheiros so via botao.
   - 6 cartoes em grade 2x3: Captura RS485, Hoje, SD, NTP, FTP, Wi-Fi.
