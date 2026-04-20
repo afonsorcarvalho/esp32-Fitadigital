@@ -24,6 +24,14 @@ void app_settings_set_wifi(const char *ssid, const char *pass);
 String app_settings_monitor_ip(void);
 void app_settings_set_monitor_ip(const char *host);
 
+/**
+ * URL base para descargas remotas de ciclos (sem `?path=`).
+ * Vazia = usa o proprio portal do dispositivo
+ * (`http://<IP>/api/fs/file`). Max. 127 caracteres.
+ */
+String app_settings_download_url(void);
+void app_settings_set_download_url(const char *url);
+
 /** 0 = 14px, 1 = 16, 2 = 18, 3 = 20 (Montserrat em lv_conf.h). */
 uint8_t app_settings_font_index(void);
 void app_settings_set_font_index(uint8_t idx);

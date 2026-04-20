@@ -29,6 +29,7 @@
 #include "sd_access.h"
 #include "cycles_rs485.h"
 #include "ui/ui_loading.h"
+#include "ui/ui_share_qr.h"
 
 /* ── Constantes do explorador de ficheiros ────────────────────────────── */
 
@@ -1212,6 +1213,18 @@ static void show_text_file(const char *full_path, bool quiet_index, bool scroll_
   lv_obj_t *back_lbl = lv_label_create(back);
   viewer_style_ios_back_button(back, back_lbl, ui_font);
   lv_obj_add_event_cb(back, close_overlay_cb, LV_EVENT_CLICKED, nullptr);
+
+  /* Botao "Partilhar": abre modal com QR code e URL de descarga. */
+  lv_obj_t *share_btn = lv_btn_create(back_row);
+  lv_obj_set_size(share_btn, 48, 36);
+  lv_obj_set_style_bg_color(share_btn, lv_color_hex(0x449D48), 0);
+  lv_obj_t *share_lbl = lv_label_create(share_btn);
+  lv_label_set_text(share_lbl, LV_SYMBOL_UPLOAD);
+  lv_obj_center(share_lbl);
+  lv_obj_add_event_cb(
+      share_btn,
+      [](lv_event_t * /*e*/) { ui_share_qr_show(s_viewer_path); },
+      LV_EVENT_CLICKED, nullptr);
 
   s_viewer_path_label = lv_label_create(back_row);
   /** Uma linha: caminho VFS completo (inclui o nome do ficheiro); DOT corta com "..." se nao couber. */

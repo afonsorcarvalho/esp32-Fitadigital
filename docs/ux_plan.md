@@ -97,7 +97,7 @@ API simples: `toast_show(kind, "mensagem")` com kinds `info|success|warn|error`.
 
 ---
 
-### 6. QR code / URL remota para baixar ciclo  `Pendente`
+### 6. QR code / URL remota para baixar ciclo  `Feito`
 
 **Caso de uso:** um servidor remoto (central de gestao) vai conectar-se ao
 dispositivo e baixar ficheiros. A URL base e' configuravel; o dispositivo
@@ -194,6 +194,18 @@ Ao inves de `"..."` como label, fazer pulse no icone + animar barras.
   - Item 6: URL de download configuravel (com `?path=`).
   - Item 9: cor primaria `#449D48`. Accent a decidir.
   - Ordem de execucao: A (Tier 1 completo, um a um) → B → C.
+- **2026-04-20** — Item 6 concluido. Decisoes:
+  - `LV_USE_QRCODE=1` em lv_conf.h (usa extra/libs/qrcode/lv_qrcode.c).
+  - Novo setting `download_url` (NVS `dl_url`, secao [net] em fdigi.cfg).
+    Se vazio, usa `http://<device_ip>/api/fs/file` (portal local).
+  - Modal em `src/ui/ui_share_qr.{h,cpp}` sobre `lv_layer_top()` com
+    backdrop escurecido clicavel (fecha ao toque fora) + botao Fechar.
+  - QR 240 px, URL abaixo em texto legivel.
+  - URL encoded via helper local (RFC 3986 unreserved).
+  - Botao "Partilhar" (LV_SYMBOL_UPLOAD) em verde primario na barra do
+    viewer, junto ao "Voltar".
+  - Toast Warn se Wi-Fi em baixo ao tentar partilhar.
+
 - **2026-04-20** — Item 4 concluido (fecha Tier 1). Decisoes:
   - Componente unico em `src/ui/ui_toast.{h,cpp}` com API
     `ui_toast_show(kind, msg, duration_ms=2500)`.

@@ -57,6 +57,8 @@ static lv_obj_t *s_wifi_back_btn = nullptr;
 static lv_obj_t *s_ta_mon_ip = nullptr;
 static lv_obj_t *s_sett_wifi_kb = nullptr;
 static lv_obj_t *s_mon_feedback_lbl = nullptr;
+/** Aba Wi-Fi: URL base para descarga remota (usada pelo QR do viewer). */
+static lv_obj_t *s_ta_dl_url = nullptr;
 
 /** Raiz do conteudo de definicoes (filho do ecra s_scr_settings, abaixo da barra). */
 static lv_obj_t *s_settings_root = nullptr;
@@ -959,6 +961,9 @@ static void settings_screen_enter(void) {
   if (s_ta_mon_ip != nullptr) {
     lv_textarea_set_text(s_ta_mon_ip, app_settings_monitor_ip().c_str());
   }
+  if (s_ta_dl_url != nullptr) {
+    lv_textarea_set_text(s_ta_dl_url, app_settings_download_url().c_str());
+  }
   if (s_ta_ftp_user != nullptr) {
     lv_textarea_set_text(s_ta_ftp_user, app_settings_ftp_user().c_str());
   }
@@ -1175,6 +1180,21 @@ static void settings_wifi_ta_kb_event_cb(lv_event_t *e) {
     lv_obj_clear_flag(s_sett_wifi_kb, LV_OBJ_FLAG_HIDDEN);
   } else if (code == LV_EVENT_DEFOCUSED) {
     settings_hide_wifi_keyboard();
+  }
+}
+
+static void settings_save_download_url_cb(lv_event_t *e) {
+  (void)e;
+  if (s_ta_dl_url == nullptr) {
+    return;
+  }
+  const char *url = lv_textarea_get_text(s_ta_dl_url);
+  app_settings_set_download_url(url != nullptr ? url : "");
+  const String saved = app_settings_download_url();
+  if (saved.length() > 0) {
+    ui_toast_show(ToastKind::Success, "URL guardada");
+  } else {
+    ui_toast_show(ToastKind::Info, "URL vazia: usar portal local");
   }
 }
 
@@ -1551,7 +1571,26 @@ static void create_settings_screen(void) {
   lv_label_set_long_mode(s_mon_feedback_lbl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(s_mon_feedback_lbl, LV_PCT(100));
 
-  /* Teclado especifico da aba Wi-Fi (monitor IP por agora). */
+  /* --- URL base de descarga remota (usada pelo QR do viewer) --- */
+  lv_obj_t *lbl_dl_sec = lv_label_create(tab_wifi);
+  lv_label_set_text(lbl_dl_sec, "URL base de descarga (vazio = portal local):");
+
+  s_ta_dl_url = lv_textarea_create(tab_wifi);
+  lv_textarea_set_one_line(s_ta_dl_url, true);
+  lv_textarea_set_max_length(s_ta_dl_url, 127);
+  lv_textarea_set_placeholder_text(s_ta_dl_url, "http://servidor/api/fs/file");
+  lv_textarea_set_text(s_ta_dl_url, app_settings_download_url().c_str());
+  lv_obj_set_width(s_ta_dl_url, LV_PCT(100));
+  lv_obj_add_event_cb(s_ta_dl_url, settings_wifi_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
+  lv_obj_add_event_cb(s_ta_dl_url, settings_wifi_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
+
+  lv_obj_t *bt_save_dl = lv_btn_create(tab_wifi);
+  lv_obj_t *lb_save_dl = lv_label_create(bt_save_dl);
+  lv_label_set_text(lb_save_dl, LV_SYMBOL_SAVE " Salvar URL de descarga");
+  lv_obj_center(lb_save_dl);
+  lv_obj_add_event_cb(bt_save_dl, settings_save_download_url_cb, LV_EVENT_CLICKED, nullptr);
+
+  /* Teclado especifico da aba Wi-Fi (monitor IP + URL de descarga). */
   s_sett_wifi_kb = lv_keyboard_create(tab_wifi);
   lv_obj_set_size(s_sett_wifi_kb, LV_PCT(100), (lv_coord_t)(vh * 30 / 100));
   lv_keyboard_set_mode(s_sett_wifi_kb, LV_KEYBOARD_MODE_TEXT_LOWER);

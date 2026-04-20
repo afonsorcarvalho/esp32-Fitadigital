@@ -28,6 +28,7 @@ const char *const kAppSettingsFtpDefaultPass = "esp32";
 
 static constexpr size_t kNtpSrvMax = 63U;
 static constexpr size_t kMonitorIpMax = 63U;
+static constexpr size_t kDownloadUrlMax = 127U;
 static constexpr size_t kWgIpMax = 19U;
 static constexpr size_t kWgKeyMax = 127U;
 static constexpr size_t kWgEpMax = 127U;
@@ -112,6 +113,8 @@ typedef struct {
   uint8_t rs_frm;
   bool have_mon_ip;
   char mon_ip[kMonitorIpMax + 1U];
+  bool have_dl_url;
+  char dl_url[kDownloadUrlMax + 1U];
 } ParsedSdCfg;
 
 static bool copy_key_str(char *dst, size_t cap, const char *val) {
@@ -326,6 +329,16 @@ static bool cfg_parse_kv(int sec, const char *key, const char *val, ParsedSdCfg 
       c->have_mon_ip = true;
       return true;
     }
+    if (!strcmp(key, "dl_url")) {
+      if (strlen(val) > kDownloadUrlMax) {
+        return false;
+      }
+      if (!copy_key_str(c->dl_url, sizeof(c->dl_url), val)) {
+        return false;
+      }
+      c->have_dl_url = true;
+      return true;
+    }
     return true;
   default:
     return true;
@@ -437,6 +450,9 @@ static void cfg_apply_parsed(const ParsedSdCfg *c) {
   }
   if (c->have_mon_ip) {
     s_prefs.putString("mon_ip", c->mon_ip);
+  }
+  if (c->have_dl_url) {
+    s_prefs.putString("dl_url", c->dl_url);
   }
 }
 
@@ -559,6 +575,8 @@ void app_settings_sync_config_file_to_sd(void) {
     f.printf("frame=%u\n\n", (unsigned)app_settings_rs485_frame_profile());
     f.print("[net]\nmon_ip=");
     f.print(app_settings_monitor_ip().c_str());
+    f.print("\ndl_url=");
+    f.print(app_settings_download_url().c_str());
     f.print("\n");
     f.close();
   });
@@ -623,6 +641,27 @@ void app_settings_set_monitor_ip(const char *host) {
     p[--n] = '\0';
   }
   s_prefs.putString("mon_ip", p);
+  app_settings_sync_config_file_to_sd();
+}
+
+String app_settings_download_url(void) {
+  return s_prefs.getString("dl_url", "");
+}
+
+void app_settings_set_download_url(const char *url) {
+  char buf[kDownloadUrlMax + 1U] = {0};
+  if (url != nullptr) {
+    strncpy(buf, url, kDownloadUrlMax);
+  }
+  char *p = buf;
+  while (*p == ' ' || *p == '\t') {
+    p++;
+  }
+  size_t n = strlen(p);
+  while (n > 0U && (p[n - 1U] == ' ' || p[n - 1U] == '\t')) {
+    p[--n] = '\0';
+  }
+  s_prefs.putString("dl_url", p);
   app_settings_sync_config_file_to_sd();
 }
 
