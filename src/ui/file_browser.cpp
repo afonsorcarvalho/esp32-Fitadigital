@@ -788,7 +788,8 @@ static bool viewer_try_extend_index_after_grow(const char *path) {
   size_t new_sz = old_sz;
 
   lvgl_port_unlock();
-  sd_access_sync_front([&]() {
+  /* Sem _front: refresh nunca precede escritas pendentes do reader RS485. */
+  sd_access_sync([&]() {
     File f = SD.open(path, FILE_READ);
     if (f && !f.isDirectory()) {
       new_sz = f.size();
@@ -807,7 +808,12 @@ static bool viewer_try_extend_index_after_grow(const char *path) {
   }
 
   static constexpr size_t kTailChunk = 2048U;
-  size_t scan_pos = old_sz;
+  /* Inicia 1 byte antes de old_sz (se houver) para detectar se o ficheiro antigo
+   * acabava em LF: nesse caso old_sz e' o inicio da primeira linha nova. Sem isso,
+   * cada chamada perderia a primeira linha adicionada (o LF pertence ao ficheiro antigo
+   * mas o start da nova linha e' a partir de old_sz). */
+  const size_t scan_pos_initial = (old_sz > 0U) ? old_sz - 1U : 0U;
+  size_t scan_pos = scan_pos_initial;
   while (scan_pos < new_sz) {
     size_t to_read = new_sz - scan_pos;
     if (to_read > kTailChunk) {
@@ -816,7 +822,7 @@ static bool viewer_try_extend_index_after_grow(const char *path) {
     char chunk[kTailChunk];
     int got = 0;
     lvgl_port_unlock();
-    sd_access_sync_front([&]() {
+    sd_access_sync([&]() {
       File f = SD.open(path, FILE_READ);
       if (!f || f.isDirectory()) {
         return;
@@ -837,26 +843,30 @@ static bool viewer_try_extend_index_after_grow(const char *path) {
       if (chunk[i] != '\n') {
         continue;
       }
+      const uint32_t next_start = static_cast<uint32_t>(scan_pos + static_cast<size_t>(i) + 1U);
+      /* Ignora "fantasma" no EOF (LF final) e LFs anteriores a old_sz (ja indexados). */
+      if (next_start >= static_cast<uint32_t>(new_sz)) {
+        continue;
+      }
+      if (next_start < static_cast<uint32_t>(old_sz)) {
+        continue;
+      }
       if (s_total_lines >= kMaxIndexLines) {
         return false;
       }
-      const uint32_t next_off = static_cast<uint32_t>(scan_pos + static_cast<size_t>(i) + 1U);
       uint32_t *grown = static_cast<uint32_t *>(
           heap_caps_realloc(s_line_offsets, (s_total_lines + 1U) * sizeof(uint32_t), MALLOC_CAP_SPIRAM));
       if (grown == nullptr) {
         return false;
       }
       s_line_offsets = grown;
-      s_line_offsets[s_total_lines] = next_off;
+      s_line_offsets[s_total_lines] = next_start;
       s_total_lines++;
     }
     scan_pos += static_cast<size_t>(got);
   }
 
   s_file_size = new_sz;
-  while (s_total_lines > 1U && s_line_offsets[s_total_lines - 1U] >= static_cast<uint32_t>(s_file_size)) {
-    s_total_lines--;
-  }
   viewer_scroll_to_last_page();
   return true;
 }
@@ -880,7 +890,8 @@ static void rs485_open_timer_cb(lv_timer_t * /*t*/) {
   }
   bool exists = false;
   lvgl_port_unlock();
-  sd_access_sync_front([&path, &exists]() {
+  /* Sem _front: evita furar a fila do SD e atrasar a escrita de linhas pelo reader RS485. */
+  sd_access_sync([&path, &exists]() {
     if (SD.exists(path)) {
       File probe = SD.open(path, FILE_READ);
       if (probe && !probe.isDirectory()) {
@@ -916,7 +927,8 @@ static void cycles_live_timer_cb(lv_timer_t * /*t*/) {
   }
   size_t sz = 0;
   lvgl_port_unlock();
-  sd_access_sync_front([&sz]() {
+  /* Sem _front: refresh nao deve atrasar escritas pendentes no SD. */
+  sd_access_sync([&sz]() {
     File f = SD.open(s_viewer_path, FILE_READ);
     if (f) {
       sz = f.size();
@@ -1521,7 +1533,9 @@ bool file_browser_init(lv_obj_t *parent) {
     s_cycles_live_timer = lv_timer_create(cycles_live_timer_cb, 800, nullptr);
   }
   if (s_rs485_open_timer == nullptr) {
-    s_rs485_open_timer = lv_timer_create(rs485_open_timer_cb, 40, nullptr);
+    /* 500 ms: refresh do viewer desacoplado da taxa de chegada de linhas,
+     * evitando saturar o SD e starvar a escrita de novas linhas pelo reader RS485. */
+    s_rs485_open_timer = lv_timer_create(rs485_open_timer_cb, 500, nullptr);
   }
 
   s_rs485_ui_follow_arm_timer = lv_timer_create(rs485_ui_follow_arm_timer_cb, kRs485UiFollowArmDelayMs, nullptr);

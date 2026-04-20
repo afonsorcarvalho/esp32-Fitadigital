@@ -50,3 +50,4 @@ venv/
 # Secrets locais (credenciais por máquina). Descomente se criar overrides:
 # platformio_local.ini
 # secrets.ini
+tools/test_out/

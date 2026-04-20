@@ -252,7 +252,8 @@ void cycles_rs485_init(void) {
   }
 
   Serial1.end();
-  Serial1.setRxBufferSize(4096);
+  /* RX grande para absorver stalls da task de captura enquanto a UI/SD trabalham. */
+  Serial1.setRxBufferSize(16384);
   const uint32_t baud = app_settings_rs485_baud();
   const uint32_t cfg = uart_config_for_profile(app_settings_rs485_frame_profile());
   Serial1.begin(baud, cfg, BOARD_RS485_RX_GPIO, BOARD_RS485_TX_GPIO);
