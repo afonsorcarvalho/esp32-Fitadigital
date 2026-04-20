@@ -43,3 +43,15 @@ void cycles_rs485_deinit(void);
 
 /** Reabre a UART com `app_settings_rs485_*` (deinit + init se o SD estiver montado). */
 void cycles_rs485_apply_settings(void);
+
+/**
+ * Numero de linhas ja' gravadas no ficheiro do dia corrente (reset em mudanca de dia).
+ * Contado a inicializacao (scan do ficheiro) e incrementado a cada linha gravada.
+ */
+uint32_t cycles_rs485_today_line_count(void);
+
+/**
+ * Formata a hora da ultima gravacao como "HH:MM:SS" no fuso local; escreve "--:--:--"
+ * se nenhuma linha foi gravada ainda nesta sessao.
+ */
+void cycles_rs485_last_write_hhmmss(char *out, size_t out_sz);

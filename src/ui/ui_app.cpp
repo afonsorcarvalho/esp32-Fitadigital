@@ -19,6 +19,7 @@
 #include "splash_screen.h"
 #include "file_browser.h"
 #include "lvgl_port_v8.h"
+#include "cycles_rs485.h"
 #include "net_monitor.h"
 #include "net_services.h"
 #include "sd_access.h"
@@ -92,6 +93,22 @@ static lv_obj_t *s_sd_format_confirm_btn = nullptr;
 static bool s_sd_format_armed = false;
 
 static lv_timer_t *s_status_timer = nullptr;
+
+/** Vista corrente dentro de s_main_content: dashboard ou explorador de ficheiros. */
+enum class MainView : uint8_t { Dashboard, FileBrowser };
+static MainView s_main_view = MainView::Dashboard;
+/** Botao "Home" na status bar (so visivel quando a vista e' o explorador). */
+static lv_obj_t *s_bar_home_btn = nullptr;
+
+/** Labels dinamicos do dashboard; actualizados por `dashboard_refresh_values`. */
+static lv_obj_t *s_dash_rs485_cfg = nullptr;   /**< "9600 8N1" */
+static lv_obj_t *s_dash_rs485_last = nullptr;  /**< "Ultima: HH:MM:SS" */
+static lv_obj_t *s_dash_today_lines = nullptr; /**< "42 linhas gravadas" */
+static lv_obj_t *s_dash_today_last = nullptr;  /**< "Ultima: HH:MM:SS" */
+static lv_obj_t *s_dash_sd_value = nullptr;
+static lv_obj_t *s_dash_ntp_value = nullptr;
+static lv_obj_t *s_dash_ftp_value = nullptr;
+static lv_obj_t *s_dash_wifi_value = nullptr;
 
 static bool s_sd_at_boot = false;
 
@@ -306,6 +323,8 @@ static void update_bar_wifi_text(void) {
   update_monitor_pill(s_bar_settings_monitor_pill);
 }
 
+static void dashboard_refresh_values(void);
+
 static void status_timer_cb(lv_timer_t *t) {
   (void)t;
   update_bar_wifi_text();
@@ -318,11 +337,15 @@ static void status_timer_cb(lv_timer_t *t) {
     }
   }
   if (s_scr_main != nullptr && lv_disp_get_scr_act(nullptr) == s_scr_main) {
-    const uint32_t sd_mod = sd_access_last_modified_ms();
-    const uint32_t ui_ref = file_browser_last_refresh_ms();
-    if (!file_browser_should_skip_auto_list_refresh() && sd_mod != 0 &&
-        (ui_ref == 0 || (int32_t)(sd_mod - ui_ref) > 0)) {
-      file_browser_refresh_silent();
+    if (s_main_view == MainView::Dashboard) {
+      dashboard_refresh_values();
+    } else {
+      const uint32_t sd_mod = sd_access_last_modified_ms();
+      const uint32_t ui_ref = file_browser_last_refresh_ms();
+      if (!file_browser_should_skip_auto_list_refresh() && sd_mod != 0 &&
+          (ui_ref == 0 || (int32_t)(sd_mod - ui_ref) > 0)) {
+        file_browser_refresh_silent();
+      }
     }
   }
 }
@@ -333,6 +356,293 @@ static bool s_wifi_return_to_settings = false;
 static void create_settings_screen(void);
 static void settings_screen_enter(void);
 static void settings_back_cb(lv_event_t *e);
+
+/** Constroi um cartao do dashboard; devolve o ponteiro ao label de valor para refresh. */
+static lv_obj_t *dashboard_make_card(lv_obj_t *row, const char *icon, const char *title) {
+  lv_obj_t *card = lv_obj_create(row);
+  lv_obj_set_flex_grow(card, 1);
+  lv_obj_set_height(card, LV_SIZE_CONTENT);
+  lv_obj_set_style_radius(card, 8, 0);
+  lv_obj_set_style_border_width(card, 1, 0);
+  lv_obj_set_style_border_color(card, lv_color_hex(0xCCCCCC), 0);
+  lv_obj_set_style_bg_color(card, lv_color_hex(0xFAFAFA), 0);
+  lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+  lv_obj_set_style_pad_all(card, 8, 0);
+  lv_obj_set_style_pad_row(card, 2, 0);
+  lv_obj_set_layout(card, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *hdr = lv_label_create(card);
+  lv_label_set_text_fmt(hdr, "%s %s", icon, title);
+  lv_obj_set_style_text_color(hdr, lv_color_hex(0x449D48), 0); /* cor primaria */
+
+  lv_obj_t *val = lv_label_create(card);
+  lv_label_set_long_mode(val, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(val, LV_PCT(100));
+  lv_label_set_text(val, "--");
+  return val;
+}
+
+/** Cria dois labels num cartao: retorna ambos. Usado em cartoes com 2 linhas dinamicas. */
+static lv_obj_t *dashboard_make_card_twoline(lv_obj_t *row, const char *icon, const char *title,
+                                              lv_obj_t **extra_out) {
+  lv_obj_t *primary = dashboard_make_card(row, icon, title);
+  lv_obj_t *card = lv_obj_get_parent(primary);
+  lv_obj_t *extra = lv_label_create(card);
+  lv_label_set_long_mode(extra, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(extra, LV_PCT(100));
+  lv_obj_set_style_text_color(extra, lv_color_hex(0x606060), 0);
+  lv_label_set_text(extra, "--");
+  if (extra_out != nullptr) {
+    *extra_out = extra;
+  }
+  return primary;
+}
+
+static void dashboard_btn_today_cb(lv_event_t *e);
+static void dashboard_btn_history_cb(lv_event_t *e);
+static void dashboard_btn_home_cb(lv_event_t *e);
+static void dashboard_refresh_values(void);
+static void ensure_main_content_browser(void);
+
+/**
+ * Constroi o dashboard dentro de `parent` (s_main_content ja' limpo).
+ * Layout: 3 linhas de 2 cartoes + linha de botoes de acao.
+ */
+static void dashboard_build(lv_obj_t *parent) {
+  if (parent == nullptr) {
+    return;
+  }
+  lv_obj_set_layout(parent, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(parent, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(parent, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_all(parent, 8, 0);
+  lv_obj_set_style_pad_bottom(parent, 5, 0); /* aproxima o rodape da borda inferior */
+  lv_obj_set_style_pad_row(parent, 8, 0);
+
+  auto make_row = [parent]() {
+    lv_obj_t *row = lv_obj_create(parent);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, LV_SIZE_CONTENT);
+    lv_obj_set_layout(row, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_set_style_pad_column(row, 8, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    return row;
+  };
+
+  lv_obj_t *row1 = make_row();
+  s_dash_rs485_cfg = dashboard_make_card_twoline(row1, LV_SYMBOL_LOOP, "Captura RS485", &s_dash_rs485_last);
+  s_dash_today_lines = dashboard_make_card_twoline(row1, LV_SYMBOL_FILE, "Hoje", &s_dash_today_last);
+
+  lv_obj_t *row2 = make_row();
+  s_dash_sd_value = dashboard_make_card(row2, LV_SYMBOL_SD_CARD, "SD");
+  s_dash_ntp_value = dashboard_make_card(row2, LV_SYMBOL_BELL, "NTP");
+
+  lv_obj_t *row3 = make_row();
+  s_dash_ftp_value = dashboard_make_card(row3, LV_SYMBOL_DRIVE, "FTP");
+  s_dash_wifi_value = dashboard_make_card(row3, LV_SYMBOL_WIFI, "Wi-Fi");
+
+  /* Linha de acoes. */
+  lv_obj_t *actions = lv_obj_create(parent);
+  lv_obj_set_width(actions, LV_PCT(100));
+  lv_obj_set_height(actions, LV_SIZE_CONTENT);
+  lv_obj_set_layout(actions, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(actions, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(actions, 4, 0);
+  lv_obj_set_style_pad_column(actions, 8, 0);
+  lv_obj_set_style_border_width(actions, 0, 0);
+  lv_obj_set_style_bg_opa(actions, LV_OPA_TRANSP, 0);
+  lv_obj_clear_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *btn_today = lv_btn_create(actions);
+  lv_obj_set_height(btn_today, 102);
+  lv_obj_set_flex_grow(btn_today, 1);
+  lv_obj_set_style_bg_color(btn_today, lv_color_hex(0x449D48), 0);
+  lv_obj_t *lbl_today = lv_label_create(btn_today);
+  lv_label_set_text(lbl_today, LV_SYMBOL_EYE_OPEN " Abrir ciclo de hoje");
+  lv_obj_set_style_text_font(lbl_today, &lv_font_montserrat_20, 0);
+  lv_obj_center(lbl_today);
+  lv_obj_add_event_cb(btn_today, dashboard_btn_today_cb, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t *btn_hist = lv_btn_create(actions);
+  lv_obj_set_height(btn_hist, 102);
+  lv_obj_set_flex_grow(btn_hist, 1);
+  lv_obj_set_style_bg_color(btn_hist, lv_color_hex(0x449D48), 0);
+  lv_obj_t *lbl_hist = lv_label_create(btn_hist);
+  lv_label_set_text(lbl_hist, LV_SYMBOL_DIRECTORY " Ver historico");
+  lv_obj_set_style_text_font(lbl_hist, &lv_font_montserrat_20, 0);
+  lv_obj_center(lbl_hist);
+  lv_obj_add_event_cb(btn_hist, dashboard_btn_history_cb, LV_EVENT_CLICKED, nullptr);
+
+  /* Rodape: logo AFR (esquerda) + versao do software (direita). */
+  LV_IMG_DECLARE(afr_logo_verde);
+  lv_obj_t *footer = lv_obj_create(parent);
+  lv_obj_set_width(footer, LV_PCT(100));
+  lv_obj_set_height(footer, LV_SIZE_CONTENT);
+  lv_obj_set_layout(footer, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(footer, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(footer, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(footer, 0, 0);
+  lv_obj_set_style_border_width(footer, 0, 0);
+  lv_obj_set_style_bg_opa(footer, LV_OPA_TRANSP, 0);
+  lv_obj_clear_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *logo = lv_img_create(footer);
+  lv_img_set_src(logo, &afr_logo_verde);
+
+  lv_obj_t *ver_lbl = lv_label_create(footer);
+  lv_label_set_text(ver_lbl, "FITADIGITAL 1.02v");
+  lv_obj_set_style_text_color(ver_lbl, lv_color_hex(0x606060), 0);
+
+  dashboard_refresh_values();
+}
+
+/** Invalida os ponteiros do dashboard (chamar antes de lv_obj_clean no s_main_content). */
+static void dashboard_detach_stale_widgets(void) {
+  s_dash_rs485_cfg = nullptr;
+  s_dash_rs485_last = nullptr;
+  s_dash_today_lines = nullptr;
+  s_dash_today_last = nullptr;
+  s_dash_sd_value = nullptr;
+  s_dash_ntp_value = nullptr;
+  s_dash_ftp_value = nullptr;
+  s_dash_wifi_value = nullptr;
+}
+
+/** Formata "X.Y GB" ou "X MB" a partir de bytes (uso em cartao SD). */
+static void human_bytes(uint64_t bytes, char *out, size_t out_sz) {
+  if (bytes >= (uint64_t)1 << 30) {
+    const double gb = (double)bytes / (double)((uint64_t)1 << 30);
+    (void)snprintf(out, out_sz, "%.1f GB", gb);
+  } else if (bytes >= (uint64_t)1 << 20) {
+    const double mb = (double)bytes / (double)((uint64_t)1 << 20);
+    (void)snprintf(out, out_sz, "%.0f MB", mb);
+  } else if (bytes >= 1024U) {
+    (void)snprintf(out, out_sz, "%u KB", (unsigned)(bytes >> 10));
+  } else {
+    (void)snprintf(out, out_sz, "%u B", (unsigned)bytes);
+  }
+}
+
+static void dashboard_refresh_values(void) {
+  char tmp[80];
+
+  /* RS485: config + ultima linha */
+  if (s_dash_rs485_cfg != nullptr) {
+    static const char *const kFrames[] = {"8N1", "8E1", "8O1", "8N2", "7N1", "7E1", "7O1", "7N2"};
+    const uint8_t fprof = app_settings_rs485_frame_profile();
+    const char *fstr = (fprof < 8U) ? kFrames[fprof] : "?";
+    (void)snprintf(tmp, sizeof(tmp), "%lu %s", (unsigned long)app_settings_rs485_baud(), fstr);
+    lv_label_set_text(s_dash_rs485_cfg, tmp);
+  }
+  if (s_dash_rs485_last != nullptr) {
+    char hms[16];
+    cycles_rs485_last_write_hhmmss(hms, sizeof(hms));
+    (void)snprintf(tmp, sizeof(tmp), "Ultima: %s", hms);
+    lv_label_set_text(s_dash_rs485_last, tmp);
+  }
+
+  /* Hoje: linhas gravadas */
+  if (s_dash_today_lines != nullptr) {
+    (void)snprintf(tmp, sizeof(tmp), "%u linhas gravadas", (unsigned)cycles_rs485_today_line_count());
+    lv_label_set_text(s_dash_today_lines, tmp);
+  }
+  if (s_dash_today_last != nullptr) {
+    char hms[16];
+    cycles_rs485_last_write_hhmmss(hms, sizeof(hms));
+    (void)snprintf(tmp, sizeof(tmp), "Ultima: %s", hms);
+    lv_label_set_text(s_dash_today_last, tmp);
+  }
+
+  /* SD */
+  if (s_dash_sd_value != nullptr) {
+    if (sd_access_is_mounted()) {
+      const uint64_t total = SD.totalBytes();
+      const uint64_t used = SD.usedBytes();
+      const uint64_t free_b = (total > used) ? (total - used) : 0;
+      const unsigned pct = total > 0 ? (unsigned)((used * 100U) / total) : 0;
+      char free_str[24];
+      human_bytes(free_b, free_str, sizeof(free_str));
+      (void)snprintf(tmp, sizeof(tmp), "%s livres (%u%% usado)", free_str, pct);
+      lv_label_set_text(s_dash_sd_value, tmp);
+    } else {
+      lv_label_set_text(s_dash_sd_value, "Nao montado");
+    }
+  }
+
+  /* NTP */
+  if (s_dash_ntp_value != nullptr) {
+    if (!app_settings_ntp_enabled()) {
+      lv_label_set_text(s_dash_ntp_value, "Desativado");
+    } else if (net_time_is_valid()) {
+      lv_label_set_text(s_dash_ntp_value, "Sincronizado");
+    } else {
+      lv_label_set_text(s_dash_ntp_value, "Sem sincronizacao");
+    }
+  }
+
+  /* FTP */
+  if (s_dash_ftp_value != nullptr) {
+    const bool up = WiFi.isConnected();
+    if (up && app_settings_ftp_user().length() > 0) {
+      lv_label_set_text(s_dash_ftp_value, "Ativo - porta 21");
+    } else if (!up) {
+      lv_label_set_text(s_dash_ftp_value, "Inativo (sem Wi-Fi)");
+    } else {
+      lv_label_set_text(s_dash_ftp_value, "Nao configurado");
+    }
+  }
+
+  /* Wi-Fi */
+  if (s_dash_wifi_value != nullptr) {
+    if (WiFi.isConnected()) {
+      (void)snprintf(tmp, sizeof(tmp), "%s\n%s - %d dBm",
+                     WiFi.SSID().c_str(),
+                     WiFi.localIP().toString().c_str(),
+                     (int)WiFi.RSSI());
+      lv_label_set_text(s_dash_wifi_value, tmp);
+    } else {
+      lv_label_set_text(s_dash_wifi_value, "Desligado");
+    }
+  }
+}
+
+static void dashboard_btn_today_cb(lv_event_t *e) {
+  (void)e;
+  ensure_main_content_browser();
+  file_browser_open_today_cycles_txt();
+}
+
+static void dashboard_btn_history_cb(lv_event_t *e) {
+  (void)e;
+  ensure_main_content_browser();
+  file_browser_goto("/CICLOS");
+}
+
+static void dashboard_btn_home_cb(lv_event_t *e);
+
+static void ensure_main_content_dashboard(void) {
+  if (s_main_content == nullptr) {
+    return;
+  }
+  ui_loading_hide();
+  file_browser_detach_stale_widgets();
+  dashboard_detach_stale_widgets();
+  lv_obj_clean(s_main_content);
+  dashboard_build(s_main_content);
+  s_main_view = MainView::Dashboard;
+  if (s_bar_home_btn != nullptr) {
+    lv_obj_add_flag(s_bar_home_btn, LV_OBJ_FLAG_HIDDEN);
+  }
+  ui_apply_font_everywhere();
+}
 
 static void ensure_main_content_browser(void) {
   if (s_main_content == nullptr) {
@@ -345,13 +655,28 @@ static void ensure_main_content_browser(void) {
    */
   ui_loading_hide();
   file_browser_detach_stale_widgets();
+  dashboard_detach_stale_widgets();
   lv_obj_clean(s_main_content);
+  /* s_main_content tinha flex column definido pelo dashboard; repoe valores default
+   * para o file_browser criar o seu proprio layout a partir do zero (0 = no layout). */
+  lv_obj_set_layout(s_main_content, 0);
+  lv_obj_set_style_pad_all(s_main_content, 0, 0);
+  lv_obj_set_style_pad_row(s_main_content, 0, 0);
   if (!(s_sd_at_boot && file_browser_init(s_main_content))) {
     lv_obj_t *msg = lv_label_create(s_main_content);
     lv_label_set_text(msg, s_sd_at_boot ? "Nao foi possivel listar o SD." : "SD nao montado.\nUse cartao FAT32 MBR.");
     lv_obj_center(msg);
   }
+  s_main_view = MainView::FileBrowser;
+  if (s_bar_home_btn != nullptr) {
+    lv_obj_clear_flag(s_bar_home_btn, LV_OBJ_FLAG_HIDDEN);
+  }
   ui_apply_font_everywhere();
+}
+
+static void dashboard_btn_home_cb(lv_event_t *e) {
+  (void)e;
+  ensure_main_content_dashboard();
 }
 
 static void enter_main_after_wifi_connected(void) {
@@ -359,7 +684,7 @@ static void enter_main_after_wifi_connected(void) {
     lv_obj_add_flag(s_wifi_back_btn, LV_OBJ_FLAG_HIDDEN);
   }
   lv_scr_load(s_scr_main);
-  ensure_main_content_browser();
+  ensure_main_content_dashboard();
 }
 
 static lv_timer_t *s_wifi_wait_timer = nullptr;
@@ -591,7 +916,7 @@ static void settings_sd_format_exec_cb(lv_event_t *e) {
   (void)lvgl_port_lock(-1);
 
   if (ok) {
-    ensure_main_content_browser();
+    ensure_main_content_dashboard();
     settings_log_refresh_view();
     settings_sd_format_status_refresh("Formatacao concluida com sucesso.");
     app_log_write("INFO", "Formatacao de SD concluida via UI.");
@@ -1683,8 +2008,17 @@ static void create_main_screen(void) {
   lv_label_set_long_mode(s_bar_time_lbl, LV_LABEL_LONG_CLIP);
   lv_label_set_text(s_bar_time_lbl, "--/--/---- --:--");
 
+  s_bar_home_btn = lv_btn_create(bar);
+  lv_obj_set_size(s_bar_home_btn, 40, 36);
+  lv_obj_t *home_lbl = lv_label_create(s_bar_home_btn);
+  lv_label_set_text(home_lbl, LV_SYMBOL_HOME);
+  lv_obj_center(home_lbl);
+  lv_obj_add_event_cb(s_bar_home_btn, dashboard_btn_home_cb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_flag(s_bar_home_btn, LV_OBJ_FLAG_HIDDEN);
+
   lv_obj_t *gear = lv_btn_create(bar);
   lv_obj_set_size(gear, 40, 36);
+  lv_obj_set_style_bg_color(gear, lv_color_hex(0x449D48), 0);
   lv_obj_t *gl = lv_label_create(gear);
   lv_label_set_text(gl, LV_SYMBOL_SETTINGS);
   lv_obj_center(gl);
@@ -1786,7 +2120,7 @@ void ui_app_run(bool sd_mounted, bool splash_active) {
     } else {
       boot_screen_destroy();
     }
-    ensure_main_content_browser();
+    ensure_main_content_dashboard();
   } else {
     lv_scr_load(s_scr_wifi);
     if (splash_active) {

@@ -33,6 +33,12 @@ void file_browser_open_today_cycles_txt(void);
  */
 void file_browser_on_rs485_line_saved(void);
 
+/**
+ * Navega para uma pasta absoluta (ex.: "/CICLOS"). Se o caminho for invalido ou
+ * nao existir, permanece onde estava.
+ */
+void file_browser_goto(const char *path);
+
 /** Atualiza a listagem do diretorio atual (com overlay "A carregar..."). */
 void file_browser_refresh(void);
 

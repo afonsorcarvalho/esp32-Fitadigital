@@ -46,7 +46,7 @@ serve como proxy de reachability. Prefer ICMP se viavel (lwip_raw).
 
 ---
 
-### 2. Dashboard / tela home com resumo de estado  `Pendente`
+### 2. Dashboard / tela home com resumo de estado  `Feito`
 
 Substitui (ou precede) a entrada direta no file_browser.
 
@@ -194,6 +194,22 @@ Ao inves de `"..."` como label, fazer pulse no icone + animar barras.
   - Item 6: URL de download configuravel (com `?path=`).
   - Item 9: cor primaria `#449D48`. Accent a decidir.
   - Ordem de execucao: A (Tier 1 completo, um a um) → B → C.
+- **2026-04-19** — Item 2 concluido. Decisoes e refinamentos:
+  - Substitui tela principal: main = dashboard; ficheiros so via botao.
+  - 6 cartoes em grade 2x3: Captura RS485, Hoje, SD, NTP, FTP, Wi-Fi.
+  - Titulo de cada cartao usa cor primaria #449D48.
+  - 2 botoes de acao grandes (102 px, font Montserrat 20, cor primaria):
+    "Abrir ciclo de hoje" e "Ver historico" (vai direto para `/CICLOS`).
+  - Botao engrenagem da status bar tambem em cor primaria.
+  - Rodape: AFR_LOGO_verde.png (convertido a 120x37 via tools/png_to_lvgl.py)
+    a esquerda + "FITADIGITAL 1.02v" a direita.
+  - Novo botao `LV_SYMBOL_HOME` na status bar, so visivel quando em modo
+    file_browser, volta ao dashboard.
+  - APIs novas em cycles_rs485: `today_line_count()` e `last_write_hhmmss()`.
+    Contador inicializa a partir de LFs no ficheiro do dia + incrementa por
+    commit + reset em mudanca de dia.
+  - API nova em file_browser: `file_browser_goto(path)`.
+
 - **2026-04-19** — Item 1 concluido. Refinamentos em cima da proposta inicial:
   - Indicador passou de bolinha 14 px para **oblongo (pill)** centrado, largura
     ~1/5 do ecra, altura 30 px, cantos arredondados, label branco.

@@ -54,6 +54,13 @@ static TaskHandle_t s_tx_test_task = nullptr;
 /** false no arranque: a UI nao abre o .txt do dia ate `cycles_rs485_set_line_to_ui_follow(true)`. */
 static std::atomic<bool> s_line_to_ui_follow{false};
 
+/** Contador de linhas do ficheiro do dia corrente (inicializado por scan na init). */
+static std::atomic<uint32_t> s_today_lines{0};
+/** time() da ultima gravacao (0 se ainda nao houve gravacao desde o boot). */
+static std::atomic<time_t> s_last_write_time{0};
+/** Caminho do ficheiro do dia para detetar mudanca de dia (reset do contador). */
+static char s_today_path_cache[48] = "";
+
 void cycles_rs485_set_line_to_ui_follow(bool enabled) {
   s_line_to_ui_follow.store(enabled, std::memory_order_relaxed);
 }
@@ -144,6 +151,35 @@ static void mkdirs_for_ym(int year, int month) {
   }
 }
 
+/** Conta LFs no ficheiro indicado (executar em contexto sd_io). Usado ao inicializar o contador. */
+static uint32_t count_lfs_in_file_sync(const char *path) {
+  if (path == nullptr || !SD.exists(path)) {
+    return 0;
+  }
+  File f = SD.open(path, FILE_READ);
+  if (!f || f.isDirectory()) {
+    if (f) {
+      f.close();
+    }
+    return 0;
+  }
+  uint32_t count = 0;
+  uint8_t buf[512];
+  for (;;) {
+    const int n = f.read(buf, sizeof(buf));
+    if (n <= 0) {
+      break;
+    }
+    for (int i = 0; i < n; ++i) {
+      if (buf[i] == '\n') {
+        count++;
+      }
+    }
+  }
+  f.close();
+  return count;
+}
+
 /**
  * Grava uma linha no ficheiro do dia corrente (abre, escreve, fecha).
  * Executar apenas no contexto sd_io (via sd_access_sync).
@@ -175,6 +211,14 @@ static void append_line_sync(const char *line, size_t line_len) {
   (void)f.write(&nl, 1U);
   f.close();
   sd_access_notify_changed();
+  /* Mudanca de dia: reinicia contador; ficheiro novo acabou de ser criado com 1 linha. */
+  if (strcmp(s_today_path_cache, path) != 0) {
+    strncpy(s_today_path_cache, path, sizeof(s_today_path_cache) - 1U);
+    s_today_path_cache[sizeof(s_today_path_cache) - 1U] = '\0';
+    s_today_lines.store(0, std::memory_order_relaxed);
+  }
+  s_today_lines.fetch_add(1U, std::memory_order_relaxed);
+  s_last_write_time.store(now, std::memory_order_relaxed);
   if (s_line_to_ui_follow.load(std::memory_order_relaxed)) {
     file_browser_on_rs485_line_saved();
   }
@@ -258,6 +302,16 @@ void cycles_rs485_init(void) {
   const uint32_t cfg = uart_config_for_profile(app_settings_rs485_frame_profile());
   Serial1.begin(baud, cfg, BOARD_RS485_RX_GPIO, BOARD_RS485_TX_GPIO);
 
+  /* Inicializa contador de linhas a partir do ficheiro do dia existente (se houver). */
+  char today_path[48];
+  if (cycles_rs485_format_today_path(today_path, sizeof(today_path))) {
+    strncpy(s_today_path_cache, today_path, sizeof(s_today_path_cache) - 1U);
+    s_today_path_cache[sizeof(s_today_path_cache) - 1U] = '\0';
+    uint32_t initial = 0;
+    sd_access_sync([&today_path, &initial]() { initial = count_lfs_in_file_sync(today_path); });
+    s_today_lines.store(initial, std::memory_order_relaxed);
+  }
+
   const BaseType_t ok = xTaskCreatePinnedToCore(reader_task, "rs485_rd", kReaderStackWords, nullptr, 3, &s_reader_task,
                                                   tskNO_AFFINITY);
   if (ok != pdPASS) {
@@ -280,4 +334,27 @@ void cycles_rs485_init(void) {
     }
   }
 #endif
+}
+
+uint32_t cycles_rs485_today_line_count(void) {
+  return s_today_lines.load(std::memory_order_relaxed);
+}
+
+void cycles_rs485_last_write_hhmmss(char *out, size_t out_sz) {
+  if (out == nullptr || out_sz < 9U) {
+    return;
+  }
+  const time_t t = s_last_write_time.load(std::memory_order_relaxed);
+  if (t == 0) {
+    strncpy(out, "--:--:--", out_sz);
+    out[out_sz - 1U] = '\0';
+    return;
+  }
+  struct tm lt {};
+  if (localtime_r(&t, &lt) == nullptr) {
+    strncpy(out, "--:--:--", out_sz);
+    out[out_sz - 1U] = '\0';
+    return;
+  }
+  (void)snprintf(out, out_sz, "%02d:%02d:%02d", lt.tm_hour, lt.tm_min, lt.tm_sec);
 }

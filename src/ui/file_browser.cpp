@@ -1439,6 +1439,14 @@ void file_browser_detach_stale_widgets(void) {
   viewer_free_state();
 }
 
+void file_browser_goto(const char *path) {
+  if (path == nullptr || path[0] == '\0' || s_root == nullptr) {
+    return;
+  }
+  strlcpy(s_current_path, path, sizeof(s_current_path));
+  refresh_file_list(true);
+}
+
 void file_browser_refresh(void) {
   refresh_file_list(true);
 }
