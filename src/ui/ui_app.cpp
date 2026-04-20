@@ -22,6 +22,7 @@
 #include "cycles_rs485.h"
 #include "net_monitor.h"
 #include "net_services.h"
+#include "ui/ui_toast.h"
 #include "sd_access.h"
 #include "net_time.h"
 #include "net_wireguard.h"
@@ -1185,13 +1186,13 @@ static void settings_save_monitor_cb(lv_event_t *e) {
   const char *ip = lv_textarea_get_text(s_ta_mon_ip);
   app_settings_set_monitor_ip(ip != nullptr ? ip : "");
   net_monitor_apply_settings();
-  if (s_mon_feedback_lbl != nullptr) {
-    const String saved = app_settings_monitor_ip();
-    if (saved.length() > 0) {
-      lv_label_set_text_fmt(s_mon_feedback_lbl, "A monitorizar %s.", saved.c_str());
-    } else {
-      lv_label_set_text(s_mon_feedback_lbl, "Monitorizacao desligada.");
-    }
+  const String saved = app_settings_monitor_ip();
+  if (saved.length() > 0) {
+    char buf[96];
+    snprintf(buf, sizeof(buf), "A monitorizar %s", saved.c_str());
+    ui_toast_show(ToastKind::Success, buf);
+  } else {
+    ui_toast_show(ToastKind::Info, "Monitorizacao desligada");
   }
 }
 
@@ -1218,9 +1219,7 @@ static void settings_save_ftp_cb(lv_event_t *e) {
   const char *u = lv_textarea_get_text(s_ta_ftp_user);
   const char *p = lv_textarea_get_text(s_ta_ftp_pass);
   if (u == nullptr || strlen(u) == 0) {
-    if (s_ftp_feedback_lbl != nullptr) {
-      lv_label_set_text(s_ftp_feedback_lbl, "Preencha o utilizador.");
-    }
+    ui_toast_show(ToastKind::Warn, "Preencha o utilizador");
     return;
   }
   if (p == nullptr) {
@@ -1228,9 +1227,7 @@ static void settings_save_ftp_cb(lv_event_t *e) {
   }
   app_settings_set_ftp(u, p);
   net_services_ftp_restart();
-  if (s_ftp_feedback_lbl != nullptr) {
-    lv_label_set_text(s_ftp_feedback_lbl, "Guardado. FTP a reiniciar.");
-  }
+  ui_toast_show(ToastKind::Success, "FTP guardado e a reiniciar");
 }
 
 static char s_tz_roller_buf[512];
@@ -1309,7 +1306,7 @@ static void settings_wg_ta_kb_event_cb(lv_event_t *e) {
 
 static void settings_save_time_cb(lv_event_t *e) {
   (void)e;
-  if (s_sw_ntp == nullptr || s_ta_ntp_srv == nullptr || s_roller_tz == nullptr || s_time_feedback_lbl == nullptr) {
+  if (s_sw_ntp == nullptr || s_ta_ntp_srv == nullptr || s_roller_tz == nullptr) {
     return;
   }
   const bool ntp_on = lv_obj_has_state(s_sw_ntp, LV_STATE_CHECKED);
@@ -1331,13 +1328,13 @@ static void settings_save_time_cb(lv_event_t *e) {
   } else {
     snprintf(msg, sizeof msg, "Salvo (NTP %s).", ntp_on ? "ativo" : "inativo");
   }
-  lv_label_set_text(s_time_feedback_lbl, msg);
+  ui_toast_show(ToastKind::Success, msg);
   update_bar_wifi_text();
 }
 
 static void settings_apply_utc_cb(lv_event_t *e) {
   (void)e;
-  if (s_ta_utc_manual == nullptr || s_time_feedback_lbl == nullptr) {
+  if (s_ta_utc_manual == nullptr) {
     return;
   }
   const char *t = lv_textarea_get_text(s_ta_utc_manual);
@@ -1352,20 +1349,20 @@ static void settings_apply_utc_cb(lv_event_t *e) {
   char err[64];
   if (sscanf(t, "%d-%d-%d %d:%d", &y, &M, &d, &h, &m) != 5 &&
       sscanf(t, "%d-%d-%dT%d:%d", &y, &M, &d, &h, &m) != 5) {
-    lv_label_set_text(s_time_feedback_lbl, "Use AAAA-MM-DD HH:MM (UTC).");
+    ui_toast_show(ToastKind::Warn, "Use AAAA-MM-DD HH:MM (UTC)");
     return;
   }
   if (!net_time_set_manual_utc(y, M, d, h, m, err, sizeof err)) {
-    lv_label_set_text(s_time_feedback_lbl, err);
+    ui_toast_show(ToastKind::Error, err);
     return;
   }
-  lv_label_set_text(s_time_feedback_lbl, "Hora UTC aplicada.");
+  ui_toast_show(ToastKind::Success, "Hora UTC aplicada");
   update_bar_wifi_text();
 }
 
 static void settings_save_wg_cb(lv_event_t *e) {
   (void)e;
-  if (s_sw_wg == nullptr || s_wg_feedback_lbl == nullptr) {
+  if (s_sw_wg == nullptr) {
     return;
   }
   app_settings_set_wireguard_enabled(lv_obj_has_state(s_sw_wg, LV_STATE_CHECKED));
@@ -1390,7 +1387,7 @@ static void settings_save_wg_cb(lv_event_t *e) {
     app_settings_set_wg_port((uint16_t)pt);
   }
   net_wireguard_apply();
-  lv_label_set_text(s_wg_feedback_lbl, "Salvo.");
+  ui_toast_show(ToastKind::Success, "WireGuard guardado");
 }
 
 /** Mesma ordem que `uart_config_for_profile` em cycles_rs485.cpp (indices 0..7 na NVS). */
@@ -1406,7 +1403,7 @@ static const char *const kRs485FrameRollerOpts =
 
 static void settings_save_rs485_cb(lv_event_t *e) {
   (void)e;
-  if (s_rs485_roller_baud == nullptr || s_rs485_roller_frame == nullptr || s_rs485_feedback_lbl == nullptr) {
+  if (s_rs485_roller_baud == nullptr || s_rs485_roller_frame == nullptr) {
     return;
   }
   const uint32_t baud = app_settings_rs485_std_baud((size_t)lv_roller_get_selected(s_rs485_roller_baud));
@@ -1414,10 +1411,9 @@ static void settings_save_rs485_cb(lv_event_t *e) {
   app_settings_set_rs485(baud, frame);
   if (sd_access_is_mounted()) {
     cycles_rs485_apply_settings();
-    lv_label_set_text(s_rs485_feedback_lbl, "Guardado. Serial1 reiniciada com a nova configuracao.");
+    ui_toast_show(ToastKind::Success, "Serial1 reiniciada com nova configuracao");
   } else {
-    lv_label_set_text(s_rs485_feedback_lbl,
-                      "Guardado na NVS. Monte o SD e volte a salvar para aplicar na UART.");
+    ui_toast_show(ToastKind::Warn, "Guardado na NVS. Monte o SD para aplicar");
   }
 }
 

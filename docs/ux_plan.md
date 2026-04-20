@@ -76,7 +76,7 @@ No file_browser, quando em `/CICLOS/2026/04`:
 
 ---
 
-### 4. Toast / notificacoes transitorias  `Pendente`
+### 4. Toast / notificacoes transitorias  `Feito`
 
 Componente reusavel que aparece no canto (bottom-right ou bottom-center),
 desaparece em 2-4 s. Usar para:
@@ -194,6 +194,18 @@ Ao inves de `"..."` como label, fazer pulse no icone + animar barras.
   - Item 6: URL de download configuravel (com `?path=`).
   - Item 9: cor primaria `#449D48`. Accent a decidir.
   - Ordem de execucao: A (Tier 1 completo, um a um) → B → C.
+- **2026-04-20** — Item 4 concluido (fecha Tier 1). Decisoes:
+  - Componente unico em `src/ui/ui_toast.{h,cpp}` com API
+    `ui_toast_show(kind, msg, duration_ms=2500)`.
+  - Canto inferior-direito (margem 16 px) sobre `lv_layer_top()` para
+    ficar acima de qualquer ecra.
+  - Single-instance: nova chamada substitui toast em exibicao (cancela
+    timer + anim).
+  - Fade-in 180 ms; fade-out 220 ms apos timeout; destruicao no ready.
+  - Cores: Success=#449D48, Error=#C62828, Warn=#F5B841, Info=#606060.
+  - Substitui os 5 labels de feedback estaticos em Definicoes
+    (FTP/NTP/WG/RS485/Monitor IP).
+
 - **2026-04-20** — Item 3 concluido. Decisoes:
   - Tipo chips (botoes arredondados) com cor primaria para segmento atual
     e verde-claro (#E8F1E9 + #2A6B2E) para segmentos navegaveis.
