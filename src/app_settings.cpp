@@ -681,6 +681,27 @@ void app_settings_set_font_index(uint8_t idx) {
   app_settings_sync_config_file_to_sd();
 }
 
+bool app_settings_screensaver_enabled(void) {
+  return s_prefs.getBool("scr_on", true);
+}
+
+void app_settings_set_screensaver_enabled(bool on) {
+  s_prefs.putBool("scr_on", on);
+}
+
+uint16_t app_settings_screensaver_timeout(void) {
+  uint16_t v = (uint16_t)s_prefs.getUShort("scr_t", 60);
+  if (v < 10) v = 10;
+  if (v > 300) v = 300;
+  return v;
+}
+
+void app_settings_set_screensaver_timeout(uint16_t secs) {
+  if (secs < 10) secs = 10;
+  if (secs > 300) secs = 300;
+  s_prefs.putUShort("scr_t", secs);
+}
+
 String app_settings_ftp_user(void) {
   String u = s_prefs.getString("ftp_u", "");
   return u.length() ? u : String(kAppSettingsFtpDefaultUser);

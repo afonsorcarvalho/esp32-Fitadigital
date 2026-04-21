@@ -3,6 +3,7 @@
  * @brief Implementacao de cycles_rs485.h — ver comentarios no header.
  */
 #include "cycles_rs485.h"
+#include "ui/ui_screensaver.h"
 
 /** Sinaliza a UI para reabrir o .txt do dia (definido em file_browser.cpp). */
 void file_browser_on_rs485_line_saved(void);
@@ -248,6 +249,7 @@ static void reader_task(void * /*arg*/) {
       if (c < 0) {
         break;
       }
+      ui_screensaver_wake();
       if (c == '\r') {
         reader_commit_line(line, &n);
         continue;

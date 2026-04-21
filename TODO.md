@@ -1,15 +1,18 @@
 # TODO — FitaDigital (ESP32-S3-Touch-LCD-4.3B)
 
 ## Em curso
-- "Ir para data" no file_browser (modal com 3 rollers dia/mes/ano) — flashado 2026-04-20, falta validar em placa.
-- Ajeitar altura do modal "Ir para data": passado a `LV_SIZE_CONTENT` + `max_height`, pads reduzidos, rollers 180→140. Falta validar em placa.
-- Extender range de anos ate 2050 no roller do "Ir para data". Falta validar em placa.
 
 ## Pendente
-- Commit das alteracoes pendentes: `src/ui/ui_date_goto.{h,cpp}`, `src/ui/file_browser.{h,cpp}`, `src/ui/ui_app.cpp`, `src/net_monitor.cpp`, `src/lv_conf.h`, `docs/ux_plan.md`.
-- Screensaver com alguma animacao (possivelmente uma logo).
+- Senha de acesso a Definicoes: 4 digitos via 4 rollers (0-9, estilo "Ir para data"), default 1234, configuravel em fdigi.cfg (chave `settings_pin`), gravada em NVS. Modal de entrada mostrado ao tocar no icone de engrenagem.
+- WireGuard: modo de configuracao via QR code — gerar par de chaves (privada/publica) no dispositivo, mostrar QR com config do peer para o servidor, permitir download das chaves via FTP/web.
+- Screensaver configuravel: timeout (actualmente 60 s hardcoded) e logo on/off em Definicoes → UI.
+- Filtro por data no file_browser (campo "aaaa/mm" filtra listagem).
+- Jump-to-line no viewer de ciclos.
+- Tokens de tema centralizados (ui_theme.h, substituir hardcodes de cor).
 
 ## Feito
+- 2026-04-20 — Screensaver: logo bounce fundo preto, 1s/step, fecha ao toque ou dado RS485.
+- 2026-04-20 — Modal "Ir para data" completo: rollers dia/mes/ano, anos ate 2050, altura corrigida, botoes Hoje/Ontem, commit 02c86db.
 - 2026-04-20 — Build e flash do "Ir para data" (integracao com `file_browser_open_cycle_by_date`).
 - Share de ciclo via QR code (commit 8014bb8).
 - Toast reutilizavel (commit e437bb3).

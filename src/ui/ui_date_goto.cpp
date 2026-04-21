@@ -71,6 +71,32 @@ int year_start_year(void) {
   return y - 5;
 }
 
+void select_date_in_rollers(int d, int m, int y) {
+  if (s_rll_day == nullptr) return;
+  const int start = year_start_year();
+  lv_roller_set_selected(s_rll_day, (uint16_t)(d - 1), LV_ANIM_ON);
+  lv_roller_set_selected(s_rll_mon, (uint16_t)(m - 1), LV_ANIM_ON);
+  if (y >= start && y <= 2050) {
+    lv_roller_set_selected(s_rll_year, (uint16_t)(y - start), LV_ANIM_ON);
+  }
+}
+
+void today_cb(lv_event_t * /*e*/) {
+  const time_t now = time(nullptr);
+  struct tm lt {};
+  if (now > (time_t)1577836800 && localtime_r(&now, &lt) != nullptr) {
+    select_date_in_rollers(lt.tm_mday, lt.tm_mon + 1, lt.tm_year + 1900);
+  }
+}
+
+void yesterday_cb(lv_event_t * /*e*/) {
+  const time_t yesterday = time(nullptr) - 86400;
+  struct tm lt {};
+  if (yesterday > (time_t)1577836800 && localtime_r(&yesterday, &lt) != nullptr) {
+    select_date_in_rollers(lt.tm_mday, lt.tm_mon + 1, lt.tm_year + 1900);
+  }
+}
+
 void go_cb(lv_event_t * /*e*/) {
   if (s_rll_day == nullptr || s_rll_mon == nullptr || s_rll_year == nullptr) {
     return;
@@ -170,7 +196,36 @@ void ui_date_goto_show(void) {
     }
   }
 
-  /* Linha de botoes, 50 px abaixo dos rollers. */
+  /* Atalhos rapidos: Hoje / Ontem — preenchem rollers, nao navegam. */
+  lv_obj_t *shortcut_row = lv_obj_create(s_modal);
+  lv_obj_set_size(shortcut_row, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_layout(shortcut_row, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(shortcut_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(shortcut_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_border_width(shortcut_row, 0, 0);
+  lv_obj_set_style_bg_opa(shortcut_row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_pad_all(shortcut_row, 0, 0);
+  lv_obj_set_style_pad_column(shortcut_row, 16, 0);
+  lv_obj_clear_flag(shortcut_row, LV_OBJ_FLAG_SCROLLABLE);
+
+  auto make_shortcut = [&](const char *label, lv_event_cb_t cb) {
+    lv_obj_t *btn = lv_btn_create(shortcut_row);
+    lv_obj_set_size(btn, 140, 44);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(0xE8F1E9), 0);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(0xC5DEC7), LV_STATE_PRESSED);
+    lv_obj_set_style_radius(btn, 22, 0);
+    lv_obj_set_style_shadow_width(btn, 0, 0);
+    lv_obj_t *lbl = lv_label_create(btn);
+    lv_label_set_text(lbl, label);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(0x2A6B2E), 0);
+    lv_obj_center(lbl);
+    lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
+  };
+  make_shortcut(LV_SYMBOL_HOME " Hoje", today_cb);
+  make_shortcut(LV_SYMBOL_LEFT " Ontem", yesterday_cb);
+
+  /* Linha de botoes principais. */
   lv_obj_t *btn_row = lv_obj_create(s_modal);
   lv_obj_set_size(btn_row, LV_PCT(100), LV_SIZE_CONTENT);
   lv_obj_set_layout(btn_row, LV_LAYOUT_FLEX);

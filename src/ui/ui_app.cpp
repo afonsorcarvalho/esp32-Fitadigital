@@ -27,6 +27,7 @@
 #include "net_time.h"
 #include "net_wireguard.h"
 #include "ui/ui_loading.h"
+#include "ui/ui_screensaver.h"
 
 static constexpr int kStatusBarH = 46;
 
@@ -68,7 +69,10 @@ static lv_obj_t *s_ta_ftp_user = nullptr;
 static lv_obj_t *s_ta_ftp_pass = nullptr;
 static lv_obj_t *s_sett_ftp_kb = nullptr;
 static lv_obj_t *s_ftp_feedback_lbl = nullptr;
-static lv_obj_t *s_font_slider = nullptr;
+static lv_obj_t *s_font_slider    = nullptr;
+static lv_obj_t *s_scr_sw         = nullptr;
+static lv_obj_t *s_scr_timeout_sl = nullptr;
+static lv_obj_t *s_scr_timeout_lbl = nullptr;
 
 static lv_obj_t *s_sw_ntp = nullptr;
 static lv_obj_t *s_ta_ntp_srv = nullptr;
@@ -825,6 +829,22 @@ static void settings_font_slider_cb(lv_event_t *e) {
   }
   app_settings_set_font_index((uint8_t)v);
   ui_apply_font_everywhere();
+}
+
+static void scr_sw_cb(lv_event_t *e) {
+  lv_obj_t *sw = lv_event_get_target(e);
+  app_settings_set_screensaver_enabled(lv_obj_has_state(sw, LV_STATE_CHECKED));
+}
+
+static void scr_timeout_sl_cb(lv_event_t *e) {
+  lv_obj_t *sl = lv_event_get_target(e);
+  uint16_t v = (uint16_t)lv_slider_get_value(sl);
+  app_settings_set_screensaver_timeout(v);
+  if (s_scr_timeout_lbl != nullptr) {
+    char buf[24];
+    snprintf(buf, sizeof(buf), "Timeout: %u s", (unsigned)v);
+    lv_label_set_text(s_scr_timeout_lbl, buf);
+  }
 }
 
 /** Posiciona os rollers RS485 segundo a NVS (chamar ao entrar em definicoes). */
@@ -2011,8 +2031,8 @@ static void create_settings_screen(void) {
   lv_obj_set_width(s_sd_format_status_lbl, LV_PCT(100));
   settings_sd_format_status_refresh(nullptr);
 
-  /* --- Aba Aspeto --- */
-  lv_obj_t *tab_ui = lv_tabview_add_tab(tv, LV_SYMBOL_IMAGE " Font");
+  /* --- Aba Scr. (fonte + screensaver) --- */
+  lv_obj_t *tab_ui = lv_tabview_add_tab(tv, LV_SYMBOL_IMAGE " Scr.");
   lv_obj_set_layout(tab_ui, LV_LAYOUT_FLEX);
   lv_obj_set_flex_flow(tab_ui, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(tab_ui, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
@@ -2027,6 +2047,39 @@ static void create_settings_screen(void) {
   lv_slider_set_range(s_font_slider, 0, 3);
   lv_slider_set_value(s_font_slider, app_settings_font_index(), LV_ANIM_OFF);
   lv_obj_add_event_cb(s_font_slider, settings_font_slider_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+  /* Separador */
+  lv_obj_t *scr_sep = lv_label_create(tab_ui);
+  lv_label_set_text(scr_sep, "Screensaver:");
+
+  /* Toggle on/off */
+  lv_obj_t *scr_row = lv_obj_create(tab_ui);
+  lv_obj_set_size(scr_row, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_layout(scr_row, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(scr_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(scr_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_border_width(scr_row, 0, 0);
+  lv_obj_set_style_bg_opa(scr_row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_pad_all(scr_row, 0, 0);
+  lv_obj_clear_flag(scr_row, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t *scr_lbl = lv_label_create(scr_row);
+  lv_label_set_text(scr_lbl, "Ativo");
+  s_scr_sw = lv_switch_create(scr_row);
+  if (app_settings_screensaver_enabled()) {
+    lv_obj_add_state(s_scr_sw, LV_STATE_CHECKED);
+  }
+  lv_obj_add_event_cb(s_scr_sw, scr_sw_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+  /* Timeout slider */
+  char scr_t_buf[24];
+  snprintf(scr_t_buf, sizeof(scr_t_buf), "Timeout: %u s", (unsigned)app_settings_screensaver_timeout());
+  s_scr_timeout_lbl = lv_label_create(tab_ui);
+  lv_label_set_text(s_scr_timeout_lbl, scr_t_buf);
+  s_scr_timeout_sl = lv_slider_create(tab_ui);
+  lv_obj_set_width(s_scr_timeout_sl, LV_PCT(100));
+  lv_slider_set_range(s_scr_timeout_sl, 10, 300);
+  lv_slider_set_value(s_scr_timeout_sl, (int)app_settings_screensaver_timeout(), LV_ANIM_OFF);
+  lv_obj_add_event_cb(s_scr_timeout_sl, scr_timeout_sl_cb, LV_EVENT_VALUE_CHANGED, nullptr);
 
   lv_obj_t *sett_tab_btns = lv_tabview_get_tab_btns(tv);
   lv_obj_add_event_cb(sett_tab_btns, settings_tab_btns_cb, LV_EVENT_VALUE_CHANGED, nullptr);
@@ -2164,6 +2217,7 @@ void ui_app_run(bool sd_mounted, bool splash_active) {
   if (s_status_timer == nullptr) {
     s_status_timer = lv_timer_create(status_timer_cb, 1000, nullptr);
   }
+  ui_screensaver_init();
 
   const bool wifi_saved = app_settings_wifi_configured();
   if (wifi_saved) {
