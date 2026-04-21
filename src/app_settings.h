@@ -60,6 +60,10 @@ void app_settings_set_tz_offset_sec(int32_t sec);
 uint8_t app_settings_splash_seconds(void);
 void app_settings_set_splash_seconds(uint8_t secs);
 
+/** PIN de acesso a Definicoes (4 digitos, default "1234"). */
+String app_settings_settings_pin(void);
+void   app_settings_set_settings_pin(const char *pin);
+
 /** Screensaver: on/off e timeout em segundos (10–300, default 60). */
 bool app_settings_screensaver_enabled(void);
 void app_settings_set_screensaver_enabled(bool on);

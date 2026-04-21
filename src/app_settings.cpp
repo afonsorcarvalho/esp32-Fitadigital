@@ -681,6 +681,20 @@ void app_settings_set_font_index(uint8_t idx) {
   app_settings_sync_config_file_to_sd();
 }
 
+String app_settings_settings_pin(void) {
+  String v = s_prefs.getString("pin_sett", "1234");
+  /* Garantir sempre 4 digitos numericos */
+  if (v.length() != 4) return String("1234");
+  for (char c : v) { if (c < '0' || c > '9') return String("1234"); }
+  return v;
+}
+
+void app_settings_set_settings_pin(const char *pin) {
+  if (pin == nullptr || strlen(pin) != 4) return;
+  for (int i = 0; i < 4; ++i) { if (pin[i] < '0' || pin[i] > '9') return; }
+  s_prefs.putString("pin_sett", pin);
+}
+
 bool app_settings_screensaver_enabled(void) {
   return s_prefs.getBool("scr_on", true);
 }

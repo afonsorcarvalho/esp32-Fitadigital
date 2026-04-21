@@ -28,6 +28,7 @@
 #include "net_wireguard.h"
 #include "ui/ui_loading.h"
 #include "ui/ui_screensaver.h"
+#include "ui/ui_pin_entry.h"
 
 static constexpr int kStatusBarH = 46;
 
@@ -804,8 +805,11 @@ static void wifi_back_cb(lv_event_t *e) {
   lv_scr_load(s_scr_main);
 }
 
-static void gear_btn_cb(lv_event_t *e) {
-  (void)e;
+static void pin_result_cb(bool correct) {
+  if (!correct) {
+    ui_toast_show(ToastKind::Error, "Codigo incorrecto");
+    return;
+  }
   create_settings_screen();
   if (s_scr_settings == nullptr) {
     app_log_write("ERROR", "Falha ao criar ecra de definicoes (memoria LVGL insuficiente).");
@@ -813,6 +817,11 @@ static void gear_btn_cb(lv_event_t *e) {
   }
   settings_screen_enter();
   lv_scr_load(s_scr_settings);
+}
+
+static void gear_btn_cb(lv_event_t *e) {
+  (void)e;
+  ui_pin_entry_show(pin_result_cb);
 }
 
 static void settings_font_slider_cb(lv_event_t *e) {

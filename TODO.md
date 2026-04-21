@@ -4,7 +4,7 @@
 
 ## Pendente
 - Senha de acesso a Definicoes: 4 digitos via 4 rollers (0-9, estilo "Ir para data"), default 1234, configuravel em fdigi.cfg (chave `settings_pin`), gravada em NVS. Modal de entrada mostrado ao tocar no icone de engrenagem.
-- WireGuard: modo de configuracao via QR code — gerar par de chaves (privada/publica) no dispositivo, mostrar QR com config do peer para o servidor, permitir download das chaves via FTP/web.
+- WireGuard: modo de configuracao via QR code — gerar par de chaves (privada/publica) no dispositivo. Detalhes ./docs/wireguard-brief.md
 - Screensaver configuravel: timeout (actualmente 60 s hardcoded) e logo on/off em Definicoes → UI.
 - Filtro por data no file_browser (campo "aaaa/mm" filtra listagem).
 - Jump-to-line no viewer de ciclos.
