@@ -12,6 +12,10 @@
 #include "lvgl_port_v8.h"
 #include <lvgl.h>
 
+#ifndef FITADIGITAL_VERSION
+#define FITADIGITAL_VERSION "unknown"
+#endif
+
 LV_IMG_DECLARE(afr_logo);
 
 namespace {
@@ -44,7 +48,6 @@ void splash_screen_show(void) {
   lv_obj_t *ver_lbl = lv_label_create(s_splash_scr);
   lv_label_set_text(ver_lbl, "v" FITADIGITAL_VERSION);
   lv_obj_set_style_text_color(ver_lbl, lv_color_hex(0xaaaaaa), LV_PART_MAIN);
-  lv_obj_set_style_text_align(ver_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_align(ver_lbl, LV_ALIGN_BOTTOM_MID, 0, -10);
 
   lv_scr_load(s_splash_scr);
