@@ -980,6 +980,22 @@ static void rs485_open_timer_cb(lv_timer_t * /*t*/) {
   if (seq == s_rs485_saved_last_handled) {
     return;
   }
+  /* Guard heap: abrir viewer aloca widgets LVGL + buffers no heap interno (DRAM).
+   * Com heap interno < 24 KB, skip para evitar OOM/PANIC (v1.02 issue: crash apos
+   * idle prolongado quando chega linha RS485 com heap baixo). Seq fica unhandled,
+   * proxima tentativa re-avalia com heap eventualmente recuperado. */
+  static constexpr uint32_t kRs485OpenMinInternalHeap = 24U * 1024U;
+  const uint32_t heap_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (heap_free < kRs485OpenMinInternalHeap) {
+    static uint32_t last_warn_ms = 0;
+    const uint32_t now_ms = lv_tick_get();
+    if (now_ms - last_warn_ms > 5000U) {
+      app_log_writef("WARN", "RS485 auto-open: heap interno baixo (%u B), skip",
+                     (unsigned)heap_free);
+      last_warn_ms = now_ms;
+    }
+    return;
+  }
   if (s_root == nullptr) {
     /* File browser nao esta visivel: mudar para ele se o SD estiver disponivel.
      * Nao marcar seq como handled — o proximo tick abre o ficheiro com s_root ja definido. */
