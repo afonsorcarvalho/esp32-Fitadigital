@@ -3,11 +3,14 @@
 ## Em curso
 
 ## Pendente
-- Filtro por data no file_browser (campo "aaaa/mm" filtra listagem).
+
 - Jump-to-line no viewer de ciclos.
 - Tokens de tema centralizados (ui_theme.h, substituir hardcodes de cor).
+- Text viewer: coluna de numeracao de linhas — largura fixa p/ 4 digitos, fundo cinza claro em toda a celula.
 
 ## Feito
+- 2026-04-22 — Trocar codigo de acesso a Definicoes pela UI: botao na aba Scr, fluxo actual->novo->confirmar via `ui_pin_entry_capture_show`, persistencia NVS (4 digitos). Bump FITADIGITAL_VERSION 1.04->1.05.
+- 2026-04-22 — Team de agentes Claude: fw-orchestrator, firmware-coder, hardware-deployer (haiku), serial-monitor (haiku), crash-analyzer (opus) em .claude/agents/ para ciclo code→flash→monitor→analyze→fix automatizado.
 - 2026-04-21 — Screensaver configuravel: toggle on/off + slider timeout 10-300 s em Definicoes → Scr.
 - 2026-04-21 — Botoes SD: "Executar formatacao" sempre vermelho; "Armar" laranja quando armado.
 - 2026-04-21 — WireGuard enrollment via QR: keygen Curve25519 (hardware RNG), POST /api/enroll, poll + backoff, modal LVGL com QR+countdown, auto-close, refresh campos UI.

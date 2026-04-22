@@ -8,9 +8,13 @@
 
 namespace {
 
-lv_obj_t          *s_bg  = nullptr;
-lv_obj_t          *s_r[4] = {};
-ui_pin_result_cb_t s_cb  = nullptr;
+enum class Mode : uint8_t { Validate, Capture };
+
+lv_obj_t           *s_bg  = nullptr;
+lv_obj_t           *s_r[4] = {};
+ui_pin_result_cb_t  s_cb_validate  = nullptr;
+ui_pin_capture_cb_t s_cb_capture   = nullptr;
+Mode                s_mode = Mode::Validate;
 
 static const char *kDigits = "0\n1\n2\n3\n4\n5\n6\n7\n8\n9";
 
@@ -22,15 +26,22 @@ void modal_close(void) {
   }
 }
 
-void cancel_cb(lv_event_t * /*e*/) {
+void dispatch_cancel(void) {
   modal_close();
-  if (s_cb) { s_cb(false); s_cb = nullptr; }
+  if (s_mode == Mode::Validate) {
+    if (s_cb_validate) { s_cb_validate(false); s_cb_validate = nullptr; }
+  } else {
+    if (s_cb_capture)  { s_cb_capture(false, nullptr); s_cb_capture = nullptr; }
+  }
+}
+
+void cancel_cb(lv_event_t * /*e*/) {
+  dispatch_cancel();
 }
 
 void bg_click_cb(lv_event_t *e) {
   if (lv_event_get_target(e) == lv_event_get_current_target(e)) {
-    modal_close();
-    if (s_cb) { s_cb(false); s_cb = nullptr; }
+    dispatch_cancel();
   }
 }
 
@@ -39,17 +50,21 @@ void confirm_cb(lv_event_t * /*e*/) {
   for (int i = 0; i < 4; ++i) {
     entered[i] = (char)('0' + lv_roller_get_selected(s_r[i]));
   }
-  const String pin = app_settings_settings_pin();
-  const bool ok = (strncmp(entered, pin.c_str(), 4) == 0);
-  modal_close();
-  if (s_cb) { s_cb(ok); s_cb = nullptr; }
+  if (s_mode == Mode::Validate) {
+    const String pin = app_settings_settings_pin();
+    const bool ok = (strncmp(entered, pin.c_str(), 4) == 0);
+    modal_close();
+    if (s_cb_validate) { s_cb_validate(ok); s_cb_validate = nullptr; }
+  } else {
+    ui_pin_capture_cb_t cb = s_cb_capture;
+    s_cb_capture = nullptr;
+    modal_close();
+    if (cb) { cb(true, entered); }
+  }
 }
 
-} // namespace
-
-void ui_pin_entry_show(ui_pin_result_cb_t cb) {
+void show_modal(const char *title_text) {
   if (s_bg != nullptr) return;
-  s_cb = cb;
 
   const lv_coord_t scr_w = lv_disp_get_hor_res(nullptr);
   const lv_coord_t scr_h = lv_disp_get_ver_res(nullptr);
@@ -80,11 +95,10 @@ void ui_pin_entry_show(ui_pin_result_cb_t cb) {
   lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
 
   lv_obj_t *title = lv_label_create(modal);
-  lv_label_set_text(title, LV_SYMBOL_SETTINGS " Codigo de acesso");
+  lv_label_set_text(title, title_text);
   lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
   lv_obj_set_style_text_color(title, UI_COLOR_PRIMARY, 0);
 
-  /* Linha com 4 rollers de digitos */
   lv_obj_t *row = lv_obj_create(modal);
   lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
   lv_obj_set_layout(row, LV_LAYOUT_FLEX);
@@ -105,7 +119,6 @@ void ui_pin_entry_show(ui_pin_result_cb_t cb) {
     lv_obj_set_width(s_r[i], 80);
   }
 
-  /* Botoes */
   lv_obj_t *btn_row = lv_obj_create(modal);
   lv_obj_set_size(btn_row, LV_PCT(100), LV_SIZE_CONTENT);
   lv_obj_set_layout(btn_row, LV_LAYOUT_FLEX);
@@ -130,8 +143,26 @@ void ui_pin_entry_show(ui_pin_result_cb_t cb) {
   lv_obj_set_size(btn_ok, 160, 54);
   lv_obj_set_style_bg_color(btn_ok, UI_COLOR_PRIMARY, 0);
   lv_obj_t *lbl_ok = lv_label_create(btn_ok);
-  lv_label_set_text(lbl_ok, LV_SYMBOL_OK " Entrar");
+  lv_label_set_text(lbl_ok, (s_mode == Mode::Validate) ? LV_SYMBOL_OK " Entrar" : LV_SYMBOL_OK " OK");
   lv_obj_set_style_text_font(lbl_ok, &lv_font_montserrat_16, 0);
   lv_obj_center(lbl_ok);
   lv_obj_add_event_cb(btn_ok, confirm_cb, LV_EVENT_CLICKED, nullptr);
+}
+
+} // namespace
+
+void ui_pin_entry_show(ui_pin_result_cb_t cb) {
+  if (s_bg != nullptr) return;
+  s_mode = Mode::Validate;
+  s_cb_validate = cb;
+  s_cb_capture = nullptr;
+  show_modal(LV_SYMBOL_SETTINGS " Codigo de acesso");
+}
+
+void ui_pin_entry_capture_show(const char *title, ui_pin_capture_cb_t cb) {
+  if (s_bg != nullptr) return;
+  s_mode = Mode::Capture;
+  s_cb_capture = cb;
+  s_cb_validate = nullptr;
+  show_modal(title ? title : "Introduzir codigo");
 }
