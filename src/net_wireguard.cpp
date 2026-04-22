@@ -55,8 +55,25 @@ void net_wireguard_apply(void) {
   s_wg_priv[sizeof(s_wg_priv) - 1U] = '\0';
   strncpy(s_wg_pub, pub.c_str(), sizeof(s_wg_pub) - 1U);
   s_wg_pub[sizeof(s_wg_pub) - 1U] = '\0';
-  strncpy(s_wg_ep, ep.c_str(), sizeof(s_wg_ep) - 1U);
+
+  /* Pre-resolver o endpoint antes de passar à biblioteca WireGuard:
+   * begin() com hostname faz DNS internamente e crasha com double exception
+   * quando a resolução falha (stack overflow no código da biblioteca).
+   * Passamos sempre um IP literal para evitar esse caminho. */
+  IPAddress ep_resolved;
+  if (ep_resolved.fromString(ep.c_str())) {
+    strncpy(s_wg_ep, ep.c_str(), sizeof(s_wg_ep) - 1U);
+  } else {
+    if (!WiFi.hostByName(ep.c_str(), ep_resolved)) {
+      app_log_feature_writef("ERROR", "WIREGUARD",
+                             "DNS falhou para endpoint '%s'. Inicio adiado.", ep.c_str());
+      return;
+    }
+    const String resolved_str = ep_resolved.toString();
+    strncpy(s_wg_ep, resolved_str.c_str(), sizeof(s_wg_ep) - 1U);
+  }
   s_wg_ep[sizeof(s_wg_ep) - 1U] = '\0';
+
   const uint16_t port = app_settings_wg_port();
   /**
    * API Tinkerforge/WireGuard-ESP32 (diferente de ciniml): subnet /32, gateway 0,

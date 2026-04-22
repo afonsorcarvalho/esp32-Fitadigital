@@ -6,6 +6,10 @@ CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
 # lwIP: mais sockets TCP simultaneos (AsyncWebServer + clientes + FTP) — reduz falhas intermitentes de ligacao.
 CONFIG_LWIP_MAX_SOCKETS=16
 
+# lwIP: netif client data slots — WireGuard-ESP32 precisa de 1 slot (netif_alloc_client_data_id).
+# Default IDF e 2; com esp_netif a usar 2 proprios nao sobra nenhum para o WG → assert crash.
+CONFIG_LWIP_NUM_NETIF_CLIENT_DATA=6
+
 # --- Desempenho / equipamento sempre alimentado (sem foco em bateria) ---
 # Power management do IDF: DFS e light sleep coordenados pelo PM ficam desativados.
 # (Ja e' o default na lib high_perf; explicito para sobreviver a mudancas de default.)
