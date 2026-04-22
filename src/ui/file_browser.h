@@ -62,3 +62,10 @@ uint32_t file_browser_last_refresh_ms(void);
 
 /** Aplica fonte a todos os widgets do explorador (apos mudar tamanho nas definicoes). */
 void file_browser_apply_font(const lv_font_t *font);
+
+/**
+ * Regista callback chamado quando chega uma linha RS485 e o file browser nao esta visivel.
+ * O callback deve mudar para a view do explorador (ex.: ensure_main_content_browser).
+ * Chamar uma vez durante o arranque da UI; nullptr desativa.
+ */
+void file_browser_set_auto_open_cb(void (*cb)(void));

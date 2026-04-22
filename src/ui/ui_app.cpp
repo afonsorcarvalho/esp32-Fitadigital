@@ -2295,6 +2295,8 @@ void ui_app_run(bool sd_mounted, bool splash_active) {
   if (s_status_timer == nullptr) {
     s_status_timer = lv_timer_create(status_timer_cb, 1000, nullptr);
   }
+  /* Quando RS485 envia dados e o file browser nao esta visivel, mudar automaticamente para ele. */
+  file_browser_set_auto_open_cb([] { ensure_main_content_browser(); });
   ui_screensaver_init();
 
   const bool wifi_saved = app_settings_wifi_configured();

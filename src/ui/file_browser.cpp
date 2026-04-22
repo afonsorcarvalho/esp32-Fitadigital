@@ -72,6 +72,8 @@ static constexpr uint32_t kRs485UiFollowArmDelayMs = 3000U;
 static lv_timer_t *s_rs485_ui_follow_arm_timer = nullptr;
 /** >0 durante show_text_file (fase de indexacao SD); evita refresh_silent a limpar a lista. */
 static int s_suppress_auto_file_list_refresh = 0;
+/** Callback registado por ui_app: muda para a view do explorador quando RS485 ativo fora do browser. */
+static void (*s_auto_open_cb)(void) = nullptr;
 
 static lv_obj_t *s_root = nullptr;
 /** Fonte ativa (definições UI); nullptr usa LV_FONT_DEFAULT no visualizador. */
@@ -978,10 +980,21 @@ static void rs485_open_timer_cb(lv_timer_t * /*t*/) {
   if (seq == s_rs485_saved_last_handled) {
     return;
   }
-  s_rs485_saved_last_handled = seq;
-  if (s_root == nullptr || !sd_access_is_mounted()) {
+  if (s_root == nullptr) {
+    /* File browser nao esta visivel: mudar para ele se o SD estiver disponivel.
+     * Nao marcar seq como handled — o proximo tick abre o ficheiro com s_root ja definido. */
+    if (sd_access_is_mounted() && s_auto_open_cb != nullptr) {
+      s_auto_open_cb();
+    } else {
+      s_rs485_saved_last_handled = seq; /* SD em falta: descartar para evitar loop. */
+    }
     return;
   }
+  if (!sd_access_is_mounted()) {
+    s_rs485_saved_last_handled = seq;
+    return;
+  }
+  s_rs485_saved_last_handled = seq;
   char path[256];
   if (!cycles_rs485_format_today_path(path, sizeof path)) {
     return;
@@ -1540,7 +1553,8 @@ void file_browser_detach_stale_widgets(void) {
     lv_timer_del(s_rs485_ui_follow_arm_timer);
     s_rs485_ui_follow_arm_timer = nullptr;
   }
-  cycles_rs485_set_line_to_ui_follow(false);
+  /* Nao desativar s_line_to_ui_follow: o sinal RS485 deve continuar ativo mesmo quando
+   * o file browser nao esta visivel, para que o auto_open_cb possa mudar de view. */
   s_viewer_table = nullptr;
   s_overlay = nullptr;
   s_list = nullptr;
@@ -1760,4 +1774,8 @@ void file_browser_open_today_cycles_txt(void) {
 void file_browser_on_rs485_line_saved(void) {
   /* Contexto sd_io / RS485: apenas sinalizar; LVGL em rs485_open_timer_cb. */
   s_rs485_saved_seq.fetch_add(1u, std::memory_order_relaxed);
+}
+
+void file_browser_set_auto_open_cb(void (*cb)(void)) {
+  s_auto_open_cb = cb;
 }
