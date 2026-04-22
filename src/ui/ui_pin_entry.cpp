@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <lvgl.h>
 #include <string.h>
+#include "ui_theme.h"
 
 namespace {
 
@@ -81,7 +82,7 @@ void ui_pin_entry_show(ui_pin_result_cb_t cb) {
   lv_obj_t *title = lv_label_create(modal);
   lv_label_set_text(title, LV_SYMBOL_SETTINGS " Codigo de acesso");
   lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
-  lv_obj_set_style_text_color(title, lv_color_hex(0x449D48), 0);
+  lv_obj_set_style_text_color(title, UI_COLOR_PRIMARY, 0);
 
   /* Linha com 4 rollers de digitos */
   lv_obj_t *row = lv_obj_create(modal);
@@ -127,7 +128,7 @@ void ui_pin_entry_show(ui_pin_result_cb_t cb) {
 
   lv_obj_t *btn_ok = lv_btn_create(btn_row);
   lv_obj_set_size(btn_ok, 160, 54);
-  lv_obj_set_style_bg_color(btn_ok, lv_color_hex(0x449D48), 0);
+  lv_obj_set_style_bg_color(btn_ok, UI_COLOR_PRIMARY, 0);
   lv_obj_t *lbl_ok = lv_label_create(btn_ok);
   lv_label_set_text(lbl_ok, LV_SYMBOL_OK " Entrar");
   lv_obj_set_style_text_font(lbl_ok, &lv_font_montserrat_16, 0);

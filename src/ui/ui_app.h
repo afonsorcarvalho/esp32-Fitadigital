@@ -19,3 +19,6 @@ void ui_app_run(bool sd_mounted, bool splash_active = false);
  */
 /** Abre manualmente o .txt de CICLOS do dia (se existir). O arranque nao chama isto automaticamente. */
 void ui_app_open_cycles_txt_if_exists(void);
+
+/** Refresca os campos WireGuard nas Definicoes a partir da NVS. Chamar apos enrollment. */
+void ui_app_refresh_wg_fields(void);

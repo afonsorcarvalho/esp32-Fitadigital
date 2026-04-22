@@ -9,6 +9,7 @@
 #include <Arduino.h>
 #include <lvgl.h>
 #include <time.h>
+#include "ui_theme.h"
 
 namespace {
 
@@ -150,7 +151,7 @@ void ui_date_goto_show(void) {
   lv_obj_t *title = lv_label_create(s_modal);
   lv_label_set_text(title, LV_SYMBOL_LIST " Ir para ciclo do dia");
   lv_obj_set_style_text_font(title, &lv_font_montserrat_24, 0);
-  lv_obj_set_style_text_color(title, lv_color_hex(0x449D48), 0);
+  lv_obj_set_style_text_color(title, UI_COLOR_PRIMARY, 0);
 
   /* Linha com os 3 rollers: dia, mes, ano. 50 px de margem do titulo. */
   lv_obj_t *rollers_row = lv_obj_create(s_modal);
@@ -248,7 +249,7 @@ void ui_date_goto_show(void) {
 
   lv_obj_t *btn_go = lv_btn_create(btn_row);
   lv_obj_set_size(btn_go, 180, 57);
-  lv_obj_set_style_bg_color(btn_go, lv_color_hex(0x449D48), 0);
+  lv_obj_set_style_bg_color(btn_go, UI_COLOR_PRIMARY, 0);
   lv_obj_t *lbl_go = lv_label_create(btn_go);
   lv_label_set_text(lbl_go, LV_SYMBOL_OK " Ir");
   lv_obj_set_style_text_font(lbl_go, &lv_font_montserrat_18, 0);

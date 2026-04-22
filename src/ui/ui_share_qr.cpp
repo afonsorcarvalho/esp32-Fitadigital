@@ -10,6 +10,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <lvgl.h>
+#include "ui_theme.h"
 
 namespace {
 
@@ -112,7 +113,7 @@ void ui_share_qr_show(const char *path) {
 
   lv_obj_t *title = lv_label_create(s_modal);
   lv_label_set_text(title, LV_SYMBOL_UPLOAD " Partilhar ciclo");
-  lv_obj_set_style_text_color(title, lv_color_hex(0x449D48), 0);
+  lv_obj_set_style_text_color(title, UI_COLOR_PRIMARY, 0);
   lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
 
   lv_obj_t *qr = lv_qrcode_create(s_modal, 240, lv_color_hex(0x000000), lv_color_hex(0xFFFFFF));
@@ -130,7 +131,7 @@ void ui_share_qr_show(const char *path) {
 
   lv_obj_t *btn_close = lv_btn_create(s_modal);
   lv_obj_set_size(btn_close, 160, 44);
-  lv_obj_set_style_bg_color(btn_close, lv_color_hex(0x449D48), 0);
+  lv_obj_set_style_bg_color(btn_close, UI_COLOR_PRIMARY, 0);
   lv_obj_t *lbl_close = lv_label_create(btn_close);
   lv_label_set_text(lbl_close, LV_SYMBOL_CLOSE " Fechar");
   lv_obj_center(lbl_close);

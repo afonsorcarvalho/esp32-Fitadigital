@@ -83,6 +83,9 @@ String app_settings_wg_endpoint(void);
 void app_settings_set_wg_endpoint(const char *host);
 uint16_t app_settings_wg_port(void);
 void app_settings_set_wg_port(uint16_t port);
+/** URL base do servidor de enrollment WireGuard (ex: "http://192.168.x.x:5000"). */
+String app_settings_wg_enroll_server(void);
+void app_settings_set_wg_enroll_server(const char *url);
 
 /**
  * Serial1 (RS485): velocidade em baud (valor da lista padrao ou o ultimo guardado).

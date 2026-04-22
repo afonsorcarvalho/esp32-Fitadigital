@@ -31,6 +31,7 @@
 #include "ui/ui_date_goto.h"
 #include "ui/ui_loading.h"
 #include "ui/ui_share_qr.h"
+#include "ui/ui_theme.h"
 
 /* ── Constantes do explorador de ficheiros ────────────────────────────── */
 
@@ -169,7 +170,7 @@ static const lv_font_t *viewer_monospace_font_for_settings(void) {
 
 /** Estilo "Voltar" no padrao verde primario dos restantes botoes. */
 static void viewer_style_ios_back_button(lv_obj_t *btn, lv_obj_t *lbl, const lv_font_t *ui_font) {
-  lv_obj_set_style_bg_color(btn, lv_color_hex(0x449D48), 0);
+  lv_obj_set_style_bg_color(btn, UI_COLOR_PRIMARY, 0);
   lv_obj_set_style_pad_hor(btn, 12, LV_PART_MAIN);
   lv_label_set_text(lbl, LV_SYMBOL_LEFT " Voltar");
   lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
@@ -333,7 +334,7 @@ static void viewer_nav_btn_cb(lv_event_t *e) {
 static lv_obj_t *viewer_make_nav_btn(lv_obj_t *col, const char *symbol, intptr_t act, const lv_font_t *font) {
   lv_obj_t *btn = lv_btn_create(col);
   lv_obj_set_size(btn, kViewerBtnColW - 8, kViewerBtnH);
-  lv_obj_set_style_bg_color(btn, lv_color_hex(0x449D48), 0); /* cor primaria (padrao) */
+  lv_obj_set_style_bg_color(btn, UI_COLOR_PRIMARY, 0); /* cor primaria (padrao) */
   lv_obj_t *lbl = lv_label_create(btn);
   lv_label_set_text(lbl, symbol);
   lv_obj_center(lbl);
@@ -445,7 +446,7 @@ static lv_obj_t *breadcrumb_add_chip(const char *label, intptr_t keep, bool is_c
     lv_obj_set_style_pad_ver(lbl, 4, 0);
     lv_obj_set_style_pad_hor(lbl, 10, 0);
     lv_obj_set_style_radius(lbl, 14, 0);
-    lv_obj_set_style_bg_color(lbl, lv_color_hex(0x449D48), 0);
+    lv_obj_set_style_bg_color(lbl, UI_COLOR_PRIMARY, 0);
     lv_obj_set_style_bg_opa(lbl, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
     return lbl;
@@ -1224,7 +1225,7 @@ static void show_text_file(const char *full_path, bool quiet_index, bool scroll_
   /* Botao "Partilhar": abre modal com QR code e URL de descarga. */
   lv_obj_t *share_btn = lv_btn_create(back_row);
   lv_obj_set_size(share_btn, 48, 36);
-  lv_obj_set_style_bg_color(share_btn, lv_color_hex(0x449D48), 0);
+  lv_obj_set_style_bg_color(share_btn, UI_COLOR_PRIMARY, 0);
   lv_obj_t *share_lbl = lv_label_create(share_btn);
   lv_label_set_text(share_lbl, LV_SYMBOL_UPLOAD);
   lv_obj_center(share_lbl);
@@ -1388,7 +1389,7 @@ static void refresh_file_list_finish_cb(void * /*user_data*/) {
     lv_obj_t *icon_lbl = lv_obj_get_child(btn, 0);
     if (icon_lbl != nullptr) {
       lv_obj_set_style_text_font(icon_lbl, &lv_font_montserrat_20, 0);
-      lv_obj_set_style_text_color(icon_lbl, lv_color_hex(0x449D48), 0);
+      lv_obj_set_style_text_color(icon_lbl, UI_COLOR_PRIMARY, 0);
     }
     lv_obj_add_event_cb(btn, on_list_btn_clicked, LV_EVENT_CLICKED,
                         reinterpret_cast<void *>(static_cast<uintptr_t>(i)));
@@ -1655,7 +1656,7 @@ bool file_browser_init(lv_obj_t *parent) {
 
   s_date_goto_btn = lv_btn_create(nav_row);
   lv_obj_set_size(s_date_goto_btn, LV_SIZE_CONTENT, 36);
-  lv_obj_set_style_bg_color(s_date_goto_btn, lv_color_hex(0x449D48), 0);
+  lv_obj_set_style_bg_color(s_date_goto_btn, UI_COLOR_PRIMARY, 0);
   lv_obj_set_style_pad_hor(s_date_goto_btn, 12, 0);
   lv_obj_t *date_lbl = lv_label_create(s_date_goto_btn);
   lv_label_set_text(date_lbl, LV_SYMBOL_LIST " Ir para data");

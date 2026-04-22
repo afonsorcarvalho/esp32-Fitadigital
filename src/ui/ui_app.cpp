@@ -29,6 +29,8 @@
 #include "ui/ui_loading.h"
 #include "ui/ui_screensaver.h"
 #include "ui/ui_pin_entry.h"
+#include "ui/ui_wg_enroll.h"
+#include "ui/ui_theme.h"
 
 static constexpr int kStatusBarH = 46;
 
@@ -83,6 +85,7 @@ static lv_obj_t *s_time_feedback_lbl = nullptr;
 static lv_obj_t *s_sett_time_kb = nullptr;
 
 static lv_obj_t *s_sw_wg = nullptr;
+static lv_obj_t *s_ta_wg_enroll_url = nullptr;
 static lv_obj_t *s_ta_wg_ip = nullptr;
 static lv_obj_t *s_ta_wg_priv = nullptr;
 static lv_obj_t *s_ta_wg_pub = nullptr;
@@ -234,7 +237,7 @@ static lv_obj_t *create_monitor_pill(lv_obj_t *parent) {
   lv_obj_set_style_radius(p, pill_h / 2, 0); /* cantos totalmente arredondados */
   lv_obj_set_style_border_width(p, 0, 0);
   lv_obj_set_style_pad_all(p, 0, 0);
-  lv_obj_set_style_bg_color(p, lv_color_hex(0x808080), 0);
+  lv_obj_set_style_bg_color(p, UI_COLOR_TEXT_SUBTLE, 0);
   lv_obj_set_style_bg_opa(p, LV_OPA_COVER, 0);
   lv_obj_clear_flag(p, LV_OBJ_FLAG_SCROLLABLE);
   /* Fora do fluxo flex do pai: centralizado absolutamente no meio da barra. */
@@ -243,7 +246,7 @@ static lv_obj_t *create_monitor_pill(lv_obj_t *parent) {
 
   lv_obj_t *lbl = lv_label_create(p);
   lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
+  lv_obj_set_style_text_color(lbl, UI_COLOR_WHITE, 0);
   lv_label_set_text(lbl, "Configure");
   lv_obj_center(lbl);
   /* O label guarda-se em user_data para `update_monitor_pill` o alcancar. */
@@ -372,8 +375,8 @@ static lv_obj_t *dashboard_make_card(lv_obj_t *row, const char *icon, const char
   lv_obj_set_height(card, LV_SIZE_CONTENT);
   lv_obj_set_style_radius(card, 8, 0);
   lv_obj_set_style_border_width(card, 1, 0);
-  lv_obj_set_style_border_color(card, lv_color_hex(0xCCCCCC), 0);
-  lv_obj_set_style_bg_color(card, lv_color_hex(0xFAFAFA), 0);
+  lv_obj_set_style_border_color(card, UI_COLOR_BORDER, 0);
+  lv_obj_set_style_bg_color(card, UI_COLOR_SURFACE, 0);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
   lv_obj_set_style_pad_all(card, 8, 0);
   lv_obj_set_style_pad_row(card, 2, 0);
@@ -383,7 +386,7 @@ static lv_obj_t *dashboard_make_card(lv_obj_t *row, const char *icon, const char
 
   lv_obj_t *hdr = lv_label_create(card);
   lv_label_set_text_fmt(hdr, "%s %s", icon, title);
-  lv_obj_set_style_text_color(hdr, lv_color_hex(0x449D48), 0); /* cor primaria */
+  lv_obj_set_style_text_color(hdr, UI_COLOR_PRIMARY, 0); /* cor primaria */
 
   lv_obj_t *val = lv_label_create(card);
   lv_label_set_long_mode(val, LV_LABEL_LONG_WRAP);
@@ -400,7 +403,7 @@ static lv_obj_t *dashboard_make_card_twoline(lv_obj_t *row, const char *icon, co
   lv_obj_t *extra = lv_label_create(card);
   lv_label_set_long_mode(extra, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(extra, LV_PCT(100));
-  lv_obj_set_style_text_color(extra, lv_color_hex(0x606060), 0);
+  lv_obj_set_style_text_color(extra, UI_COLOR_TEXT_MED, 0);
   lv_label_set_text(extra, "--");
   if (extra_out != nullptr) {
     *extra_out = extra;
@@ -472,7 +475,7 @@ static void dashboard_build(lv_obj_t *parent) {
   lv_obj_t *btn_today = lv_btn_create(actions);
   lv_obj_set_height(btn_today, 102);
   lv_obj_set_flex_grow(btn_today, 1);
-  lv_obj_set_style_bg_color(btn_today, lv_color_hex(0x449D48), 0);
+  lv_obj_set_style_bg_color(btn_today, UI_COLOR_PRIMARY, 0);
   lv_obj_t *lbl_today = lv_label_create(btn_today);
   lv_label_set_text(lbl_today, LV_SYMBOL_EYE_OPEN " Abrir ciclo de hoje");
   lv_obj_set_style_text_font(lbl_today, &lv_font_montserrat_20, 0);
@@ -482,7 +485,7 @@ static void dashboard_build(lv_obj_t *parent) {
   lv_obj_t *btn_hist = lv_btn_create(actions);
   lv_obj_set_height(btn_hist, 102);
   lv_obj_set_flex_grow(btn_hist, 1);
-  lv_obj_set_style_bg_color(btn_hist, lv_color_hex(0x449D48), 0);
+  lv_obj_set_style_bg_color(btn_hist, UI_COLOR_PRIMARY, 0);
   lv_obj_t *lbl_hist = lv_label_create(btn_hist);
   lv_label_set_text(lbl_hist, LV_SYMBOL_DIRECTORY " Ver historico");
   lv_obj_set_style_text_font(lbl_hist, &lv_font_montserrat_20, 0);
@@ -507,7 +510,7 @@ static void dashboard_build(lv_obj_t *parent) {
 
   lv_obj_t *ver_lbl = lv_label_create(footer);
   lv_label_set_text(ver_lbl, "FITADIGITAL 1.02v");
-  lv_obj_set_style_text_color(ver_lbl, lv_color_hex(0x606060), 0);
+  lv_obj_set_style_text_color(ver_lbl, UI_COLOR_TEXT_MED, 0);
 
   dashboard_refresh_values();
 }
@@ -931,6 +934,8 @@ static void settings_sd_format_arm_cb(lv_event_t *e) {
   (void)e;
   s_sd_format_armed = !s_sd_format_armed;
   if (s_sd_format_confirm_btn != nullptr) {
+    lv_obj_set_style_bg_color(s_sd_format_confirm_btn,
+        s_sd_format_armed ? UI_COLOR_WARN_ARMED : UI_COLOR_TEXT_MUTED, 0);
     lv_obj_t *lbl = lv_obj_get_child(s_sd_format_confirm_btn, 0);
     if (lbl != nullptr) {
       lv_label_set_text(lbl, s_sd_format_armed ? LV_SYMBOL_WARNING " Confirmar formatacao"
@@ -981,6 +986,7 @@ static void settings_sd_format_exec_cb(lv_event_t *e) {
   }
   s_sd_format_armed = false;
   if (s_sd_format_confirm_btn != nullptr) {
+    lv_obj_set_style_bg_color(s_sd_format_confirm_btn, UI_COLOR_TEXT_MUTED, 0);
     lv_obj_t *lbl = lv_obj_get_child(s_sd_format_confirm_btn, 0);
     if (lbl != nullptr) {
       lv_label_set_text(lbl, LV_SYMBOL_WARNING " Armar formatacao");
@@ -1006,6 +1012,33 @@ static void settings_back_cb(lv_event_t *e) {
 /**
  * Atualiza campos ao voltar ao ecra de definicoes (valores NVS / estado atual).
  */
+void ui_app_refresh_wg_fields(void) {
+  if (s_sw_wg != nullptr) {
+    if (app_settings_wireguard_enabled()) {
+      lv_obj_add_state(s_sw_wg, LV_STATE_CHECKED);
+    } else {
+      lv_obj_clear_state(s_sw_wg, LV_STATE_CHECKED);
+    }
+  }
+  if (s_ta_wg_ip != nullptr) {
+    lv_textarea_set_text(s_ta_wg_ip, app_settings_wg_local_ip().c_str());
+  }
+  if (s_ta_wg_priv != nullptr) {
+    lv_textarea_set_text(s_ta_wg_priv, app_settings_wg_private_key().c_str());
+  }
+  if (s_ta_wg_pub != nullptr) {
+    lv_textarea_set_text(s_ta_wg_pub, app_settings_wg_peer_public_key().c_str());
+  }
+  if (s_ta_wg_ep != nullptr) {
+    lv_textarea_set_text(s_ta_wg_ep, app_settings_wg_endpoint().c_str());
+  }
+  if (s_ta_wg_port != nullptr) {
+    char pb[8];
+    snprintf(pb, sizeof pb, "%u", (unsigned)app_settings_wg_port());
+    lv_textarea_set_text(s_ta_wg_port, pb);
+  }
+}
+
 static void settings_screen_enter(void) {
   settings_hide_wifi_keyboard();
   settings_hide_ftp_keyboard();
@@ -1075,8 +1108,12 @@ static void settings_screen_enter(void) {
     snprintf(pb, sizeof pb, "%u", (unsigned)app_settings_wg_port());
     lv_textarea_set_text(s_ta_wg_port, pb);
   }
+  if (s_ta_wg_enroll_url != nullptr) {
+    lv_textarea_set_text(s_ta_wg_enroll_url, app_settings_wg_enroll_server().c_str());
+  }
   s_sd_format_armed = false;
   if (s_sd_format_confirm_btn != nullptr) {
+    lv_obj_set_style_bg_color(s_sd_format_confirm_btn, UI_COLOR_TEXT_MUTED, 0);
     lv_obj_t *lbl = lv_obj_get_child(s_sd_format_confirm_btn, 0);
     if (lbl != nullptr) {
       lv_label_set_text(lbl, LV_SYMBOL_WARNING " Armar formatacao");
@@ -1433,6 +1470,13 @@ static void settings_apply_utc_cb(lv_event_t *e) {
   update_bar_wifi_text();
 }
 
+static void settings_wg_enroll_cb(lv_event_t * /*e*/) {
+  const char *url = (s_ta_wg_enroll_url != nullptr)
+                        ? lv_textarea_get_text(s_ta_wg_enroll_url)
+                        : "";
+  ui_wg_enroll_open(url);
+}
+
 static void settings_save_wg_cb(lv_event_t *e) {
   (void)e;
   if (s_sw_wg == nullptr) {
@@ -1458,6 +1502,9 @@ static void settings_save_wg_cb(lv_event_t *e) {
       pt = 51820;
     }
     app_settings_set_wg_port((uint16_t)pt);
+  }
+  if (s_ta_wg_enroll_url != nullptr) {
+    app_settings_set_wg_enroll_server(lv_textarea_get_text(s_ta_wg_enroll_url));
   }
   net_wireguard_apply();
   ui_toast_show(ToastKind::Success, "WireGuard guardado");
@@ -1898,6 +1945,25 @@ static void create_settings_screen(void) {
   lv_obj_add_event_cb(s_ta_wg_port, settings_wg_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
   lv_obj_add_event_cb(s_ta_wg_port, settings_wg_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
 
+  /* --- Enrollment via QR --- */
+  lv_obj_t *lenroll = lv_label_create(wg_scroll);
+  lv_label_set_text(lenroll, "Servidor de enrollment (URL):");
+  s_ta_wg_enroll_url = lv_textarea_create(wg_scroll);
+  lv_textarea_set_one_line(s_ta_wg_enroll_url, true);
+  lv_textarea_set_max_length(s_ta_wg_enroll_url, 127);
+  lv_textarea_set_placeholder_text(s_ta_wg_enroll_url, "http://192.168.x.x:5000");
+  lv_obj_set_width(s_ta_wg_enroll_url, LV_PCT(100));
+  lv_obj_add_event_cb(s_ta_wg_enroll_url, settings_wg_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
+  lv_obj_add_event_cb(s_ta_wg_enroll_url, settings_wg_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
+
+  lv_obj_t *bt_enroll = lv_btn_create(wg_scroll);
+  lv_obj_set_width(bt_enroll, LV_PCT(100));
+  lv_obj_set_style_bg_color(bt_enroll, UI_COLOR_BLUE, 0);
+  lv_obj_t *lbe = lv_label_create(bt_enroll);
+  lv_label_set_text(lbe, LV_SYMBOL_LOOP " Provisionar via QR");
+  lv_obj_center(lbe);
+  lv_obj_add_event_cb(bt_enroll, settings_wg_enroll_cb, LV_EVENT_CLICKED, nullptr);
+
   lv_obj_t *bt_wg = lv_btn_create(wg_scroll);
   lv_obj_t *lbw = lv_label_create(bt_wg);
   lv_label_set_text(lbw, LV_SYMBOL_SAVE " Salvar WireGuard");
@@ -2024,12 +2090,15 @@ static void create_settings_screen(void) {
                     "Recomendado: cartao em tabela MBR.");
 
   s_sd_format_confirm_btn = lv_btn_create(tab_sd);
+  lv_obj_set_style_bg_color(s_sd_format_confirm_btn, UI_COLOR_TEXT_MUTED, 0);
   lv_obj_t *sd_arm_lbl = lv_label_create(s_sd_format_confirm_btn);
   lv_label_set_text(sd_arm_lbl, LV_SYMBOL_WARNING " Armar formatacao");
   lv_obj_center(sd_arm_lbl);
   lv_obj_add_event_cb(s_sd_format_confirm_btn, settings_sd_format_arm_cb, LV_EVENT_CLICKED, nullptr);
 
   lv_obj_t *sd_exec_btn = lv_btn_create(tab_sd);
+  lv_obj_set_style_bg_color(sd_exec_btn, UI_COLOR_ERROR_BG, 0);
+  lv_obj_set_style_bg_color(sd_exec_btn, lv_color_hex(0xB71C1C), LV_STATE_PRESSED);
   lv_obj_t *sd_exec_lbl = lv_label_create(sd_exec_btn);
   lv_label_set_text(sd_exec_lbl, LV_SYMBOL_TRASH " Executar formatacao");
   lv_obj_center(sd_exec_lbl);
@@ -2139,7 +2208,7 @@ static void create_main_screen(void) {
 
   lv_obj_t *gear = lv_btn_create(bar);
   lv_obj_set_size(gear, 40, 36);
-  lv_obj_set_style_bg_color(gear, lv_color_hex(0x449D48), 0);
+  lv_obj_set_style_bg_color(gear, UI_COLOR_PRIMARY, 0);
   lv_obj_t *gl = lv_label_create(gear);
   lv_label_set_text(gl, LV_SYMBOL_SETTINGS);
   lv_obj_center(gl);

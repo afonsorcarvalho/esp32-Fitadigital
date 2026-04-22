@@ -862,6 +862,14 @@ void app_settings_set_wg_port(uint16_t port) {
   app_settings_sync_config_file_to_sd();
 }
 
+String app_settings_wg_enroll_server(void) {
+  return s_prefs.getString("wg_srv", "");
+}
+
+void app_settings_set_wg_enroll_server(const char *url) {
+  put_str_max("wg_srv", url, kDownloadUrlMax);
+}
+
 static uint32_t rs485_nearest_std_baud(uint32_t baud) {
   if (kRs485StdBaudCount == 0U) {
     return 115200U;

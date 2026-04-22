@@ -5,6 +5,7 @@
 #include "ui_toast.h"
 
 #include <lvgl.h>
+#include "ui_theme.h"
 
 namespace {
 
