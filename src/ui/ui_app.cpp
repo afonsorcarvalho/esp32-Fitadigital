@@ -2297,8 +2297,6 @@ void ui_app_run(bool sd_mounted, bool splash_active) {
   }
   /* Quando RS485 envia dados e o file browser nao esta visivel, mudar automaticamente para ele. */
   file_browser_set_auto_open_cb([] { ensure_main_content_browser(); });
-  /* Iniciar follow RS485 independentemente da view (timers LVGL globais, nao ligados ao browser). */
-  file_browser_rs485_follow_start();
   ui_screensaver_init();
 
   const bool wifi_saved = app_settings_wifi_configured();
@@ -2328,6 +2326,9 @@ void ui_app_run(bool sd_mounted, bool splash_active) {
     lv_label_set_text(s_wifi_status_lbl, "Introduza a rede e a senha. Toque num campo para o teclado.");
   }
 
+  /* Iniciar follow RS485 apos a view inicial estar definida: detach_stale_widgets (chamado por
+   * ensure_main_content_dashboard acima) deletaria o arm timer se este fosse criado antes. */
+  file_browser_rs485_follow_start();
   ui_apply_font_everywhere();
   update_bar_wifi_text();
 }
