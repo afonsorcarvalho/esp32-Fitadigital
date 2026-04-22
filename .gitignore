@@ -51,3 +51,6 @@ venv/
 # platformio_local.ini
 # secrets.ini
 tools/test_out/
+
+# Claude Code (project agents, skills, settings locais)
+.claude/

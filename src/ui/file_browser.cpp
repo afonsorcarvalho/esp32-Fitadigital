@@ -32,6 +32,7 @@
 #include "ui/ui_loading.h"
 #include "ui/ui_share_qr.h"
 #include "ui/ui_theme.h"
+#include "ui/ui_toast.h"
 
 /* ── Constantes do explorador de ficheiros ────────────────────────────── */
 
@@ -154,6 +155,7 @@ static constexpr intptr_t kViewerNavUp = 1;
 static constexpr intptr_t kViewerNavDown = 2;
 static constexpr intptr_t kViewerNavTop = 3;
 static constexpr intptr_t kViewerNavEnd = 4;
+static constexpr intptr_t kViewerNavGoto = 5;
 
 /* ── Forward declarations ────────────────────────────────────────────── */
 
@@ -232,6 +234,183 @@ static unsigned viewer_tail_fit_first_line(void) {
 }
 
 /**
+ * Scroll/reload para linha arbitraria (0-based).
+ * Se a linha cabe na janela carregada, faz scroll animado; senao recarrega janela centrada.
+ */
+static void viewer_goto_line(unsigned target_line, bool anim) {
+  if (s_viewer_table == nullptr || s_line_offsets == nullptr || s_total_lines == 0) {
+    return;
+  }
+  if (target_line >= s_total_lines) {
+    target_line = s_total_lines - 1;
+  }
+  lv_obj_update_layout(s_viewer_table);
+
+  if (target_line >= s_window_start && target_line < s_window_start + s_window_count) {
+    const unsigned row_in_window = target_line - s_window_start;
+    const lv_coord_t total_h = lv_obj_get_self_height(s_viewer_table);
+    const lv_coord_t target_y = (lv_coord_t)(
+        (uint32_t)row_in_window * (uint32_t)total_h / s_window_count);
+    lv_obj_scroll_to_y(s_viewer_table, target_y, anim ? LV_ANIM_ON : LV_ANIM_OFF);
+    return;
+  }
+
+  const unsigned margin = kWindowLines / 4;
+  unsigned new_start = (target_line > margin) ? target_line - margin : 0;
+  if (new_start + kWindowLines > s_total_lines && s_total_lines > kWindowLines) {
+    new_start = viewer_tail_fit_first_line();
+  }
+  const unsigned max_lines = (s_total_lines > new_start) ? s_total_lines - new_start : 1;
+  load_viewer_window(new_start, max_lines);
+  lv_obj_update_layout(s_viewer_table);
+
+  if (target_line >= s_window_start && s_window_count > 0) {
+    const unsigned row_in_window = target_line - s_window_start;
+    const lv_coord_t total_h = lv_obj_get_self_height(s_viewer_table);
+    const lv_coord_t target_y = (lv_coord_t)(
+        (uint32_t)row_in_window * (uint32_t)total_h / s_window_count);
+    lv_obj_scroll_to_y(s_viewer_table, target_y, LV_ANIM_OFF);
+  } else {
+    lv_obj_scroll_to_y(s_viewer_table, 0, LV_ANIM_OFF);
+  }
+}
+
+/* ── Modal "Ir para linha" ─────────────────────────────────────────────── */
+static lv_obj_t *s_goto_line_bg = nullptr;
+static lv_obj_t *s_goto_line_ta = nullptr;
+
+static void goto_line_modal_close(void) {
+  if (s_goto_line_bg != nullptr) {
+    lv_obj_del(s_goto_line_bg);
+    s_goto_line_bg = nullptr;
+    s_goto_line_ta = nullptr;
+  }
+}
+
+static void goto_line_cancel_cb(lv_event_t * /*e*/) {
+  goto_line_modal_close();
+}
+
+static void goto_line_ok_cb(lv_event_t * /*e*/) {
+  if (s_goto_line_ta == nullptr) {
+    goto_line_modal_close();
+    return;
+  }
+  const char *txt = lv_textarea_get_text(s_goto_line_ta);
+  unsigned line1 = 0;
+  if (txt != nullptr) {
+    for (const char *p = txt; *p; ++p) {
+      if (*p < '0' || *p > '9') { line1 = 0; break; }
+      line1 = line1 * 10U + (unsigned)(*p - '0');
+      if (line1 > 10000000U) { line1 = 10000000U; break; }
+    }
+  }
+  goto_line_modal_close();
+  if (line1 == 0) {
+    ui_toast_show(ToastKind::Warn, "Numero de linha invalido");
+    return;
+  }
+  if (s_total_lines == 0) {
+    ui_toast_show(ToastKind::Info, "Arquivo vazio");
+    return;
+  }
+  unsigned target0 = (line1 > s_total_lines) ? (s_total_lines - 1U) : (line1 - 1U);
+  viewer_goto_line(target0, true);
+}
+
+static void goto_line_bg_click_cb(lv_event_t *e) {
+  if (lv_event_get_target(e) == lv_event_get_current_target(e)) {
+    goto_line_modal_close();
+  }
+}
+
+static void goto_line_open_modal(void) {
+  if (s_goto_line_bg != nullptr || s_viewer_table == nullptr) return;
+  if (s_total_lines == 0) {
+    ui_toast_show(ToastKind::Info, "Arquivo vazio");
+    return;
+  }
+
+  const lv_coord_t scr_w = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t scr_h = lv_disp_get_ver_res(nullptr);
+
+  s_goto_line_bg = lv_obj_create(lv_layer_top());
+  lv_obj_set_size(s_goto_line_bg, scr_w, scr_h);
+  lv_obj_align(s_goto_line_bg, LV_ALIGN_TOP_LEFT, 0, 0);
+  lv_obj_set_style_bg_color(s_goto_line_bg, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(s_goto_line_bg, LV_OPA_60, 0);
+  lv_obj_set_style_border_width(s_goto_line_bg, 0, 0);
+  lv_obj_set_style_pad_all(s_goto_line_bg, 0, 0);
+  lv_obj_set_style_radius(s_goto_line_bg, 0, 0);
+  lv_obj_clear_flag(s_goto_line_bg, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(s_goto_line_bg, goto_line_bg_click_cb, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t *modal = lv_obj_create(s_goto_line_bg);
+  lv_obj_set_width(modal, 460);
+  lv_obj_set_height(modal, LV_SIZE_CONTENT);
+  lv_obj_set_style_max_height(modal, scr_h - 20, 0);
+  lv_obj_center(modal);
+  lv_obj_set_style_bg_color(modal, lv_color_hex(0xFFFFFF), 0);
+  lv_obj_set_style_radius(modal, 12, 0);
+  lv_obj_set_style_pad_all(modal, 16, 0);
+  lv_obj_set_style_pad_row(modal, 10, 0);
+  lv_obj_set_layout(modal, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(modal, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(modal, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *title = lv_label_create(modal);
+  char title_buf[48];
+  snprintf(title_buf, sizeof(title_buf), "Ir para linha (1-%u)", s_total_lines);
+  lv_label_set_text(title, title_buf);
+  lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_color(title, UI_COLOR_PRIMARY, 0);
+
+  lv_obj_t *ta = lv_textarea_create(modal);
+  lv_textarea_set_one_line(ta, true);
+  lv_textarea_set_accepted_chars(ta, "0123456789");
+  lv_textarea_set_max_length(ta, 8);
+  lv_textarea_set_placeholder_text(ta, "ex: 1234");
+  lv_obj_set_width(ta, LV_PCT(100));
+  lv_obj_set_style_text_font(ta, &lv_font_montserrat_20, 0);
+  s_goto_line_ta = ta;
+
+  lv_obj_t *kb = lv_keyboard_create(modal);
+  lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_NUMBER);
+  lv_obj_set_size(kb, LV_PCT(100), (lv_coord_t)(scr_h * 32 / 100));
+  lv_keyboard_set_textarea(kb, ta);
+
+  lv_obj_t *btn_row = lv_obj_create(modal);
+  lv_obj_set_size(btn_row, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_layout(btn_row, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(btn_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(btn_row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_border_width(btn_row, 0, 0);
+  lv_obj_set_style_bg_opa(btn_row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_pad_all(btn_row, 0, 0);
+  lv_obj_set_style_pad_top(btn_row, 6, 0);
+  lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *btn_cancel = lv_btn_create(btn_row);
+  lv_obj_set_size(btn_cancel, 160, 54);
+  lv_obj_set_style_bg_color(btn_cancel, lv_color_hex(0x888888), 0);
+  lv_obj_t *lbl_c = lv_label_create(btn_cancel);
+  lv_label_set_text(lbl_c, LV_SYMBOL_CLOSE " Cancelar");
+  lv_obj_set_style_text_font(lbl_c, &lv_font_montserrat_16, 0);
+  lv_obj_center(lbl_c);
+  lv_obj_add_event_cb(btn_cancel, goto_line_cancel_cb, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t *btn_ok = lv_btn_create(btn_row);
+  lv_obj_set_size(btn_ok, 160, 54);
+  lv_obj_set_style_bg_color(btn_ok, UI_COLOR_PRIMARY, 0);
+  lv_obj_t *lbl_ok = lv_label_create(btn_ok);
+  lv_label_set_text(lbl_ok, LV_SYMBOL_OK " Ir");
+  lv_obj_set_style_text_font(lbl_ok, &lv_font_montserrat_16, 0);
+  lv_obj_center(lbl_ok);
+  lv_obj_add_event_cb(btn_ok, goto_line_ok_cb, LV_EVENT_CLICKED, nullptr);
+}
+
+/**
  * Callback dos botoes de navegacao do visualizador.
  * Page Up/Down avancam pela quantidade de linhas visiveis no viewport (nao o buffer inteiro).
  * Home/End saltam para inicio/fim do arquivo.
@@ -242,6 +421,11 @@ static void viewer_nav_btn_cb(lv_event_t *e) {
     return;
   }
   const intptr_t act = reinterpret_cast<intptr_t>(lv_event_get_user_data(e));
+
+  if (act == kViewerNavGoto) {
+    goto_line_open_modal();
+    return;
+  }
 
   if (s_line_offsets != nullptr && s_total_lines > 0) {
     lv_obj_update_layout(s_viewer_table);
@@ -1402,6 +1586,7 @@ static void show_text_file(const char *full_path, bool quiet_index, bool scroll_
   viewer_make_nav_btn(btn_col, LV_SYMBOL_DOWN, kViewerNavDown, ui_font);
   viewer_make_nav_btn(btn_col, LV_SYMBOL_HOME, kViewerNavTop, ui_font);
   viewer_make_nav_btn(btn_col, LV_SYMBOL_NEXT, kViewerNavEnd, ui_font);
+  viewer_make_nav_btn(btn_col, LV_SYMBOL_GPS, kViewerNavGoto, ui_font);
 
   /* ── Fase 3: popular a tabela ────────────────────────────────────── */
 
