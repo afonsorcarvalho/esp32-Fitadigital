@@ -134,6 +134,16 @@ static char s_text_buf[kTextBufSize];
 /** Ponteiros para linhas dentro de s_text_buf (split_lines_inplace). */
 static char *s_line_ptrs[kWindowLines + 2];
 
+/* ── Highlight piscante da nova linha RS485 no viewer ──────────────────── */
+/** Linha (indice dentro da tabela) a destacar; UINT16_MAX = sem highlight. */
+static uint16_t s_highlight_row = UINT16_MAX;
+/** Timer de blink; intervalo 250 ms. */
+static lv_timer_t *s_highlight_blink_timer = nullptr;
+/** Ticks restantes (6 = 3 ciclos on/off). */
+static uint8_t s_highlight_ticks_remaining = 0;
+/** Estado actual do blink (true = destaque visivel). */
+static bool s_highlight_on = false;
+
 /* ── Constantes e estado dos botoes do visualizador ──────────────────── */
 
 static constexpr lv_coord_t kViewerBtnColW = 62;
@@ -550,6 +560,13 @@ static void format_entry_datetime(time_t ts, char *out, size_t out_sz) {
 
 /** Libera recursos do visualizador paginado (PSRAM, estado). */
 static void viewer_free_state(void) {
+  if (s_highlight_blink_timer != nullptr) {
+    lv_timer_del(s_highlight_blink_timer);
+    s_highlight_blink_timer = nullptr;
+  }
+  s_highlight_row = UINT16_MAX;
+  s_highlight_ticks_remaining = 0;
+  s_highlight_on = false;
   if (s_line_offsets != nullptr) {
     heap_caps_free(s_line_offsets);
     s_line_offsets = nullptr;
@@ -856,6 +873,62 @@ static void viewer_scroll_event_cb(lv_event_t *e) {
 /**
  * Posiciona o visualizador na ultima pagina (equivalente ao botao Fim na barra lateral).
  */
+/**
+ * Draw event no table: pinta fundo da linha s_highlight_row (coluna 0 e 1)
+ * quando s_highlight_on=true, para feedback visual de nova linha RS485.
+ */
+static void viewer_table_draw_part_event_cb(lv_event_t *e) {
+  lv_obj_draw_part_dsc_t *dsc = lv_event_get_draw_part_dsc(e);
+  if (dsc == nullptr || dsc->part != LV_PART_ITEMS) {
+    return;
+  }
+  if (s_highlight_row == UINT16_MAX || !s_highlight_on) {
+    return;
+  }
+  /* dsc->id = row * col_cnt + col ; col_cnt = 2 */
+  const uint32_t row = dsc->id / 2U;
+  if (row != (uint32_t)s_highlight_row) {
+    return;
+  }
+  if (dsc->rect_dsc != nullptr) {
+    dsc->rect_dsc->bg_color = lv_color_hex(0xFFEB3B); /* amarelo highlight */
+    dsc->rect_dsc->bg_opa = LV_OPA_COVER;
+  }
+}
+
+static void highlight_blink_timer_cb(lv_timer_t *t) {
+  if (s_viewer_table == nullptr || s_highlight_ticks_remaining == 0) {
+    s_highlight_on = false;
+    s_highlight_row = UINT16_MAX;
+    s_highlight_ticks_remaining = 0;
+    if (s_viewer_table != nullptr) {
+      lv_obj_invalidate(s_viewer_table);
+    }
+    lv_timer_del(t);
+    s_highlight_blink_timer = nullptr;
+    return;
+  }
+  s_highlight_on = !s_highlight_on;
+  lv_obj_invalidate(s_viewer_table);
+  s_highlight_ticks_remaining--;
+}
+
+/** Inicia blink (3 ciclos on/off = 6 ticks a 250 ms) na ultima linha da janela. */
+static void viewer_highlight_new_line_start(void) {
+  if (s_viewer_table == nullptr || s_window_count == 0) {
+    return;
+  }
+  s_highlight_row = (uint16_t)(s_window_count - 1U);
+  s_highlight_ticks_remaining = 6U;
+  s_highlight_on = true;
+  lv_obj_invalidate(s_viewer_table);
+  if (s_highlight_blink_timer == nullptr) {
+    s_highlight_blink_timer = lv_timer_create(highlight_blink_timer_cb, 250, nullptr);
+  } else {
+    lv_timer_reset(s_highlight_blink_timer);
+  }
+}
+
 static void viewer_scroll_to_last_page(void) {
   if (s_viewer_table == nullptr || s_line_offsets == nullptr || s_total_lines == 0) {
     return;
@@ -968,6 +1041,7 @@ static bool viewer_try_extend_index_after_grow(const char *path) {
 
   s_file_size = new_sz;
   viewer_scroll_to_last_page();
+  viewer_highlight_new_line_start();
   return true;
 }
 
@@ -1306,6 +1380,8 @@ static void show_text_file(const char *full_path, bool quiet_index, bool scroll_
 
   /* Registrar callback de scroll para janela deslizante. */
   lv_obj_add_event_cb(table, viewer_scroll_event_cb, LV_EVENT_SCROLL, nullptr);
+  /* Draw event para highlight piscante da nova linha RS485. */
+  lv_obj_add_event_cb(table, viewer_table_draw_part_event_cb, LV_EVENT_DRAW_PART_BEGIN, nullptr);
 
   lv_obj_t *btn_col = lv_obj_create(viewer_row);
   lv_obj_remove_style_all(btn_col);
