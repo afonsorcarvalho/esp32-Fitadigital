@@ -41,6 +41,12 @@ void splash_screen_show(void) {
   lv_obj_set_width(lbl, LV_PCT(90));
   lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 50);
 
+  lv_obj_t *ver_lbl = lv_label_create(s_splash_scr);
+  lv_label_set_text(ver_lbl, "v" FITADIGITAL_VERSION);
+  lv_obj_set_style_text_color(ver_lbl, lv_color_hex(0xaaaaaa), LV_PART_MAIN);
+  lv_obj_set_style_text_align(ver_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_align(ver_lbl, LV_ALIGN_BOTTOM_MID, 0, -10);
+
   lv_scr_load(s_splash_scr);
 
   (void)lvgl_port_unlock();

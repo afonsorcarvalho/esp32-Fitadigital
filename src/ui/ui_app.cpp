@@ -509,7 +509,7 @@ static void dashboard_build(lv_obj_t *parent) {
   lv_img_set_src(logo, &afr_logo_verde);
 
   lv_obj_t *ver_lbl = lv_label_create(footer);
-  lv_label_set_text(ver_lbl, "FITADIGITAL 1.02v");
+  lv_label_set_text(ver_lbl, "FITADIGITAL v" FITADIGITAL_VERSION);
   lv_obj_set_style_text_color(ver_lbl, UI_COLOR_TEXT_MED, 0);
 
   dashboard_refresh_values();
