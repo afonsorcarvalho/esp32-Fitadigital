@@ -1613,7 +1613,6 @@ bool file_browser_init(lv_obj_t *parent) {
     lv_timer_del(s_rs485_ui_follow_arm_timer);
     s_rs485_ui_follow_arm_timer = nullptr;
   }
-  cycles_rs485_set_line_to_ui_follow(false);
 
   if (s_overlay != nullptr) {
     s_viewer_table = nullptr;
@@ -1709,7 +1708,10 @@ bool file_browser_init(lv_obj_t *parent) {
     s_rs485_open_timer = lv_timer_create(rs485_open_timer_cb, 500, nullptr);
   }
 
-  s_rs485_ui_follow_arm_timer = lv_timer_create(rs485_ui_follow_arm_timer_cb, kRs485UiFollowArmDelayMs, nullptr);
+  if (s_rs485_ui_follow_arm_timer == nullptr) {
+    s_rs485_ui_follow_arm_timer = lv_timer_create(rs485_ui_follow_arm_timer_cb,
+                                                   kRs485UiFollowArmDelayMs, nullptr);
+  }
 
   return true;
 }
@@ -1778,4 +1780,16 @@ void file_browser_on_rs485_line_saved(void) {
 
 void file_browser_set_auto_open_cb(void (*cb)(void)) {
   s_auto_open_cb = cb;
+}
+
+void file_browser_rs485_follow_start(void) {
+  if (s_rs485_open_timer == nullptr) {
+    s_rs485_open_timer = lv_timer_create(rs485_open_timer_cb, 500, nullptr);
+  }
+  /* Arm timer: apos estabilizacao do boot, ativa s_line_to_ui_follow.
+   * Apenas se ainda nao estiver ativo (evitar duplicado se file_browser_init correu antes). */
+  if (s_rs485_ui_follow_arm_timer == nullptr) {
+    s_rs485_ui_follow_arm_timer = lv_timer_create(rs485_ui_follow_arm_timer_cb,
+                                                   kRs485UiFollowArmDelayMs, nullptr);
+  }
 }

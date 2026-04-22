@@ -69,3 +69,11 @@ void file_browser_apply_font(const lv_font_t *font);
  * Chamar uma vez durante o arranque da UI; nullptr desativa.
  */
 void file_browser_set_auto_open_cb(void (*cb)(void));
+
+/**
+ * Arranca os timers LVGL de follow RS485 independentemente da view ativa.
+ * Chamar uma vez em ui_app_run() apos LVGL estar pronto.
+ * Permite que o rs485_open_timer_cb detete novas linhas e mude para o browser
+ * mesmo que o utilizador nunca tenha navegado para o explorador de ficheiros.
+ */
+void file_browser_rs485_follow_start(void);
