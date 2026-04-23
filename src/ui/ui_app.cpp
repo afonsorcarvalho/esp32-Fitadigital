@@ -120,6 +120,11 @@ static lv_obj_t *s_dash_sd_value = nullptr;
 static lv_obj_t *s_dash_ntp_value = nullptr;
 static lv_obj_t *s_dash_ftp_value = nullptr;
 static lv_obj_t *s_dash_wifi_value = nullptr;
+/** Botoes de acao do dashboard (para spinner de feedback). */
+static lv_obj_t *s_dash_btn_today  = nullptr;
+static lv_obj_t *s_dash_btn_hist   = nullptr;
+static lv_obj_t *s_dash_lbl_today  = nullptr;
+static lv_obj_t *s_dash_lbl_hist   = nullptr;
 
 static bool s_sd_at_boot = false;
 
@@ -472,25 +477,25 @@ static void dashboard_build(lv_obj_t *parent) {
   lv_obj_set_style_bg_opa(actions, LV_OPA_TRANSP, 0);
   lv_obj_clear_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
 
-  lv_obj_t *btn_today = lv_btn_create(actions);
-  lv_obj_set_height(btn_today, 102);
-  lv_obj_set_flex_grow(btn_today, 1);
-  lv_obj_set_style_bg_color(btn_today, UI_COLOR_PRIMARY, 0);
-  lv_obj_t *lbl_today = lv_label_create(btn_today);
-  lv_label_set_text(lbl_today, LV_SYMBOL_EYE_OPEN " Abrir ciclo de hoje");
-  lv_obj_set_style_text_font(lbl_today, &lv_font_montserrat_20, 0);
-  lv_obj_center(lbl_today);
-  lv_obj_add_event_cb(btn_today, dashboard_btn_today_cb, LV_EVENT_CLICKED, nullptr);
+  s_dash_btn_today = lv_btn_create(actions);
+  lv_obj_set_height(s_dash_btn_today, 102);
+  lv_obj_set_flex_grow(s_dash_btn_today, 1);
+  lv_obj_set_style_bg_color(s_dash_btn_today, UI_COLOR_PRIMARY, 0);
+  s_dash_lbl_today = lv_label_create(s_dash_btn_today);
+  lv_label_set_text(s_dash_lbl_today, LV_SYMBOL_EYE_OPEN " Abrir ciclo de hoje");
+  lv_obj_set_style_text_font(s_dash_lbl_today, &lv_font_montserrat_20, 0);
+  lv_obj_center(s_dash_lbl_today);
+  lv_obj_add_event_cb(s_dash_btn_today, dashboard_btn_today_cb, LV_EVENT_CLICKED, nullptr);
 
-  lv_obj_t *btn_hist = lv_btn_create(actions);
-  lv_obj_set_height(btn_hist, 102);
-  lv_obj_set_flex_grow(btn_hist, 1);
-  lv_obj_set_style_bg_color(btn_hist, UI_COLOR_PRIMARY, 0);
-  lv_obj_t *lbl_hist = lv_label_create(btn_hist);
-  lv_label_set_text(lbl_hist, LV_SYMBOL_DIRECTORY " Ver historico");
-  lv_obj_set_style_text_font(lbl_hist, &lv_font_montserrat_20, 0);
-  lv_obj_center(lbl_hist);
-  lv_obj_add_event_cb(btn_hist, dashboard_btn_history_cb, LV_EVENT_CLICKED, nullptr);
+  s_dash_btn_hist = lv_btn_create(actions);
+  lv_obj_set_height(s_dash_btn_hist, 102);
+  lv_obj_set_flex_grow(s_dash_btn_hist, 1);
+  lv_obj_set_style_bg_color(s_dash_btn_hist, UI_COLOR_PRIMARY, 0);
+  s_dash_lbl_hist = lv_label_create(s_dash_btn_hist);
+  lv_label_set_text(s_dash_lbl_hist, LV_SYMBOL_DIRECTORY " Ver historico");
+  lv_obj_set_style_text_font(s_dash_lbl_hist, &lv_font_montserrat_20, 0);
+  lv_obj_center(s_dash_lbl_hist);
+  lv_obj_add_event_cb(s_dash_btn_hist, dashboard_btn_history_cb, LV_EVENT_CLICKED, nullptr);
 
   /* Rodape: logo AFR (esquerda) + versao do software (direita). */
   LV_IMG_DECLARE(afr_logo_verde);
@@ -527,6 +532,10 @@ static void dashboard_detach_stale_widgets(void) {
   s_dash_ntp_value = nullptr;
   s_dash_ftp_value = nullptr;
   s_dash_wifi_value = nullptr;
+  s_dash_btn_today  = nullptr;
+  s_dash_btn_hist   = nullptr;
+  s_dash_lbl_today  = nullptr;
+  s_dash_lbl_hist   = nullptr;
 }
 
 /** Formata "X.Y GB" ou "X MB" a partir de bytes (uso em cartao SD). */
@@ -627,16 +636,49 @@ static void dashboard_refresh_values(void) {
   }
 }
 
+static lv_obj_t *dash_spinner_create_on_btn(lv_obj_t *btn) {
+  if (btn == nullptr) return nullptr;
+  lv_obj_add_state(btn, LV_STATE_DISABLED);
+  lv_obj_t *sp = lv_spinner_create(btn, 1000, 60);
+  lv_obj_set_size(sp, 40, 40);
+  lv_obj_align(sp, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_set_style_arc_color(sp, UI_COLOR_WHITE, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_width(sp, 5, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_color(sp, UI_COLOR_PRIMARY_DARK, LV_PART_MAIN);
+  lv_obj_set_style_arc_width(sp, 5, LV_PART_MAIN);
+  return sp;
+}
+
+static void dash_spinner_remove_from_btn(lv_obj_t *btn, lv_obj_t *lbl) {
+  if (btn == nullptr) return;
+  lv_obj_clear_state(btn, LV_STATE_DISABLED);
+  /* Remove spinner child (todos excepto o label original). */
+  uint32_t n = lv_obj_get_child_cnt(btn);
+  for (int32_t i = (int32_t)n - 1; i >= 0; i--) {
+    lv_obj_t *ch = lv_obj_get_child(btn, i);
+    if (ch != nullptr && ch != lbl) { lv_obj_del(ch); }
+  }
+  if (lbl != nullptr) { lv_obj_clear_flag(lbl, LV_OBJ_FLAG_HIDDEN); }
+}
+
 static void dashboard_btn_today_cb(lv_event_t *e) {
   (void)e;
+  /* Feedback imediato: mostrar spinner + desabilitar botao enquanto o SD e verificado. */
+  lv_obj_t *sp = nullptr;
+  if (s_dash_btn_today != nullptr) {
+    if (s_dash_lbl_today != nullptr) { lv_obj_add_flag(s_dash_lbl_today, LV_OBJ_FLAG_HIDDEN); }
+    sp = dash_spinner_create_on_btn(s_dash_btn_today);
+  }
   /* Verifica se ha ciclo gravado hoje ANTES de sair do dashboard. Se nao, toast. */
   char path[256];
   if (!cycles_rs485_format_today_path(path, sizeof path)) {
+    dash_spinner_remove_from_btn(s_dash_btn_today, s_dash_lbl_today);
+    (void)sp;
     ui_toast_show(ToastKind::Warn, "Data do sistema invalida");
     return;
   }
   bool exists = false;
-  lvgl_port_unlock();
+  lvgl_port_unlock();  /* liberta LVGL: renderiza o spinner durante o acesso ao SD */
   sd_access_sync([&path, &exists]() {
     if (SD.exists(path)) {
       File f = SD.open(path, FILE_READ);
@@ -649,6 +691,8 @@ static void dashboard_btn_today_cb(lv_event_t *e) {
     }
   });
   (void)lvgl_port_lock(-1);
+  dash_spinner_remove_from_btn(s_dash_btn_today, s_dash_lbl_today);
+  (void)sp;
   if (!exists) {
     ui_toast_show(ToastKind::Info, "Sem ciclo gravado hoje ainda");
     return;
@@ -659,6 +703,13 @@ static void dashboard_btn_today_cb(lv_event_t *e) {
 
 static void dashboard_btn_history_cb(lv_event_t *e) {
   (void)e;
+  /* Feedback imediato: mostrar spinner brevemente antes de navegar. */
+  if (s_dash_btn_hist != nullptr) {
+    if (s_dash_lbl_hist != nullptr) { lv_obj_add_flag(s_dash_lbl_hist, LV_OBJ_FLAG_HIDDEN); }
+    (void)dash_spinner_create_on_btn(s_dash_btn_hist);
+  }
+  /* ensure_main_content_browser faz lv_obj_clean em s_main_content,
+   * o que destroi o spinner (filho do btn que e filho do dashboard). */
   ensure_main_content_browser();
   file_browser_goto("/CICLOS");
 }

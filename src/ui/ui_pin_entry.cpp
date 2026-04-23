@@ -21,18 +21,32 @@ enum class Mode : uint8_t { Validate, Capture };
 lv_obj_t           *s_bg        = nullptr;
 lv_obj_t           *s_ta        = nullptr;
 lv_obj_t           *s_kb        = nullptr;
+/** Spinner visivel durante o delay de validacao (so no modo Validate). */
+lv_obj_t           *s_spinner   = nullptr;
+/** Timer de 300 ms que conclui a validacao apos o spinner ter sido apresentado. */
+lv_timer_t         *s_val_timer = nullptr;
 ui_pin_result_cb_t  s_cb_validate  = nullptr;
 ui_pin_capture_cb_t s_cb_capture   = nullptr;
 Mode                s_mode = Mode::Validate;
 
 static constexpr size_t kPassMax = 16U;
+/** Duracao do spinner de validacao (ms). Suficiente para o user ver o feedback. */
+static constexpr uint32_t kValidateDelayMs = 300U;
+
+/* Buffer temporario: copiado do textarea antes de o modal ser fechado. */
+static char s_pending_text[kPassMax + 1] = {};
 
 void modal_close(void) {
+  if (s_val_timer != nullptr) {
+    lv_timer_del(s_val_timer);
+    s_val_timer = nullptr;
+  }
   if (s_bg != nullptr) {
     lv_obj_del(s_bg);
-    s_bg = nullptr;
-    s_ta = nullptr;
-    s_kb = nullptr;
+    s_bg      = nullptr;
+    s_ta      = nullptr;
+    s_kb      = nullptr;
+    s_spinner = nullptr;
   }
 }
 
@@ -45,17 +59,48 @@ void dispatch_cancel(void) {
   }
 }
 
+/* Timer callback: modal ja esta' fechado; invoca o callback de resultado. */
+static void validate_timer_cb(lv_timer_t *t) {
+  (void)t;
+  lv_timer_del(s_val_timer);
+  s_val_timer = nullptr;
+
+  const String saved = app_settings_settings_pin();
+  const bool ok = (strcmp(s_pending_text, saved.c_str()) == 0);
+  modal_close();
+  if (s_cb_validate) { s_cb_validate(ok); s_cb_validate = nullptr; }
+}
+
 void dispatch_confirm(void) {
   const char *text = (s_ta != nullptr) ? lv_textarea_get_text(s_ta) : "";
   if (text == nullptr) text = "";
 
   if (s_mode == Mode::Validate) {
-    const String saved = app_settings_settings_pin();
-    const bool ok = (strcmp(text, saved.c_str()) == 0);
-    modal_close();
-    if (s_cb_validate) { s_cb_validate(ok); s_cb_validate = nullptr; }
+    /* Guardar texto antes de qualquer alteracao de estado. */
+    strncpy(s_pending_text, text, kPassMax);
+    s_pending_text[kPassMax] = '\0';
+
+    /* Desabilitar teclado e o fundo para evitar cliques duplos. */
+    if (s_kb != nullptr)  { lv_obj_add_state(s_kb, LV_STATE_DISABLED); }
+    if (s_bg != nullptr)  { lv_obj_clear_flag(s_bg, LV_OBJ_FLAG_CLICKABLE); }
+
+    /* Mostrar spinner centrado sobre o modal. */
+    if (s_bg != nullptr && s_spinner == nullptr) {
+      s_spinner = lv_spinner_create(s_bg, 1000, 60);
+      lv_obj_set_size(s_spinner, 64, 64);
+      lv_obj_align(s_spinner, LV_ALIGN_CENTER, 0, -60);
+      lv_obj_set_style_arc_color(s_spinner, UI_COLOR_PRIMARY, LV_PART_INDICATOR);
+      lv_obj_set_style_arc_width(s_spinner, 6, LV_PART_INDICATOR);
+      lv_obj_set_style_arc_color(s_spinner, UI_COLOR_PRIMARY_LIGHT, LV_PART_MAIN);
+      lv_obj_set_style_arc_width(s_spinner, 6, LV_PART_MAIN);
+    }
+
+    /* Timer de um disparo: conclui a validacao apos kValidateDelayMs. */
+    s_val_timer = lv_timer_create(validate_timer_cb, kValidateDelayMs, nullptr);
+    lv_timer_set_repeat_count(s_val_timer, 1);
+
   } else {
-    /* Copiar antes de fechar o modal (texto pertence ao widget). */
+    /* Modo Capture: sem spinner, resposta imediata. */
     char buf[kPassMax + 1];
     strncpy(buf, text, kPassMax);
     buf[kPassMax] = '\0';
