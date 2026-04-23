@@ -812,7 +812,7 @@ static void wifi_back_cb(lv_event_t *e) {
 
 static void pin_result_cb(bool correct) {
   if (!correct) {
-    ui_toast_show(ToastKind::Error, "Codigo incorrecto");
+    ui_toast_show(ToastKind::Error, "Senha incorrecta");
     return;
   }
   create_settings_screen();
@@ -861,50 +861,55 @@ static void scr_timeout_sl_cb(lv_event_t *e) {
   }
 }
 
-/* --- Fluxo trocar PIN: actual -> novo -> confirmar -> gravar --- */
-static char s_pin_change_new[5] = {};
+/* --- Fluxo trocar senha: actual -> nova -> confirmar -> gravar --- */
+static char s_pin_change_new[17] = {};
 
-static void pin_change_confirm_cb(bool confirmed, const char *pin4) {
-  if (!confirmed || pin4 == nullptr) {
-    ui_toast_show(ToastKind::Info, "Troca de codigo cancelada");
+static void pin_change_confirm_cb(bool confirmed, const char *passwd) {
+  if (!confirmed || passwd == nullptr) {
+    ui_toast_show(ToastKind::Info, "Troca de senha cancelada");
     return;
   }
-  if (strncmp(pin4, s_pin_change_new, 4) != 0) {
-    ui_toast_show(ToastKind::Error, "Codigos nao coincidem");
+  if (strcmp(passwd, s_pin_change_new) != 0) {
+    ui_toast_show(ToastKind::Error, "Senhas nao coincidem");
     return;
   }
-  char buf[5];
-  memcpy(buf, s_pin_change_new, 4);
-  buf[4] = '\0';
-  app_settings_set_settings_pin(buf);
-  ui_toast_show(ToastKind::Success, "Codigo actualizado");
+  if (!app_settings_set_settings_pin(s_pin_change_new)) {
+    ui_toast_show(ToastKind::Error, "Senha invalida (4-16 caracteres)");
+    return;
+  }
+  ui_toast_show(ToastKind::Success, "Senha actualizada");
 }
 
-static void pin_change_new_cb(bool confirmed, const char *pin4) {
-  if (!confirmed || pin4 == nullptr) {
-    ui_toast_show(ToastKind::Info, "Troca de codigo cancelada");
+static void pin_change_new_cb(bool confirmed, const char *passwd) {
+  if (!confirmed || passwd == nullptr) {
+    ui_toast_show(ToastKind::Info, "Troca de senha cancelada");
     return;
   }
-  memcpy(s_pin_change_new, pin4, 4);
-  s_pin_change_new[4] = '\0';
-  ui_pin_entry_capture_show(LV_SYMBOL_SETTINGS " Confirmar novo codigo", pin_change_confirm_cb);
+  const size_t len = strlen(passwd);
+  if (len < 4 || len > 16) {
+    ui_toast_show(ToastKind::Error, "Senha invalida (4-16 caracteres)");
+    return;
+  }
+  strncpy(s_pin_change_new, passwd, sizeof(s_pin_change_new) - 1);
+  s_pin_change_new[sizeof(s_pin_change_new) - 1] = 0;
+  ui_pin_entry_capture_show(LV_SYMBOL_SETTINGS " Confirmar nova senha", pin_change_confirm_cb);
 }
 
-static void pin_change_current_cb(bool confirmed, const char *pin4) {
-  if (!confirmed || pin4 == nullptr) {
+static void pin_change_current_cb(bool confirmed, const char *passwd) {
+  if (!confirmed || passwd == nullptr) {
     return;
   }
   const String cur = app_settings_settings_pin();
-  if (strncmp(pin4, cur.c_str(), 4) != 0) {
-    ui_toast_show(ToastKind::Error, "Codigo actual incorrecto");
+  if (strcmp(passwd, cur.c_str()) != 0) {
+    ui_toast_show(ToastKind::Error, "Senha actual incorrecta");
     return;
   }
-  ui_pin_entry_capture_show(LV_SYMBOL_SETTINGS " Novo codigo", pin_change_new_cb);
+  ui_pin_entry_capture_show(LV_SYMBOL_SETTINGS " Nova senha", pin_change_new_cb);
 }
 
 static void pin_change_btn_cb(lv_event_t * /*e*/) {
   memset(s_pin_change_new, 0, sizeof(s_pin_change_new));
-  ui_pin_entry_capture_show(LV_SYMBOL_SETTINGS " Codigo actual", pin_change_current_cb);
+  ui_pin_entry_capture_show(LV_SYMBOL_SETTINGS " Senha actual", pin_change_current_cb);
 }
 
 /** Posiciona os rollers RS485 segundo a NVS (chamar ao entrar em definicoes). */
@@ -2209,13 +2214,13 @@ static void create_settings_screen(void) {
 
   /* Separador + botao trocar PIN de acesso */
   lv_obj_t *pin_sep = lv_label_create(tab_ui);
-  lv_label_set_text(pin_sep, "Codigo de acesso:");
+  lv_label_set_text(pin_sep, "Senha de acesso:");
 
   lv_obj_t *pin_btn = lv_btn_create(tab_ui);
   lv_obj_set_width(pin_btn, LV_PCT(100));
   lv_obj_set_style_bg_color(pin_btn, UI_COLOR_PRIMARY, 0);
   lv_obj_t *pin_lbl = lv_label_create(pin_btn);
-  lv_label_set_text(pin_lbl, LV_SYMBOL_SETTINGS " Trocar codigo");
+  lv_label_set_text(pin_lbl, LV_SYMBOL_SETTINGS " Trocar senha");
   lv_obj_center(pin_lbl);
   lv_obj_add_event_cb(pin_btn, pin_change_btn_cb, LV_EVENT_CLICKED, nullptr);
 

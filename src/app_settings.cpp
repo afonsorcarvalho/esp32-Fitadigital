@@ -683,16 +683,18 @@ void app_settings_set_font_index(uint8_t idx) {
 
 String app_settings_settings_pin(void) {
   String v = s_prefs.getString("pin_sett", "1234");
-  /* Garantir sempre 4 digitos numericos */
-  if (v.length() != 4) return String("1234");
-  for (char c : v) { if (c < '0' || c > '9') return String("1234"); }
+  /* Aceitar qualquer senha nao-vazia entre 4 e 16 caracteres. */
+  const size_t len = v.length();
+  if (len < 4 || len > 16) return String("1234");
   return v;
 }
 
-void app_settings_set_settings_pin(const char *pin) {
-  if (pin == nullptr || strlen(pin) != 4) return;
-  for (int i = 0; i < 4; ++i) { if (pin[i] < '0' || pin[i] > '9') return; }
+bool app_settings_set_settings_pin(const char *pin) {
+  if (pin == nullptr) return false;
+  const size_t len = strlen(pin);
+  if (len < 4 || len > 16) return false;
   s_prefs.putString("pin_sett", pin);
+  return true;
 }
 
 bool app_settings_screensaver_enabled(void) {

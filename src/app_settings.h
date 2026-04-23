@@ -56,15 +56,22 @@ void app_settings_set_ntp_server(const char *host);
 int32_t app_settings_tz_offset_sec(void);
 void app_settings_set_tz_offset_sec(int32_t sec);
 
-/** Duração do splash de boot em segundos (0 = desativado, máximo 10). Default: 3. */
+/** Duracao do splash de boot em segundos (0 = desativado, maximo 10). Default: 3. */
 uint8_t app_settings_splash_seconds(void);
 void app_settings_set_splash_seconds(uint8_t secs);
 
-/** PIN de acesso a Definicoes (4 digitos, default "1234"). */
+/**
+ * Senha de acesso a Definicoes (4-16 caracteres alfanumericos, default "1234").
+ * Chave NVS: "pin_sett" (mantida por compatibilidade com versoes anteriores).
+ */
 String app_settings_settings_pin(void);
-void   app_settings_set_settings_pin(const char *pin);
+/**
+ * Grava nova senha de acesso. Requisitos: nao-nula, 4-16 caracteres.
+ * Retorna true se gravada com sucesso, false se os requisitos nao forem cumpridos.
+ */
+bool   app_settings_set_settings_pin(const char *pin);
 
-/** Screensaver: on/off e timeout em segundos (10–300, default 60). */
+/** Screensaver: on/off e timeout em segundos (10-300, default 60). */
 bool app_settings_screensaver_enabled(void);
 void app_settings_set_screensaver_enabled(bool on);
 uint16_t app_settings_screensaver_timeout(void);
@@ -103,4 +110,3 @@ size_t app_settings_rs485_std_baud_count(void);
 uint32_t app_settings_rs485_std_baud(size_t index);
 /** Indice do baud mais proximo na lista (para posicionar o roller). */
 size_t app_settings_rs485_std_baud_nearest_index(uint32_t baud);
-

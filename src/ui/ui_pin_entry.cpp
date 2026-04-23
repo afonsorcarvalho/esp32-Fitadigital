@@ -1,3 +1,11 @@
+/**
+ * @file ui_pin_entry.cpp
+ * @brief Modal de introducao de senha alfanumerica (4-16 chars).
+ *
+ * Substitui o anterior modal de 4 rollers numericos.
+ * Usa lv_textarea + lv_keyboard para aceitar qualquer senha configurada
+ * pelo utilizador (4 a 16 caracteres alfanumericos).
+ */
 #include "ui_pin_entry.h"
 #include "app_settings.h"
 
@@ -10,19 +18,21 @@ namespace {
 
 enum class Mode : uint8_t { Validate, Capture };
 
-lv_obj_t           *s_bg  = nullptr;
-lv_obj_t           *s_r[4] = {};
+lv_obj_t           *s_bg        = nullptr;
+lv_obj_t           *s_ta        = nullptr;
+lv_obj_t           *s_kb        = nullptr;
 ui_pin_result_cb_t  s_cb_validate  = nullptr;
 ui_pin_capture_cb_t s_cb_capture   = nullptr;
 Mode                s_mode = Mode::Validate;
 
-static const char *kDigits = "0\n1\n2\n3\n4\n5\n6\n7\n8\n9";
+static constexpr size_t kPassMax = 16U;
 
 void modal_close(void) {
   if (s_bg != nullptr) {
     lv_obj_del(s_bg);
     s_bg = nullptr;
-    s_r[0] = s_r[1] = s_r[2] = s_r[3] = nullptr;
+    s_ta = nullptr;
+    s_kb = nullptr;
   }
 }
 
@@ -35,8 +45,33 @@ void dispatch_cancel(void) {
   }
 }
 
+void dispatch_confirm(void) {
+  const char *text = (s_ta != nullptr) ? lv_textarea_get_text(s_ta) : "";
+  if (text == nullptr) text = "";
+
+  if (s_mode == Mode::Validate) {
+    const String saved = app_settings_settings_pin();
+    const bool ok = (strcmp(text, saved.c_str()) == 0);
+    modal_close();
+    if (s_cb_validate) { s_cb_validate(ok); s_cb_validate = nullptr; }
+  } else {
+    /* Copiar antes de fechar o modal (texto pertence ao widget). */
+    char buf[kPassMax + 1];
+    strncpy(buf, text, kPassMax);
+    buf[kPassMax] = '\0';
+    ui_pin_capture_cb_t cb = s_cb_capture;
+    s_cb_capture = nullptr;
+    modal_close();
+    if (cb) { cb(true, buf); }
+  }
+}
+
 void cancel_cb(lv_event_t * /*e*/) {
   dispatch_cancel();
+}
+
+void confirm_cb(lv_event_t * /*e*/) {
+  dispatch_confirm();
 }
 
 void bg_click_cb(lv_event_t *e) {
@@ -45,22 +80,13 @@ void bg_click_cb(lv_event_t *e) {
   }
 }
 
-void confirm_cb(lv_event_t * /*e*/) {
-  char entered[5] = {};
-  for (int i = 0; i < 4; ++i) {
-    entered[i] = (char)('0' + lv_roller_get_selected(s_r[i]));
-  }
-  if (s_mode == Mode::Validate) {
-    const String pin = app_settings_settings_pin();
-    const bool ok = (strncmp(entered, pin.c_str(), 4) == 0);
-    modal_close();
-    if (s_cb_validate) { s_cb_validate(ok); s_cb_validate = nullptr; }
-  } else {
-    ui_pin_capture_cb_t cb = s_cb_capture;
-    s_cb_capture = nullptr;
-    modal_close();
-    if (cb) { cb(true, entered); }
-  }
+void kb_ready_cb(lv_event_t * /*e*/) {
+  /* Tecla OK (checkmark) do teclado confirma a entrada. */
+  dispatch_confirm();
+}
+
+void kb_cancel_cb(lv_event_t * /*e*/) {
+  dispatch_cancel();
 }
 
 void show_modal(const char *title_text) {
@@ -68,6 +94,7 @@ void show_modal(const char *title_text) {
 
   const lv_coord_t scr_w = lv_disp_get_hor_res(nullptr);
   const lv_coord_t scr_h = lv_disp_get_ver_res(nullptr);
+  const lv_coord_t kb_h  = (lv_coord_t)(scr_h * 40 / 100);
 
   s_bg = lv_obj_create(lv_layer_top());
   lv_obj_set_size(s_bg, scr_w, scr_h);
@@ -80,45 +107,36 @@ void show_modal(const char *title_text) {
   lv_obj_clear_flag(s_bg, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(s_bg, bg_click_cb, LV_EVENT_CLICKED, nullptr);
 
+  /* Painel central (acima do teclado). */
   lv_obj_t *modal = lv_obj_create(s_bg);
-  lv_obj_set_width(modal, 460);
+  lv_obj_set_width(modal, scr_w - 40);
   lv_obj_set_height(modal, LV_SIZE_CONTENT);
-  lv_obj_set_style_max_height(modal, scr_h - 20, 0);
-  lv_obj_center(modal);
+  lv_obj_align(modal, LV_ALIGN_TOP_MID, 0, 16);
   lv_obj_set_style_bg_color(modal, lv_color_hex(0xFFFFFF), 0);
   lv_obj_set_style_radius(modal, 12, 0);
   lv_obj_set_style_pad_all(modal, 16, 0);
-  lv_obj_set_style_pad_row(modal, 14, 0);
+  lv_obj_set_style_pad_row(modal, 12, 0);
   lv_obj_set_layout(modal, LV_LAYOUT_FLEX);
   lv_obj_set_flex_flow(modal, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(modal, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
 
+  /* Titulo. */
   lv_obj_t *title = lv_label_create(modal);
   lv_label_set_text(title, title_text);
   lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
   lv_obj_set_style_text_color(title, UI_COLOR_PRIMARY, 0);
 
-  lv_obj_t *row = lv_obj_create(modal);
-  lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
-  lv_obj_set_layout(row, LV_LAYOUT_FLEX);
-  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_border_width(row, 0, 0);
-  lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_pad_all(row, 0, 0);
-  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+  /* Campo de texto (senha oculta). */
+  s_ta = lv_textarea_create(modal);
+  lv_obj_set_width(s_ta, LV_PCT(100));
+  lv_textarea_set_one_line(s_ta, true);
+  lv_textarea_set_max_length(s_ta, kPassMax);
+  lv_textarea_set_password_mode(s_ta, true);
+  lv_textarea_set_placeholder_text(s_ta, "Senha (4-16 caracteres)");
+  lv_obj_set_style_text_font(s_ta, &lv_font_montserrat_20, LV_PART_MAIN);
 
-  for (int i = 0; i < 4; ++i) {
-    s_r[i] = lv_roller_create(row);
-    lv_roller_set_options(s_r[i], kDigits, LV_ROLLER_MODE_NORMAL);
-    lv_roller_set_visible_row_count(s_r[i], 3);
-    lv_obj_set_style_text_font(s_r[i], &lv_font_montserrat_28, LV_PART_MAIN);
-    lv_obj_set_style_text_font(s_r[i], &lv_font_montserrat_28, LV_PART_SELECTED);
-    lv_obj_set_height(s_r[i], 140);
-    lv_obj_set_width(s_r[i], 80);
-  }
-
+  /* Fila de botoes. */
   lv_obj_t *btn_row = lv_obj_create(modal);
   lv_obj_set_size(btn_row, LV_PCT(100), LV_SIZE_CONTENT);
   lv_obj_set_layout(btn_row, LV_LAYOUT_FLEX);
@@ -127,11 +145,11 @@ void show_modal(const char *title_text) {
   lv_obj_set_style_border_width(btn_row, 0, 0);
   lv_obj_set_style_bg_opa(btn_row, LV_OPA_TRANSP, 0);
   lv_obj_set_style_pad_all(btn_row, 0, 0);
-  lv_obj_set_style_pad_top(btn_row, 8, 0);
+  lv_obj_set_style_pad_top(btn_row, 4, 0);
   lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
 
   lv_obj_t *btn_cancel = lv_btn_create(btn_row);
-  lv_obj_set_size(btn_cancel, 160, 54);
+  lv_obj_set_size(btn_cancel, 160, 48);
   lv_obj_set_style_bg_color(btn_cancel, lv_color_hex(0x888888), 0);
   lv_obj_t *lbl_c = lv_label_create(btn_cancel);
   lv_label_set_text(lbl_c, LV_SYMBOL_CLOSE " Cancelar");
@@ -140,13 +158,24 @@ void show_modal(const char *title_text) {
   lv_obj_add_event_cb(btn_cancel, cancel_cb, LV_EVENT_CLICKED, nullptr);
 
   lv_obj_t *btn_ok = lv_btn_create(btn_row);
-  lv_obj_set_size(btn_ok, 160, 54);
+  lv_obj_set_size(btn_ok, 160, 48);
   lv_obj_set_style_bg_color(btn_ok, UI_COLOR_PRIMARY, 0);
   lv_obj_t *lbl_ok = lv_label_create(btn_ok);
-  lv_label_set_text(lbl_ok, (s_mode == Mode::Validate) ? LV_SYMBOL_OK " Entrar" : LV_SYMBOL_OK " OK");
+  lv_label_set_text(lbl_ok, LV_SYMBOL_OK " OK");
   lv_obj_set_style_text_font(lbl_ok, &lv_font_montserrat_16, 0);
   lv_obj_center(lbl_ok);
   lv_obj_add_event_cb(btn_ok, confirm_cb, LV_EVENT_CLICKED, nullptr);
+
+  /* Teclado fixo no fundo do ecra, associado ao textarea.
+   * Usar callbacks separados para READY/CANCEL em vez de LV_EVENT_ALL
+   * para nao interferir com o processamento interno do teclado LVGL. */
+  s_kb = lv_keyboard_create(s_bg);
+  lv_obj_set_size(s_kb, scr_w, kb_h);
+  lv_obj_align(s_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
+  lv_keyboard_set_mode(s_kb, LV_KEYBOARD_MODE_TEXT_LOWER);
+  lv_keyboard_set_textarea(s_kb, s_ta);
+  lv_obj_add_event_cb(s_kb, kb_ready_cb,  LV_EVENT_READY,  nullptr);
+  lv_obj_add_event_cb(s_kb, kb_cancel_cb, LV_EVENT_CANCEL, nullptr);
 }
 
 } // namespace
@@ -164,5 +193,5 @@ void ui_pin_entry_capture_show(const char *title, ui_pin_capture_cb_t cb) {
   s_mode = Mode::Capture;
   s_cb_capture = cb;
   s_cb_validate = nullptr;
-  show_modal(title ? title : "Introduzir codigo");
+  show_modal(title ? title : "Introduzir senha");
 }
