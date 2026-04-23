@@ -40,6 +40,7 @@ h2{font-size:1rem;margin:0 0 12px}
 <button type="button" class="on" data-p="cfg">Config</button>
 <button type="button" data-p="log">Logs</button>
 <button type="button" data-p="fs">Ficheiros</button>
+<button type="button" data-p="ota">OTA</button>
 </nav><span id="ip"></span></header>
 <main>
 <section id="p-cfg" class="panel on"><h2>Configurações</h2>
@@ -81,6 +82,17 @@ h2{font-size:1rem;margin:0 0 12px}
 <label>Caminho</label><input id="fsPath" value="/" placeholder="/">
 <button class="btn btn2" type="button" id="btnFsGo">Abrir</button>
 <table><thead><tr><th>Nome</th><th>Tam.</th><th></th></tr></thead><tbody id="fsBody"></tbody></table>
+</div>
+</section>
+<section id="p-ota" class="panel"><h2>Atualizar Firmware</h2>
+<div id="otaMsg"></div>
+<div class="card">
+<label>Ficheiro .bin</label><input type="file" id="fw-file" accept=".bin">
+<button class="btn" type="button" id="fw-btn" onclick="doUpload()">Enviar e Flashar</button>
+<div id="fw-prog" style="display:none;margin-top:12px">
+<progress id="fw-bar" value="0" max="100" style="width:100%;height:20px"></progress>
+<span id="fw-pct" style="display:inline-block;margin-top:8px">0%</span>
+</div>
 </div>
 </section>
 </main>
@@ -189,6 +201,30 @@ tr.appendChild(td1);tr.appendChild(td2);tr.appendChild(td3);tb.appendChild(tr);
 }).catch(function(e){$("fsBody").innerHTML="<tr><td colspan='3'>Erro: "+(e&&e.message?e.message:String(e))+"</td></tr>";});
 }
 $("btnFsGo").onclick=loadFs;
+function doUpload(){
+var f=$("fw-file").files[0];
+if(!f){$("otaMsg").innerHTML='<div class="msg err">Selecione um ficheiro .bin</div>';return;}
+var form=new FormData();form.append("firmware",f);
+var xhr=new XMLHttpRequest();
+xhr.open("POST","/api/ota/upload");
+xhr.upload.onprogress=function(e){
+if(e.lengthComputable){
+var pct=Math.round(e.loaded*100/e.total);
+$("fw-bar").value=pct;
+$("fw-pct").textContent=pct+"%";
+}
+};
+xhr.onload=function(){
+try{var d=JSON.parse(xhr.responseText);
+if(d.ok){$("otaMsg").innerHTML='<div class="msg ok">Flash OK! A reiniciar...</div>';}
+else{$("otaMsg").innerHTML='<div class="msg err">Erro: '+(d.error||"desconhecido")+'</div>';}
+}catch(e){$("otaMsg").innerHTML='<div class="msg ok">Flash OK! (device reiniciou)</div>';}
+};
+xhr.onerror=function(){$("otaMsg").innerHTML='<div class="msg ok">Flash OK! (device reiniciou)</div>';};
+$("fw-prog").style.display="";
+$("fw-btn").disabled=true;
+xhr.send(form);
+}
 loadCfg();
 })();
 </script>

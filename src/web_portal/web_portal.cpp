@@ -8,6 +8,7 @@
 #include <ArduinoJson.h>
 #include <ESPAsyncWebServer.h>
 #include <SD.h>
+#include <Update.h>
 #include <WiFi.h>
 #include <cstring>
 #include <esp_heap_caps.h>
@@ -567,6 +568,47 @@ static void on_ws_logs_event(AsyncWebSocket *server, AsyncWebSocketClient *clien
     }
 }
 
+static void handle_ota_upload_request(AsyncWebServerRequest *request)
+{
+    if (Update.hasError()) {
+        String err = Update.errorString();
+        request->send(500, "application/json",
+                      "{\"ok\":false,\"error\":\"" + err + "\"}");
+    } else {
+        request->send(200, "application/json", "{\"ok\":true}");
+    }
+    if (!Update.hasError()) {
+        delay(500);
+        ESP.restart();
+    }
+}
+
+static void handle_ota_upload_data(AsyncWebServerRequest *request, const String &filename,
+                                   size_t index, uint8_t *data, size_t len, bool final)
+{
+    if (index == 0) {
+        app_log_writef("INFO", "OTA HTTP: inicio '%s'", filename.c_str());
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
+            app_log_writef("ERROR", "OTA HTTP: begin falhou: %s", Update.errorString());
+            return;
+        }
+    }
+    if (Update.hasError()) {
+        return;
+    }
+    if (Update.write(data, len) != len) {
+        app_log_writef("ERROR", "OTA HTTP: write falhou: %s", Update.errorString());
+        return;
+    }
+    if (final) {
+        if (Update.end(true)) {
+            app_log_writef("INFO", "OTA HTTP: concluido %u bytes", (unsigned)(index + len));
+        } else {
+            app_log_writef("ERROR", "OTA HTTP: end falhou: %s", Update.errorString());
+        }
+    }
+}
+
 void web_portal_init(void)
 {
     if (s_srv != nullptr) {
@@ -607,6 +649,12 @@ void web_portal_init(void)
     s_srv->on("/api/fs/list", HTTP_GET, [](AsyncWebServerRequest *request) { handle_fs_list(request); });
 
     s_srv->on("/api/fs/file", HTTP_GET, [](AsyncWebServerRequest *request) { handle_fs_file(request); });
+
+    s_srv->on(
+        "/api/ota/upload", HTTP_POST,
+        handle_ota_upload_request,
+        handle_ota_upload_data,
+        NULL);
 
     s_srv->begin();
     if (WiFi.status() == WL_CONNECTED) {
