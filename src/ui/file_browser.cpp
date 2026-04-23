@@ -187,7 +187,7 @@ static void viewer_style_ios_back_button(lv_obj_t *btn, lv_obj_t *lbl, const lv_
   lv_obj_set_style_bg_color(btn, UI_COLOR_PRIMARY, 0);
   lv_obj_set_style_pad_hor(btn, 12, LV_PART_MAIN);
   lv_label_set_text(lbl, LV_SYMBOL_LEFT " Voltar");
-  lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+  lv_obj_set_style_text_color(lbl, UI_COLOR_WHITE, LV_PART_MAIN);
   if (ui_font != nullptr) {
     lv_obj_set_style_text_font(lbl, ui_font, LV_PART_MAIN);
   }
@@ -337,7 +337,7 @@ static void goto_line_open_modal(void) {
   s_goto_line_bg = lv_obj_create(lv_layer_top());
   lv_obj_set_size(s_goto_line_bg, scr_w, scr_h);
   lv_obj_align(s_goto_line_bg, LV_ALIGN_TOP_LEFT, 0, 0);
-  lv_obj_set_style_bg_color(s_goto_line_bg, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_color(s_goto_line_bg, UI_COLOR_BLACK, 0);
   lv_obj_set_style_bg_opa(s_goto_line_bg, LV_OPA_60, 0);
   lv_obj_set_style_border_width(s_goto_line_bg, 0, 0);
   lv_obj_set_style_pad_all(s_goto_line_bg, 0, 0);
@@ -350,7 +350,7 @@ static void goto_line_open_modal(void) {
   lv_obj_set_height(modal, LV_SIZE_CONTENT);
   lv_obj_set_style_max_height(modal, scr_h - 20, 0);
   lv_obj_center(modal);
-  lv_obj_set_style_bg_color(modal, lv_color_hex(0xFFFFFF), 0);
+  lv_obj_set_style_bg_color(modal, UI_COLOR_WHITE, 0);
   lv_obj_set_style_radius(modal, 12, 0);
   lv_obj_set_style_pad_all(modal, 16, 0);
   lv_obj_set_style_pad_row(modal, 10, 0);
@@ -393,7 +393,7 @@ static void goto_line_open_modal(void) {
 
   lv_obj_t *btn_cancel = lv_btn_create(btn_row);
   lv_obj_set_size(btn_cancel, 160, 54);
-  lv_obj_set_style_bg_color(btn_cancel, lv_color_hex(0x888888), 0);
+  lv_obj_set_style_bg_color(btn_cancel, UI_COLOR_TEXT_MUTED, 0);
   lv_obj_t *lbl_c = lv_label_create(btn_cancel);
   lv_label_set_text(lbl_c, LV_SYMBOL_CLOSE " Cancelar");
   lv_obj_set_style_text_font(lbl_c, &lv_font_montserrat_16, 0);
@@ -644,7 +644,7 @@ static lv_obj_t *breadcrumb_add_chip(const char *label, intptr_t keep, bool is_c
     lv_obj_set_style_radius(lbl, 14, 0);
     lv_obj_set_style_bg_color(lbl, UI_COLOR_PRIMARY, 0);
     lv_obj_set_style_bg_opa(lbl, LV_OPA_COVER, 0);
-    lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(lbl, UI_COLOR_WHITE, 0);
     return lbl;
   }
   lv_obj_t *btn = lv_btn_create(s_breadcrumb);
@@ -652,8 +652,8 @@ static lv_obj_t *breadcrumb_add_chip(const char *label, intptr_t keep, bool is_c
   lv_obj_set_style_pad_ver(btn, 4, 0);
   lv_obj_set_style_pad_hor(btn, 10, 0);
   lv_obj_set_style_radius(btn, 14, 0);
-  lv_obj_set_style_bg_color(btn, lv_color_hex(0xE8F1E9), 0);
-  lv_obj_set_style_text_color(btn, lv_color_hex(0x2A6B2E), 0);
+  lv_obj_set_style_bg_color(btn, UI_COLOR_PRIMARY_LIGHT, 0);
+  lv_obj_set_style_text_color(btn, UI_COLOR_PRIMARY_DARK, 0);
   lv_obj_set_style_shadow_width(btn, 0, 0);
   lv_obj_t *lbl = lv_label_create(btn);
   lv_label_set_text(lbl, label);
@@ -703,7 +703,7 @@ static void update_breadcrumb(void) {
     lv_obj_t *ell = lv_label_create(s_breadcrumb);
     lv_label_set_text(ell, "...");
     lv_obj_set_style_pad_hor(ell, 4, 0);
-    lv_obj_set_style_text_color(ell, lv_color_hex(0x888888), 0);
+    lv_obj_set_style_text_color(ell, UI_COLOR_TEXT_MUTED, 0);
     start = cnt - kMaxVisible;
   }
   for (int i = start; i < cnt; i++) {
@@ -1530,14 +1530,14 @@ static void show_text_file(const char *full_path, bool quiet_index, bool scroll_
   } else {
     lv_label_set_text(s_viewer_path_label, path_work);
   }
-  lv_obj_set_style_text_color(s_viewer_path_label, lv_color_hex(0xCCCCCC), LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_viewer_path_label, UI_COLOR_BORDER, LV_PART_MAIN);
   if (ui_font != nullptr) {
     lv_obj_set_style_text_font(s_viewer_path_label, ui_font, LV_PART_MAIN);
   }
 
   s_viewer_info_label = lv_label_create(back_row);
   lv_label_set_text(s_viewer_info_label, "");
-  lv_obj_set_style_text_color(s_viewer_info_label, lv_color_hex(0x888888), LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_viewer_info_label, UI_COLOR_TEXT_MUTED, LV_PART_MAIN);
   if (ui_font != nullptr) {
     lv_obj_set_style_text_font(s_viewer_info_label, ui_font, LV_PART_MAIN);
   }

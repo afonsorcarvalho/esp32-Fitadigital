@@ -4,12 +4,12 @@
 
 ## Pendente
 
-- Tokens de tema centralizados (ui_theme.h, substituir hardcodes de cor).
 - Text viewer: coluna de numeracao de linhas — largura fixa p/ 4 digitos, fundo cinza claro em toda a celula.
-- Modal de entrada de senha: ao clicar "Entrar", mostrar spinner de carregando ate validacao concluir (sucesso ou erro).
+- Modal de entrada de senha: ao clicar "ok", mostrar spinner de carregando ate validacao concluir (sucesso ou erro).
 - Spinner em cima do botao (feedback de clique reconhecido) nos botoes "Abrir ciclo de hoje" e "Ver historico".
 
 ## Feito
+- 2026-04-22 — Tokens de tema centralizados (ui_theme.h): audit de cores, novos tokens UI_COLOR_PRIMARY_DARKER e UI_COLOR_BOOT_*, substituicao em 7 ficheiros. Bump v1.08.
 - 2026-04-22 — Trocar senha de configuracao pela aba Scr (UI + NVS): modal teclado alfanumerico 4-16 chars, fluxo senha-actual->nova->confirmar, persistencia NVS (pin_sett), validacao tamanho. Bump v1.07.
 - 2026-04-22 — Jump-to-line no viewer: botao GPS abre modal com textarea numerica + teclado LVGL, valida 1..s_total_lines, scroll animado ou recarrega janela se fora. Bump v1.06.
 - 2026-04-22 — Trocar codigo de acesso a Definicoes pela UI: botao na aba Scr, fluxo actual->novo->confirmar via `ui_pin_entry_capture_show`, persistencia NVS (4 digitos). Bump FITADIGITAL_VERSION 1.04->1.05.

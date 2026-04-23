@@ -84,8 +84,8 @@ static void build_spinner(const char *msg) {
 
 static void build_qr_view(const WgProvStatus *st) {
     lv_obj_t *qr = lv_qrcode_create(s_content, 240,
-                                      lv_color_hex(0x000000),
-                                      lv_color_hex(0xFFFFFF));
+                                      UI_COLOR_BLACK,
+                                      UI_COLOR_WHITE);
     const lv_res_t r = lv_qrcode_update(qr, st->activation_url, strlen(st->activation_url));
     if (r != LV_RES_OK) {
         ui_toast_show(ToastKind::Error, "URL longa de mais para QR");
@@ -94,13 +94,13 @@ static void build_qr_view(const WgProvStatus *st) {
     lv_obj_t *code_lbl = lv_label_create(s_content);
     lv_label_set_text_fmt(code_lbl, "Codigo: " LV_SYMBOL_LOOP " %s", st->activation_code);
     lv_obj_set_style_text_font(code_lbl, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(code_lbl, lv_color_hex(0x333333), 0);
+    lv_obj_set_style_text_color(code_lbl, UI_COLOR_TEXT_DARK, 0);
 
     s_countdown_lbl = lv_label_create(s_content);
     char buf[32];
     fmt_countdown(buf, sizeof(buf), st->expires_at_ms);
     lv_label_set_text(s_countdown_lbl, buf);
-    lv_obj_set_style_text_color(s_countdown_lbl, lv_color_hex(0xCC6600), 0);
+    lv_obj_set_style_text_color(s_countdown_lbl, UI_COLOR_COUNTDOWN, 0);
 }
 
 static void build_success(void) {
@@ -121,18 +121,18 @@ static void build_error(const char *msg) {
     lv_obj_t *icon = lv_label_create(s_content);
     lv_label_set_text(icon, LV_SYMBOL_CLOSE);
     lv_obj_set_style_text_font(icon, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(icon, lv_color_hex(0xCC3333), 0);
+    lv_obj_set_style_text_color(icon, UI_COLOR_ERROR, 0);
 
     lv_obj_t *lbl = lv_label_create(s_content);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(lbl, LV_PCT(100));
     lv_label_set_text(lbl, msg && msg[0] ? msg : "Erro desconhecido");
     lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_color(lbl, lv_color_hex(0xCC3333), 0);
+    lv_obj_set_style_text_color(lbl, UI_COLOR_ERROR, 0);
 
     lv_obj_t *btn_retry = lv_btn_create(s_content);
     lv_obj_set_size(btn_retry, 180, 44);
-    lv_obj_set_style_bg_color(btn_retry, lv_color_hex(0x1976D2), 0);
+    lv_obj_set_style_bg_color(btn_retry, UI_COLOR_BLUE, 0);
     lv_obj_t *lb_r = lv_label_create(btn_retry);
     lv_label_set_text(lb_r, LV_SYMBOL_REFRESH " Tentar novamente");
     lv_obj_center(lb_r);
@@ -214,7 +214,7 @@ void ui_wg_enroll_open(const char *server_url) {
     s_bg = lv_obj_create(lv_layer_top());
     lv_obj_set_size(s_bg, scr_w, scr_h);
     lv_obj_align(s_bg, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(s_bg, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_color(s_bg, UI_COLOR_BLACK, 0);
     lv_obj_set_style_bg_opa(s_bg, LV_OPA_70, 0);
     lv_obj_set_style_border_width(s_bg, 0, 0);
     lv_obj_set_style_pad_all(s_bg, 0, 0);
@@ -225,7 +225,7 @@ void ui_wg_enroll_open(const char *server_url) {
     s_modal = lv_obj_create(s_bg);
     lv_obj_set_size(s_modal, (lv_coord_t)(scr_w - 40), (lv_coord_t)(scr_h - 40));
     lv_obj_center(s_modal);
-    lv_obj_set_style_bg_color(s_modal, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_color(s_modal, UI_COLOR_WHITE, 0);
     lv_obj_set_style_bg_opa(s_modal, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(s_modal, 12, 0);
     lv_obj_set_style_pad_all(s_modal, 14, 0);
@@ -238,7 +238,7 @@ void ui_wg_enroll_open(const char *server_url) {
     /* title row */
     lv_obj_t *title = lv_label_create(s_modal);
     lv_label_set_text(title, LV_SYMBOL_LOOP " Provisionar WireGuard");
-    lv_obj_set_style_text_color(title, lv_color_hex(0x1976D2), 0);
+    lv_obj_set_style_text_color(title, UI_COLOR_BLUE, 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
 
     /* content container (rebuilt on each state change) */
@@ -257,7 +257,7 @@ void ui_wg_enroll_open(const char *server_url) {
     /* close button */
     lv_obj_t *btn_close = lv_btn_create(s_modal);
     lv_obj_set_size(btn_close, 150, 42);
-    lv_obj_set_style_bg_color(btn_close, lv_color_hex(0x888888), 0);
+    lv_obj_set_style_bg_color(btn_close, UI_COLOR_TEXT_MUTED, 0);
     lv_obj_t *lb_c = lv_label_create(btn_close);
     lv_label_set_text(lb_c, LV_SYMBOL_CLOSE " Fechar");
     lv_obj_center(lb_c);

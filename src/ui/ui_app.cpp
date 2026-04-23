@@ -301,20 +301,20 @@ static void update_monitor_pill(lv_obj_t *pill) {
   const char *text = "Configure";
   switch (st) {
     case NetMonitorStatus::Ok:
-      color = 0x2E7D32u; /* verde escuro */
+      color = 0x2E7D32u; /* UI_COLOR_PRIMARY_DARKER */
       text = "Conectado";
       break;
     case NetMonitorStatus::Fail:
-      color = 0xC62828u; /* vermelho industrial */
+      color = 0xC62828u; /* UI_COLOR_ERROR_BG */
       text = "Desconectado";
       break;
     case NetMonitorStatus::Pending:
-      color = 0xF5B841u; /* ambar */
+      color = 0xF5B841u; /* UI_COLOR_WARN_AMBER */
       text = "A testar...";
       break;
     case NetMonitorStatus::Disabled:
     default:
-      color = 0x808080u; /* cinza neutro */
+      color = 0x808080u; /* UI_COLOR_TEXT_SUBTLE */
       text = "Configure";
       break;
   }
@@ -2151,7 +2151,7 @@ static void create_settings_screen(void) {
 
   lv_obj_t *sd_exec_btn = lv_btn_create(tab_sd);
   lv_obj_set_style_bg_color(sd_exec_btn, UI_COLOR_ERROR_BG, 0);
-  lv_obj_set_style_bg_color(sd_exec_btn, lv_color_hex(0xB71C1C), LV_STATE_PRESSED);
+  lv_obj_set_style_bg_color(sd_exec_btn, UI_COLOR_ERROR_PRESSED, LV_STATE_PRESSED);
   lv_obj_t *sd_exec_lbl = lv_label_create(sd_exec_btn);
   lv_label_set_text(sd_exec_lbl, LV_SYMBOL_TRASH " Executar formatacao");
   lv_obj_center(sd_exec_lbl);

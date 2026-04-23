@@ -99,7 +99,7 @@ void show_modal(const char *title_text) {
   s_bg = lv_obj_create(lv_layer_top());
   lv_obj_set_size(s_bg, scr_w, scr_h);
   lv_obj_align(s_bg, LV_ALIGN_TOP_LEFT, 0, 0);
-  lv_obj_set_style_bg_color(s_bg, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_color(s_bg, UI_COLOR_BLACK, 0);
   lv_obj_set_style_bg_opa(s_bg, LV_OPA_60, 0);
   lv_obj_set_style_border_width(s_bg, 0, 0);
   lv_obj_set_style_pad_all(s_bg, 0, 0);
@@ -112,7 +112,7 @@ void show_modal(const char *title_text) {
   lv_obj_set_width(modal, scr_w - 40);
   lv_obj_set_height(modal, LV_SIZE_CONTENT);
   lv_obj_align(modal, LV_ALIGN_TOP_MID, 0, 16);
-  lv_obj_set_style_bg_color(modal, lv_color_hex(0xFFFFFF), 0);
+  lv_obj_set_style_bg_color(modal, UI_COLOR_WHITE, 0);
   lv_obj_set_style_radius(modal, 12, 0);
   lv_obj_set_style_pad_all(modal, 16, 0);
   lv_obj_set_style_pad_row(modal, 12, 0);
@@ -150,7 +150,7 @@ void show_modal(const char *title_text) {
 
   lv_obj_t *btn_cancel = lv_btn_create(btn_row);
   lv_obj_set_size(btn_cancel, 160, 48);
-  lv_obj_set_style_bg_color(btn_cancel, lv_color_hex(0x888888), 0);
+  lv_obj_set_style_bg_color(btn_cancel, UI_COLOR_TEXT_MUTED, 0);
   lv_obj_t *lbl_c = lv_label_create(btn_cancel);
   lv_label_set_text(lbl_c, LV_SYMBOL_CLOSE " Cancelar");
   lv_obj_set_style_text_font(lbl_c, &lv_font_montserrat_16, 0);

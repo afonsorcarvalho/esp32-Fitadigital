@@ -90,7 +90,7 @@ void ui_share_qr_show(const char *path) {
   s_modal_bg = lv_obj_create(lv_layer_top());
   lv_obj_set_size(s_modal_bg, scr_w, scr_h);
   lv_obj_align(s_modal_bg, LV_ALIGN_TOP_LEFT, 0, 0);
-  lv_obj_set_style_bg_color(s_modal_bg, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_color(s_modal_bg, UI_COLOR_BLACK, 0);
   lv_obj_set_style_bg_opa(s_modal_bg, LV_OPA_60, 0);
   lv_obj_set_style_border_width(s_modal_bg, 0, 0);
   lv_obj_set_style_pad_all(s_modal_bg, 0, 0);
@@ -101,7 +101,7 @@ void ui_share_qr_show(const char *path) {
   s_modal = lv_obj_create(s_modal_bg);
   lv_obj_set_size(s_modal, 360, 440);
   lv_obj_center(s_modal);
-  lv_obj_set_style_bg_color(s_modal, lv_color_hex(0xFFFFFF), 0);
+  lv_obj_set_style_bg_color(s_modal, UI_COLOR_WHITE, 0);
   lv_obj_set_style_bg_opa(s_modal, LV_OPA_COVER, 0);
   lv_obj_set_style_radius(s_modal, 12, 0);
   lv_obj_set_style_pad_all(s_modal, 16, 0);
@@ -116,7 +116,7 @@ void ui_share_qr_show(const char *path) {
   lv_obj_set_style_text_color(title, UI_COLOR_PRIMARY, 0);
   lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
 
-  lv_obj_t *qr = lv_qrcode_create(s_modal, 240, lv_color_hex(0x000000), lv_color_hex(0xFFFFFF));
+  lv_obj_t *qr = lv_qrcode_create(s_modal, 240, UI_COLOR_BLACK, UI_COLOR_WHITE);
   const lv_res_t r = lv_qrcode_update(qr, full_url, strlen(full_url));
   if (r != LV_RES_OK) {
     ui_toast_show(ToastKind::Error, "URL demasiado longa para QR");
@@ -126,7 +126,7 @@ void ui_share_qr_show(const char *path) {
   lv_label_set_long_mode(url_lbl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(url_lbl, LV_PCT(100));
   lv_label_set_text(url_lbl, full_url);
-  lv_obj_set_style_text_color(url_lbl, lv_color_hex(0x606060), 0);
+  lv_obj_set_style_text_color(url_lbl, UI_COLOR_TEXT_MED, 0);
   lv_obj_set_style_text_align(url_lbl, LV_TEXT_ALIGN_CENTER, 0);
 
   lv_obj_t *btn_close = lv_btn_create(s_modal);

@@ -79,7 +79,7 @@ void ui_toast_show(ToastKind kind, const char *message, uint32_t duration_ms) {
     lv_obj_set_style_pad_ver(s_toast, 10, 0);
     lv_obj_set_style_border_width(s_toast, 0, 0);
     lv_obj_set_style_shadow_width(s_toast, 14, 0);
-    lv_obj_set_style_shadow_color(s_toast, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_shadow_color(s_toast, UI_COLOR_BLACK, 0);
     lv_obj_set_style_shadow_opa(s_toast, LV_OPA_30, 0);
     s_toast_lbl = lv_label_create(s_toast);
     lv_obj_center(s_toast_lbl);
@@ -88,13 +88,13 @@ void ui_toast_show(ToastKind kind, const char *message, uint32_t duration_ms) {
   uint32_t bg = 0x606060u; /* Info */
   switch (kind) {
     case ToastKind::Success:
-      bg = 0x449D48u;
+      bg = 0x449D48u; /* UI_COLOR_PRIMARY */
       break;
     case ToastKind::Error:
-      bg = 0xC62828u;
+      bg = 0xC62828u; /* UI_COLOR_ERROR_BG */
       break;
     case ToastKind::Warn:
-      bg = 0xF5B841u;
+      bg = 0xF5B841u; /* UI_COLOR_WARN_AMBER */
       break;
     case ToastKind::Info:
     default:
@@ -103,7 +103,7 @@ void ui_toast_show(ToastKind kind, const char *message, uint32_t duration_ms) {
   lv_obj_set_style_bg_color(s_toast, lv_color_hex(bg), 0);
   lv_obj_set_style_bg_opa(s_toast, LV_OPA_COVER, 0);
   if (s_toast_lbl != nullptr) {
-    lv_obj_set_style_text_color(s_toast_lbl, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(s_toast_lbl, UI_COLOR_WHITE, 0);
     lv_label_set_text(s_toast_lbl, message);
   }
   lv_obj_set_size(s_toast, LV_SIZE_CONTENT, LV_SIZE_CONTENT);

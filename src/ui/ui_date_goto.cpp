@@ -126,7 +126,7 @@ void ui_date_goto_show(void) {
   s_modal_bg = lv_obj_create(lv_layer_top());
   lv_obj_set_size(s_modal_bg, scr_w, scr_h);
   lv_obj_align(s_modal_bg, LV_ALIGN_TOP_LEFT, 0, 0);
-  lv_obj_set_style_bg_color(s_modal_bg, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_color(s_modal_bg, UI_COLOR_BLACK, 0);
   lv_obj_set_style_bg_opa(s_modal_bg, LV_OPA_60, 0);
   lv_obj_set_style_border_width(s_modal_bg, 0, 0);
   lv_obj_set_style_pad_all(s_modal_bg, 0, 0);
@@ -139,7 +139,7 @@ void ui_date_goto_show(void) {
   lv_obj_set_height(s_modal, LV_SIZE_CONTENT);
   lv_obj_set_style_max_height(s_modal, scr_h - 20, 0); /* nunca ultrapassa o ecra */
   lv_obj_center(s_modal);
-  lv_obj_set_style_bg_color(s_modal, lv_color_hex(0xFFFFFF), 0);
+  lv_obj_set_style_bg_color(s_modal, UI_COLOR_WHITE, 0);
   lv_obj_set_style_radius(s_modal, 12, 0);
   lv_obj_set_style_pad_all(s_modal, 16, 0);
   lv_obj_set_style_pad_row(s_modal, 12, 0);
@@ -212,14 +212,14 @@ void ui_date_goto_show(void) {
   auto make_shortcut = [&](const char *label, lv_event_cb_t cb) {
     lv_obj_t *btn = lv_btn_create(shortcut_row);
     lv_obj_set_size(btn, 140, 44);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0xE8F1E9), 0);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0xC5DEC7), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(btn, UI_COLOR_PRIMARY_LIGHT, 0);
+    lv_obj_set_style_bg_color(btn, UI_COLOR_PRIMARY_PRESSED, LV_STATE_PRESSED);
     lv_obj_set_style_radius(btn, 22, 0);
     lv_obj_set_style_shadow_width(btn, 0, 0);
     lv_obj_t *lbl = lv_label_create(btn);
     lv_label_set_text(lbl, label);
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(lbl, lv_color_hex(0x2A6B2E), 0);
+    lv_obj_set_style_text_color(lbl, UI_COLOR_PRIMARY_DARK, 0);
     lv_obj_center(lbl);
     lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
   };
@@ -240,7 +240,7 @@ void ui_date_goto_show(void) {
 
   lv_obj_t *btn_cancel = lv_btn_create(btn_row);
   lv_obj_set_size(btn_cancel, 180, 57); /* +30% na altura (44 -> 57) */
-  lv_obj_set_style_bg_color(btn_cancel, lv_color_hex(0x888888), 0);
+  lv_obj_set_style_bg_color(btn_cancel, UI_COLOR_TEXT_MUTED, 0);
   lv_obj_t *lbl_cancel = lv_label_create(btn_cancel);
   lv_label_set_text(lbl_cancel, LV_SYMBOL_CLOSE " Cancelar");
   lv_obj_set_style_text_font(lbl_cancel, &lv_font_montserrat_18, 0); /* +4 pt do default */
