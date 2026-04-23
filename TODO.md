@@ -1,6 +1,7 @@
 # TODO — FitaDigital (ESP32-S3-Touch-LCD-4.3B)
 
 ## Em curso
+- 2026-04-23 — Feedback LVGL para OTA via web: modal com progresso 0-100% durante upload HTTP; texto "OTA via HTTP..." + progresso; "Flash OK!" ou "Erro: ..." no final; integrar com handler web_portal.cpp via callback ou variável partilhada.
 
 ## Pendente
 - Fazer modo dark, configuração aba Scr, persistencia no NVS

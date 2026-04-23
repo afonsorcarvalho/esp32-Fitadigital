@@ -110,6 +110,7 @@ static lv_obj_t *s_ota_bar         = nullptr;
 static lv_obj_t *s_ota_start_btn   = nullptr;
 static lv_obj_t *s_ota_stop_btn    = nullptr;
 static lv_timer_t *s_ota_ui_timer  = nullptr;
+static lv_timer_t *s_ota_http_ui_timer = nullptr;
 
 static lv_timer_t *s_status_timer = nullptr;
 
@@ -1705,6 +1706,34 @@ static void ota_ui_timer_cb(lv_timer_t * /*t*/) {
   }
 }
 
+static void ota_http_ui_timer_cb(lv_timer_t *t) {
+  const OtaState state = ota_http_state();
+  const uint8_t  pct   = ota_http_progress();
+
+  switch (state) {
+    case OtaState::HTTP_RECEIVING: {
+      char buf[64];
+      snprintf(buf, sizeof buf, "OTA HTTP: %u%%", (unsigned)pct);
+      ui_toast_show(ToastKind::Info, buf, 600);
+      break;
+    }
+    case OtaState::HTTP_DONE:
+      ui_toast_show(ToastKind::Success, LV_SYMBOL_OK " OTA HTTP OK! A reiniciar...", 3000);
+      lv_timer_del(t);
+      lv_timer_create([](lv_timer_t *) { esp_restart(); }, 2000, nullptr);
+      break;
+    case OtaState::HTTP_ERROR: {
+      char buf[160];
+      snprintf(buf, sizeof buf, LV_SYMBOL_CLOSE " OTA HTTP erro: %s", ota_http_error_msg());
+      ui_toast_show(ToastKind::Error, buf, 4000);
+      lv_timer_del(t);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
 static void ota_start_btn_cb(lv_event_t * /*e*/) {
   if (WiFi.status() != WL_CONNECTED) {
     ui_toast_show(ToastKind::Warn, "Wi-Fi nao ligado. Ligue primeiro.");
@@ -2562,6 +2591,9 @@ void ui_app_run(bool sd_mounted, bool splash_active) {
 
   if (s_status_timer == nullptr) {
     s_status_timer = lv_timer_create(status_timer_cb, 1000, nullptr);
+  }
+  if (s_ota_http_ui_timer == nullptr) {
+    s_ota_http_ui_timer = lv_timer_create(ota_http_ui_timer_cb, 500, nullptr);
   }
   /* Quando RS485 envia dados e o file browser nao esta visivel, mudar automaticamente para ele. */
   file_browser_set_auto_open_cb([] { ensure_main_content_browser(); });

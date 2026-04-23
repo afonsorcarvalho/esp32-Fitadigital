@@ -8,6 +8,8 @@
 #include <Arduino.h>
 #include <ArduinoOTA.h>
 #include <WiFi.h>
+#include <atomic>
+#include <cstring>
 
 static const char *TAG = "OTA";
 
@@ -15,6 +17,11 @@ static OtaState  s_state    = OtaState::IDLE;
 static uint8_t   s_progress = 0;
 static char      s_error[128] = {};
 static bool      s_handlers_registered = false;
+
+// HTTP OTA — variáveis atômicas para thread-safety entre async_tcp (core 0) e LVGL (core 1)
+static std::atomic<OtaState> s_http_state{OtaState::IDLE};
+static std::atomic<uint8_t>  s_http_progress{0};
+static char                  s_http_error[128] = {};
 
 static void register_handlers(void) {
     if (s_handlers_registered) {
@@ -104,4 +111,40 @@ uint8_t ota_manager_progress(void) {
 
 const char *ota_manager_error_msg(void) {
     return s_error;
+}
+
+void ota_http_begin(void) {
+    s_http_state.store(OtaState::HTTP_RECEIVING, std::memory_order_relaxed);
+    s_http_progress.store(0, std::memory_order_relaxed);
+}
+
+void ota_http_set_progress(uint8_t pct) {
+    s_http_progress.store(pct, std::memory_order_relaxed);
+}
+
+void ota_http_set_done(void) {
+    s_http_progress.store(100, std::memory_order_relaxed);
+    s_http_state.store(OtaState::HTTP_DONE, std::memory_order_relaxed);
+}
+
+void ota_http_set_error(const char *msg) {
+    if (msg) {
+        strncpy(s_http_error, msg, sizeof(s_http_error) - 1);
+        s_http_error[sizeof(s_http_error) - 1] = '\0';
+    } else {
+        s_http_error[0] = '\0';
+    }
+    s_http_state.store(OtaState::HTTP_ERROR, std::memory_order_relaxed);
+}
+
+OtaState ota_http_state(void) {
+    return s_http_state.load(std::memory_order_relaxed);
+}
+
+uint8_t ota_http_progress(void) {
+    return s_http_progress.load(std::memory_order_relaxed);
+}
+
+const char *ota_http_error_msg(void) {
+    return s_http_error;
 }

@@ -17,6 +17,7 @@
 #include "app_log.h"
 #include "app_settings.h"
 #include "net_services.h"
+#include "ota_manager.h"
 #include "sd_access.h"
 
 static const char *TAG = "web_portal";
@@ -573,13 +574,13 @@ static void handle_ota_upload_request(AsyncWebServerRequest *request)
     if (Update.hasError()) {
         String err = Update.errorString();
         app_log_writef("ERROR", "OTA HTTP: resposta erro: %s", err.c_str());
+        ota_http_set_error(err.c_str());
         request->send(500, "application/json",
                       "{\"ok\":false,\"error\":\"" + err + "\"}");
     } else {
-        app_log_writef("INFO", "OTA HTTP: flash completo, reboot em 500ms");
+        app_log_writef("INFO", "OTA HTTP: flash concluido, reboot agendado no LVGL timer");
+        ota_http_set_done();
         request->send(200, "application/json", "{\"ok\":true}");
-        delay(500);
-        ESP.restart();
     }
 }
 
@@ -588,8 +589,10 @@ static void handle_ota_upload_data(AsyncWebServerRequest *request, const String 
 {
     if (index == 0) {
         app_log_writef("INFO", "OTA HTTP: inicio '%s'", filename.c_str());
+        ota_http_begin();
         if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
             app_log_writef("ERROR", "OTA HTTP: begin falhou: %s", Update.errorString());
+            ota_http_set_error(Update.errorString());
             return;
         }
     }
@@ -598,13 +601,16 @@ static void handle_ota_upload_data(AsyncWebServerRequest *request, const String 
     }
     if (Update.write(data, len) != len) {
         app_log_writef("ERROR", "OTA HTTP: write falhou: %s", Update.errorString());
+        ota_http_set_error(Update.errorString());
         return;
     }
     if (final) {
         if (Update.end(true)) {
             app_log_writef("INFO", "OTA HTTP: concluido %u bytes", (unsigned)(index + len));
+            ota_http_set_done();
         } else {
             app_log_writef("ERROR", "OTA HTTP: end falhou: %s", Update.errorString());
+            ota_http_set_error(Update.errorString());
         }
     }
 }

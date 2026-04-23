@@ -19,11 +19,14 @@
 #include <stdint.h>
 
 enum class OtaState : uint8_t {
-    IDLE,       /**< Escuta nao iniciada */
-    LISTENING,  /**< Aguardando push do IDE/espota.py */
-    RECEIVING,  /**< A receber binario (progresso 0-100) */
-    DONE,       /**< Concluido; reboot pendente */
-    ERROR,      /**< Falha; mensagem em ota_manager_error_msg() */
+    IDLE,            /**< Escuta nao iniciada */
+    LISTENING,       /**< Aguardando push do IDE/espota.py */
+    RECEIVING,       /**< A receber binario (progresso 0-100) */
+    DONE,            /**< Concluido; reboot pendente */
+    ERROR,           /**< Falha; mensagem em ota_manager_error_msg() */
+    HTTP_RECEIVING,  /**< A receber via HTTP upload (progresso 0-100) */
+    HTTP_DONE,       /**< Upload HTTP concluido; reboot pendente */
+    HTTP_ERROR,      /**< Falha HTTP; mensagem em ota_http_error_msg() */
 };
 
 /** Inicia o servidor ArduinoOTA. Requer Wi-Fi conectado. */
@@ -46,3 +49,33 @@ uint8_t ota_manager_progress(void);
 
 /** Mensagem de erro (valida apenas em ERROR). Ponteiro estatico — copiar se necessario. */
 const char *ota_manager_error_msg(void);
+
+/**
+ * @name API para OTA HTTP (upload .bin via browser)
+ * Funcoes chamadas pelo handler web_portal.cpp durante upload HTTP.
+ * Thread-safe: handler (async_tcp, core 0) escreve; UI LVGL (core 1) le.
+ * @{
+ */
+
+/** Inicia upload HTTP — chamar no primeiro chunk. */
+void ota_http_begin(void);
+
+/** Atualiza progresso durante upload (0-100). */
+void ota_http_set_progress(uint8_t pct);
+
+/** Flash concluido com sucesso — chamar no final. */
+void ota_http_set_done(void);
+
+/** Erro durante upload — chamar se Update falhar. */
+void ota_http_set_error(const char *msg);
+
+/** Estado atual do upload HTTP. */
+OtaState ota_http_state(void);
+
+/** Progresso atual do upload HTTP (0-100). */
+uint8_t ota_http_progress(void);
+
+/** Mensagem de erro HTTP (valida apenas em HTTP_ERROR). */
+const char *ota_http_error_msg(void);
+
+/** @} **/
