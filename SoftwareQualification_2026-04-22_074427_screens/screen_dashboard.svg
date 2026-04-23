@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- FitaDigital UI Mockup: Dashboard -->
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="480">
+<rect x="0" y="0" width="800" height="480" fill="#12162a" rx="0"/>
+<rect x="0" y="0" width="800" height="52" fill="#0c1020" rx="0"/>
+<line x1="0" y1="52" x2="800" y2="52" stroke="#00b473" stroke-width="2"/>
+<text x="400" y="34" font-size="22" font-weight="bold" fill="#eaf0fa" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif">FitaDigital</text>
+<path d="M19 28 A14 14 0 0 1 33 28" fill="none" stroke="#00b473" stroke-width="2.5"/>
+<path d="M22 32 A8 8 0 0 1 30 32" fill="none" stroke="#00b473" stroke-width="2.5"/>
+<circle cx="26" cy="35" r="2" fill="#00b473"/>
+<text x="722" y="33" font-size="15" font-weight="normal" fill="#8c9baf" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">14:23</text>
+<rect x="0" y="56" width="800" height="34" fill="#0a0d16" rx="0"/>
+<text x="20" y="78" font-size="15" font-weight="normal" fill="#00b473" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">RS485 → SD Card  |  A gravar...</text>
+<text x="672" y="78" font-size="14" font-weight="normal" fill="#00c864" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">●  Conectado</text>
+<rect x="20" y="100" width="350" height="192" fill="#0a0d16" rx="8" stroke="#32415a" stroke-width="1"/>
+<text x="36" y="128" font-size="16" font-weight="bold" fill="#8c9baf" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">Ciclo Actual</text>
+<text x="36" y="162" font-size="22" font-weight="bold" fill="#eaf0fa" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">2026-04-22  14:23:01</text>
+<text x="36" y="196" font-size="14" font-weight="normal" fill="#8c9baf" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">Duração: 00:45:12</text>
+<text x="36" y="218" font-size="14" font-weight="normal" fill="#8c9baf" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">Ficheiros: 3 guardados</text>
+<text x="36" y="258" font-size="13" font-weight="normal" fill="#00b473" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">●  RS485  9600 bps</text>
+<rect x="390" y="100" width="380" height="192" fill="#0a0d16" rx="8" stroke="#32415a" stroke-width="1"/>
+<text x="406" y="128" font-size="16" font-weight="bold" fill="#8c9baf" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">WiFi</text>
+<text x="406" y="156" font-size="16" font-weight="normal" fill="#eaf0fa" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">FitaDigital-AP</text>
+<text x="406" y="182" font-size="15" font-weight="normal" fill="#00b473" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">72%  ▂▄▆█</text>
+<text x="406" y="208" font-size="13" font-weight="normal" fill="#8c9baf" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">IP: 192.168.4.1</text>
+<text x="406" y="230" font-size="13" font-weight="normal" fill="#00c864" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">●  NTP: OK</text>
+<rect x="0" y="424" width="800" height="56" fill="#0a0d16" rx="0"/>
+<line x1="0" y1="424" x2="800" y2="424" stroke="#32415a"/>
+<rect x="20" y="433" width="172" height="38" fill="#232d41" rx="7"/>
+<text x="106" y="458" font-size="15" font-weight="normal" fill="#ffffff" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif">← Ir para Data</text>
+<rect x="212" y="433" width="172" height="38" fill="#232d41" rx="7"/>
+<text x="298" y="458" font-size="15" font-weight="normal" fill="#ffffff" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif">Explorador</text>
+<rect x="404" y="433" width="172" height="38" fill="#232d41" rx="7"/>
+<text x="490" y="458" font-size="15" font-weight="normal" fill="#ffffff" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif">Partilhar ↗</text>
+<rect x="640" y="433" width="140" height="38" fill="#232d41" rx="7"/>
+<text x="710" y="458" font-size="15" font-weight="normal" fill="#ffffff" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif">Definições ⚙</text>
+</svg>

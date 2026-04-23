@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- FitaDigital UI Mockup: Screensaver -->
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="480">
+<rect x="0" y="0" width="800" height="480" fill="#12162a" rx="0"/>
+<rect x="0" y="0" width="800" height="480" fill="#000000" rx="0"/>
+<circle cx="320" cy="200" r="6" fill="#00b473"/>
+<text x="400" y="460" font-size="13" font-weight="normal" fill="#374758" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif">Proteção de ecrã activa  —  Toque para continuar</text>
+</svg>

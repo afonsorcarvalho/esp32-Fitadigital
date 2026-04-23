@@ -1,6 +1,18 @@
 #pragma once
 #include <lvgl.h>
 
+/** Aplica tema LVGL default (claro ou escuro) ao display default. */
+static inline void ui_theme_apply(bool dark) {
+  lv_disp_t *d = lv_disp_get_default();
+  if (d == nullptr) return;
+  lv_theme_t *th = lv_theme_default_init(d,
+    lv_palette_main(LV_PALETTE_GREEN),
+    lv_palette_main(LV_PALETTE_BLUE),
+    dark,
+    LV_FONT_DEFAULT);
+  lv_disp_set_theme(d, th);
+}
+
 /* Primary brand — green */
 #define UI_COLOR_PRIMARY         lv_color_hex(0x449D48)
 #define UI_COLOR_PRIMARY_DARK    lv_color_hex(0x2A6B2E)

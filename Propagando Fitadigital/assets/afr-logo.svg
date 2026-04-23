@@ -1,0 +1,18 @@
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 64" fill="none">
+  
+  <g>
+    <rect x="4" y="4" width="56" height="56" rx="6" stroke="currentColor" stroke-width="2"></rect>
+    
+    <path d="M12 48 L20 16 L26 16 L34 48 M16 38 L30 38" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter"></path>
+    
+    <path d="M4 12 L8 12 M4 52 L8 52 M56 12 L60 12 M56 52 L60 52" stroke="currentColor" stroke-width="1.5"></path>
+    
+    <circle cx="48" cy="20" r="3" fill="#00b3c7"></circle>
+  </g>
+  
+  <g font-family="Inter, sans-serif" fill="currentColor">
+    <text x="76" y="30" font-size="22" font-weight="700" letter-spacing="-0.02em">AFR</text>
+    <text x="76" y="50" font-size="11" font-weight="500" letter-spacing="0.1em" fill-opacity="0.65">SOLUÇÕES INTELIGENTES</text>
+  </g>
+</svg>

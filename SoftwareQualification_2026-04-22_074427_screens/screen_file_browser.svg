@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- FitaDigital UI Mockup: File Browser -->
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="480">
+<rect x="0" y="0" width="800" height="480" fill="#12162a" rx="0"/>
+<rect x="0" y="0" width="800" height="52" fill="#0c1020" rx="0"/>
+<line x1="0" y1="52" x2="800" y2="52" stroke="#00b473" stroke-width="2"/>
+<text x="400" y="34" font-size="22" font-weight="bold" fill="#eaf0fa" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif">Explorador de Ficheiros</text>
+<path d="M19 28 A14 14 0 0 1 33 28" fill="none" stroke="#00b473" stroke-width="2.5"/>
+<path d="M22 32 A8 8 0 0 1 30 32" fill="none" stroke="#00b473" stroke-width="2.5"/>
+<circle cx="26" cy="35" r="2" fill="#00b473"/>
+<text x="722" y="33" font-size="15" font-weight="normal" fill="#8c9baf" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">14:23</text>
+<rect x="20" y="64" width="742" height="30" fill="#0a0d16" rx="5" stroke="#32415a" stroke-width="1"/>
+<text x="36" y="84" font-size="13" font-weight="normal" fill="#8c9baf" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">/ SD Card / ciclos/</text>
+<rect x="20" y="106" width="726" height="43" fill="#232d41" rx="0"/>
+<rect x="20" y="106" width="4" height="43" fill="#00b473" rx="0"/>
+<text x="40" y="134" font-size="16" font-weight="bold" fill="#eaf0fa" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">ciclo_2026-04-22_140000.txt</text>
+<text x="692" y="134" font-size="13" font-weight="normal" fill="#8c9baf" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">2.1 KB</text>
+<line x1="20" y1="149" x2="746" y2="149" stroke="#32415a"/>
+<rect x="20" y="152" width="726" height="43" fill="#12162a" rx="0"/>
+<text x="40" y="180" font-size="16" font-weight="normal" fill="#eaf0fa" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">ciclo_2026-04-21_090000.txt</text>
+<text x="692" y="180" font-size="13" font-weight="normal" fill="#8c9baf" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">2.4 KB</text>
+<line x1="20" y1="195" x2="746" y2="195" stroke="#32415a"/>
+<rect x="20" y="198" width="726" height="43" fill="#0a0d16" rx="0"/>
+<text x="40" y="226" font-size="16" font-weight="normal" fill="#eaf0fa" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">ciclo_2026-04-20_150000.txt</text>
+<text x="692" y="226" font-size="13" font-weight="normal" fill="#8c9baf" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">2.7 KB</text>
+<line x1="20" y1="241" x2="746" y2="241" stroke="#32415a"/>
+<rect x="20" y="244" width="726" height="43" fill="#12162a" rx="0"/>
+<text x="40" y="272" font-size="16" font-weight="normal" fill="#eaf0fa" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">ciclo_2026-04-19_110000.txt</text>
+<text x="692" y="272" font-size="13" font-weight="normal" fill="#8c9baf" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">3.0 KB</text>
+<line x1="20" y1="287" x2="746" y2="287" stroke="#32415a"/>
+<rect x="20" y="290" width="726" height="43" fill="#0a0d16" rx="0"/>
+<text x="40" y="318" font-size="16" font-weight="normal" fill="#eaf0fa" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">ciclo_2026-04-18_080000.txt</text>
+<text x="692" y="318" font-size="13" font-weight="normal" fill="#8c9baf" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">3.3 KB</text>
+<line x1="20" y1="333" x2="746" y2="333" stroke="#32415a"/>
+<rect x="758" y="106" width="12" height="230" fill="#0a0d16" rx="5" stroke="#32415a" stroke-width="1"/>
+<rect x="758" y="106" width="12" height="92" fill="#232d41" rx="5"/>
+<rect x="0" y="422" width="800" height="58" fill="#0a0d16" rx="0"/>
+<line x1="0" y1="422" x2="800" y2="422" stroke="#32415a"/>
+<rect x="20" y="432" width="110" height="36" fill="#00a064" rx="7"/>
+<text x="75" y="456" font-size="15" font-weight="normal" fill="#ffffff" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif">Abrir</text>
+<rect x="150" y="432" width="120" height="36" fill="#232d41" rx="7"/>
+<text x="210" y="456" font-size="15" font-weight="normal" fill="#ffffff" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif">Partilhar</text>
+<rect x="648" y="432" width="132" height="36" fill="#232d41" rx="7"/>
+<text x="714" y="456" font-size="15" font-weight="normal" fill="#ffffff" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif">Fechar</text>
+</svg>

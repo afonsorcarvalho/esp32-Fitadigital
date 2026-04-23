@@ -1,0 +1,222 @@
+/* CyclePhaseBar styles */
+
+.phase-bar-labels, .phase-bar-times {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 6px;
+}
+.phase-bar-times { margin-top: 6px; margin-bottom: 0; }
+
+.phase-bar-label {
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 6px;
+  color: var(--white-40);
+  transition: color 200ms var(--ease);
+}
+
+.phase-bar-time {
+  padding: 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.phase-bar-track {
+  display: flex;
+  gap: 2px;
+  width: 100%;
+  background: rgba(255,255,255,0.02);
+  border-radius: 4px;
+  padding: 0;
+  position: relative;
+}
+
+.phase-seg {
+  position: relative;
+  height: 100%;
+  border-radius: 3px;
+  overflow: hidden;
+  transition: all 200ms var(--ease);
+  min-width: 8px;
+}
+
+/* DONE — muted neon-green */
+.phase-seg.done {
+  background: rgba(16,185,129,0.22);
+  box-shadow: inset 0 0 0 1px rgba(16,185,129,0.35);
+}
+.phase-seg.completed.done,
+.phase-seg.completed {
+  background: rgba(16,185,129,0.28);
+  box-shadow: inset 0 0 0 1px rgba(16,185,129,0.4);
+}
+
+/* CURRENT — solid neon-green with halo */
+.phase-seg.current {
+  background: linear-gradient(180deg, rgba(16,185,129,0.35), rgba(16,185,129,0.5));
+  animation: phase-active-glow 2.0s ease-in-out infinite;
+}
+.phase-seg.current.overdue {
+  background: linear-gradient(180deg, rgba(236,72,153,0.4), rgba(236,72,153,0.55));
+  animation: overdue-glow 1.8s ease-in-out infinite;
+}
+
+/* ABORTED mid-phase */
+.phase-seg.aborted {
+  background: rgba(236,72,153,0.25);
+  box-shadow: inset 0 0 0 1px rgba(236,72,153,0.5);
+}
+
+/* FUTURE — dashed outline, near-empty */
+.phase-seg.future {
+  background: rgba(255,255,255,0.015);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
+}
+.phase-seg.future::after {
+  content: "";
+  position: absolute; inset: 0;
+  background-image: repeating-linear-gradient(
+    90deg,
+    rgba(255,255,255,0.06) 0, rgba(255,255,255,0.06) 3px,
+    transparent 3px, transparent 7px
+  );
+  opacity: 0.5;
+}
+
+/* Fill growing inside current phase */
+.phase-seg-fill {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  background: linear-gradient(90deg,
+    rgba(52,230,176,0.75),
+    rgba(230,255,240,0.95));
+  border-right: 1.5px solid rgba(230,255,240,0.9);
+  box-shadow: 0 0 10px rgba(52,230,176,0.6);
+  transition: width 600ms linear;
+}
+
+/* Shimmer sweep on active segment */
+@keyframes phase-shimmer-kf {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+.phase-seg-shimmer {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 30%;
+  background: linear-gradient(90deg,
+    transparent,
+    rgba(255,255,255,0.35),
+    transparent);
+  animation: phase-shimmer-kf 2.6s linear infinite;
+  pointer-events: none;
+}
+
+.phase-seg-tick {
+  display: none; /* tiny gap between segments is enough */
+}
+
+/* ============================================================
+   Cycle Card
+   ============================================================ */
+.cycle-card {
+  position: relative;
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: var(--glass-1);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  cursor: pointer;
+  transition: transform 200ms var(--ease), border-color 200ms var(--ease);
+  overflow: hidden;
+}
+.cycle-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--hairline-hi);
+}
+.cycle-card .card-detail-cta {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: all 200ms var(--ease);
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  padding: 10px 18px;
+  background: linear-gradient(180deg, transparent, rgba(0, 212, 255, 0.14));
+  color: var(--neon-blue);
+  font: 600 11px/1 var(--font-sans);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-align: right;
+  pointer-events: none;
+}
+.cycle-card:hover .card-detail-cta {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.cycle-card .card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.cycle-card .eq-name {
+  font: 600 15px/1.2 var(--font-sans);
+  color: var(--white-95);
+  letter-spacing: -0.005em;
+}
+.cycle-card .eq-loc {
+  font: 500 11px/1 var(--font-mono);
+  color: var(--white-40);
+  margin-top: 4px;
+  letter-spacing: 0.04em;
+}
+.cycle-card .lot {
+  font: 500 10.5px/1 var(--font-mono);
+  color: var(--white-60);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-top: 8px;
+}
+.cycle-card .recipe-name {
+  font: 500 12px/1.3 var(--font-sans);
+  color: var(--white-60);
+}
+
+.cycle-card .meta-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.cycle-card .timer {
+  font: 600 22px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+.cycle-card .timer-total {
+  font: 500 13px/1 var(--font-mono);
+  color: var(--white-40);
+}
+
+/* Completed / aborted / scheduled card tints */
+.cycle-card.completed { border-color: rgba(16,185,129,0.22); }
+.cycle-card.aborted   { border-color: rgba(236,72,153,0.22); }
+.cycle-card.scheduled { border-color: rgba(255,255,255,0.08); }
+
+/* Inline mini-chart inside card */
+.card-mini-chart {
+  height: 40px;
+  margin-top: -4px;
+  margin-bottom: -4px;
+  opacity: 0.9;
+}

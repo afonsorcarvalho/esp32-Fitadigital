@@ -910,6 +910,13 @@ static void scr_sw_cb(lv_event_t *e) {
   app_settings_set_screensaver_enabled(lv_obj_has_state(sw, LV_STATE_CHECKED));
 }
 
+static void dark_mode_sw_cb(lv_event_t *e) {
+  lv_obj_t *sw = lv_event_get_target(e);
+  bool on = lv_obj_has_state(sw, LV_STATE_CHECKED);
+  app_settings_set_dark_mode(on);
+  ui_theme_apply(on);
+}
+
 static void scr_timeout_sl_cb(lv_event_t *e) {
   lv_obj_t *sl = lv_event_get_target(e);
   uint16_t v = (uint16_t)lv_slider_get_value(sl);
@@ -2354,6 +2361,24 @@ static void create_settings_screen(void) {
   lv_slider_set_value(s_font_slider, app_settings_font_index(), LV_ANIM_OFF);
   lv_obj_add_event_cb(s_font_slider, settings_font_slider_cb, LV_EVENT_VALUE_CHANGED, nullptr);
 
+  /* Modo dark */
+  lv_obj_t *dark_row = lv_obj_create(tab_ui);
+  lv_obj_set_size(dark_row, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_layout(dark_row, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(dark_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(dark_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_border_width(dark_row, 0, 0);
+  lv_obj_set_style_bg_opa(dark_row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_pad_all(dark_row, 0, 0);
+  lv_obj_clear_flag(dark_row, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t *dark_lbl = lv_label_create(dark_row);
+  lv_label_set_text(dark_lbl, "Modo dark");
+  lv_obj_t *dark_sw = lv_switch_create(dark_row);
+  if (app_settings_dark_mode()) {
+    lv_obj_add_state(dark_sw, LV_STATE_CHECKED);
+  }
+  lv_obj_add_event_cb(dark_sw, dark_mode_sw_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+
   /* Separador */
   lv_obj_t *scr_sep = lv_label_create(tab_ui);
   lv_label_set_text(scr_sep, "Screensaver:");
@@ -2585,6 +2610,8 @@ void ui_app_run(bool sd_mounted, bool splash_active) {
       app_settings_sync_config_file_to_sd();
     }
   }
+
+  ui_theme_apply(app_settings_dark_mode());
 
   create_main_screen();
   create_wifi_screen();

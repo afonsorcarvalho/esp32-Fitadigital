@@ -697,6 +697,14 @@ bool app_settings_set_settings_pin(const char *pin) {
   return true;
 }
 
+bool app_settings_dark_mode(void) {
+  return s_prefs.getBool("dark", false);
+}
+
+void app_settings_set_dark_mode(bool on) {
+  s_prefs.putBool("dark", on);
+}
+
 bool app_settings_screensaver_enabled(void) {
   return s_prefs.getBool("scr_on", true);
 }

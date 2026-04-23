@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- FitaDigital UI Mockup: PIN Modal -->
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="480">
+<rect x="0" y="0" width="800" height="480" fill="#12162a" rx="0"/>
+<rect x="0" y="0" width="800" height="480" fill="#0a0d16" rx="0"/>
+<rect x="0" y="0" width="800" height="52" fill="#0c1020" rx="0"/>
+<line x1="0" y1="52" x2="800" y2="52" stroke="#00b473" stroke-width="2"/>
+<text x="400" y="34" font-size="22" font-weight="bold" fill="#eaf0fa" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif">FitaDigital</text>
+<path d="M19 28 A14 14 0 0 1 33 28" fill="none" stroke="#00b473" stroke-width="2.5"/>
+<path d="M22 32 A8 8 0 0 1 30 32" fill="none" stroke="#00b473" stroke-width="2.5"/>
+<circle cx="26" cy="35" r="2" fill="#00b473"/>
+<text x="722" y="33" font-size="15" font-weight="normal" fill="#8c9baf" text-anchor="start" font-family="Segoe UI,Arial,sans-serif">14:23</text>
+<rect x="0" y="0" width="800" height="480" fill="rgba(0,0,0,0.6)"/>
+<rect x="220" y="100" width="360" height="278" fill="#16203a" rx="12" stroke="#00b473" stroke-width="2"/>
+<text x="400" y="134" font-size="20" font-weight="bold" fill="#eaf0fa" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif">PIN de Acesso</text>
+<text x="400" y="158" font-size="13" font-weight="normal" fill="#8c9baf" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif">Introduza o PIN de 4 dígitos</text>
+<rect x="263" y="190" width="58" height="66" fill="#19202f" rx="7" stroke="#00b473" stroke-width="2"/>
+<text x="292" y="233" font-size="28" font-weight="bold" fill="#eaf0fa" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif">1</text>
+<rect x="335" y="190" width="58" height="66" fill="#19202f" rx="7" stroke="#00b473" stroke-width="2"/>
+<text x="364" y="233" font-size="28" font-weight="bold" fill="#eaf0fa" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif">2</text>
+<rect x="407" y="190" width="58" height="66" fill="#19202f" rx="7" stroke="#00b473" stroke-width="2"/>
+<text x="436" y="233" font-size="28" font-weight="bold" fill="#eaf0fa" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif">3</text>
+<rect x="479" y="190" width="58" height="66" fill="#19202f" rx="7" stroke="#00b473" stroke-width="2"/>
+<text x="508" y="233" font-size="28" font-weight="bold" fill="#eaf0fa" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif">4</text>
+<rect x="240" y="324" width="140" height="40" fill="#232d41" rx="7"/>
+<text x="310" y="350" font-size="15" font-weight="normal" fill="#ffffff" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif">Cancelar</text>
+<rect x="420" y="324" width="140" height="40" fill="#00a064" rx="7"/>
+<text x="490" y="350" font-size="15" font-weight="normal" fill="#ffffff" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif">Confirmar</text>
+</svg>

@@ -71,6 +71,10 @@ String app_settings_settings_pin(void);
  */
 bool   app_settings_set_settings_pin(const char *pin);
 
+/** Modo dark: true = tema escuro LVGL, false = claro. Default false. */
+bool app_settings_dark_mode(void);
+void app_settings_set_dark_mode(bool on);
+
 /** Screensaver: on/off e timeout em segundos (10-300, default 60). */
 bool app_settings_screensaver_enabled(void);
 void app_settings_set_screensaver_enabled(bool on);

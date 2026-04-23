@@ -1,0 +1,4 @@
+flask>=3.0
+cryptography>=42.0
+qrcode[pil]>=7.4
+requests>=2.31
