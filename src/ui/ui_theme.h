@@ -43,3 +43,6 @@
 #define UI_COLOR_BOOT_STEP_IDLE  lv_color_hex(0x669988)
 #define UI_COLOR_BOOT_DOTS       lv_color_hex(0x508878)
 #define UI_COLOR_BOOT_FOOTER     lv_color_hex(0x558877)
+
+/* Text viewer — gutter (line-number column) */
+#define UI_COLOR_VIEWER_GUTTER_BG lv_color_hex(0xEEEEEE) /* light gray, full-cell background */

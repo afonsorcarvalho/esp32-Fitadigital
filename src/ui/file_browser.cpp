@@ -150,6 +150,9 @@ static bool s_highlight_on = false;
 static constexpr lv_coord_t kViewerBtnColW = 62;
 static constexpr lv_coord_t kViewerBtnH = 48;
 static constexpr lv_coord_t kViewerBtnPad = 6;
+/** Largura fixa da coluna de numeracao de linhas (gutter).
+ *  Suficiente para 4 digitos (9999) com a fonte monospace + padding, sem layout shift. */
+static constexpr lv_coord_t kViewerGutterW = 56;
 
 static constexpr intptr_t kViewerNavUp = 1;
 static constexpr intptr_t kViewerNavDown = 2;
@@ -568,12 +571,11 @@ static void viewer_table_fit_width(lv_obj_t *table) {
     return;
   }
   lv_coord_t cw = lv_obj_get_content_width(table);
-  const lv_coord_t num_w = 96;
-  if (cw < num_w + 48) {
+  if (cw < kViewerGutterW + 48) {
     return;
   }
-  lv_table_set_col_width(table, 0, num_w);
-  lv_table_set_col_width(table, 1, cw - num_w);
+  lv_table_set_col_width(table, 0, kViewerGutterW);
+  lv_table_set_col_width(table, 1, cw - kViewerGutterW);
 }
 
 static void viewer_table_on_size_cb(lv_event_t *e) {
@@ -1058,25 +1060,40 @@ static void viewer_scroll_event_cb(lv_event_t *e) {
  * Posiciona o visualizador na ultima pagina (equivalente ao botao Fim na barra lateral).
  */
 /**
- * Draw event no table: pinta fundo da linha s_highlight_row (coluna 0 e 1)
- * quando s_highlight_on=true, para feedback visual de nova linha RS485.
+ * Draw event no table: gutter (col 0) sempre com fundo cinza claro, texto alinhado a direita
+ * e cor muted. Quando s_highlight_on e a linha e s_highlight_row, o highlight amarelo tem
+ * prioridade sobre o fundo do gutter (ambas as colunas ficam amarelas).
  */
 static void viewer_table_draw_part_event_cb(lv_event_t *e) {
   lv_obj_draw_part_dsc_t *dsc = lv_event_get_draw_part_dsc(e);
   if (dsc == nullptr || dsc->part != LV_PART_ITEMS) {
     return;
   }
-  if (s_highlight_row == UINT16_MAX || !s_highlight_on) {
-    return;
-  }
   /* dsc->id = row * col_cnt + col ; col_cnt = 2 */
+  const uint32_t col = dsc->id % 2U;
   const uint32_t row = dsc->id / 2U;
-  if (row != (uint32_t)s_highlight_row) {
+
+  /* Highlight piscante RS485 tem prioridade: pinta toda a linha (col 0 e 1) de amarelo. */
+  const bool is_highlight_row = (s_highlight_row != UINT16_MAX && s_highlight_on &&
+                                  row == (uint32_t)s_highlight_row);
+  if (is_highlight_row) {
+    if (dsc->rect_dsc != nullptr) {
+      dsc->rect_dsc->bg_color = lv_color_hex(0xFFEB3B); /* amarelo highlight */
+      dsc->rect_dsc->bg_opa = LV_OPA_COVER;
+    }
     return;
   }
-  if (dsc->rect_dsc != nullptr) {
-    dsc->rect_dsc->bg_color = lv_color_hex(0xFFEB3B); /* amarelo highlight */
-    dsc->rect_dsc->bg_opa = LV_OPA_COVER;
+
+  /* Gutter (col 0): fundo cinza claro + texto muted alinhado a direita. */
+  if (col == 0U) {
+    if (dsc->rect_dsc != nullptr) {
+      dsc->rect_dsc->bg_color = UI_COLOR_VIEWER_GUTTER_BG;
+      dsc->rect_dsc->bg_opa = LV_OPA_COVER;
+    }
+    if (dsc->label_dsc != nullptr) {
+      dsc->label_dsc->color = UI_COLOR_TEXT_MUTED;
+      dsc->label_dsc->align = LV_TEXT_ALIGN_RIGHT;
+    }
   }
 }
 

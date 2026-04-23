@@ -4,11 +4,12 @@
 
 ## Pendente
 
-- Text viewer: coluna de numeracao de linhas — largura fixa p/ 4 digitos, fundo cinza claro em toda a celula.
+- Nova Feature de gravação por OTA via wifi
 - Modal de entrada de senha: ao clicar "ok", mostrar spinner de carregando ate validacao concluir (sucesso ou erro).
 - Spinner em cima do botao (feedback de clique reconhecido) nos botoes "Abrir ciclo de hoje" e "Ver historico".
 
 ## Feito
+- 2026-04-22 — Text viewer: coluna de numeracao de linhas — largura fixa (kViewerGutterW=56px) p/ 4 digitos, fundo cinza claro (UI_COLOR_VIEWER_GUTTER_BG) em toda a celula, texto alinhado a direita, cor muted; highlight piscante RS485 com prioridade. Novo token ui_theme.h. Bump v1.09.
 - 2026-04-22 — Tokens de tema centralizados (ui_theme.h): audit de cores, novos tokens UI_COLOR_PRIMARY_DARKER e UI_COLOR_BOOT_*, substituicao em 7 ficheiros. Bump v1.08.
 - 2026-04-22 — Trocar senha de configuracao pela aba Scr (UI + NVS): modal teclado alfanumerico 4-16 chars, fluxo senha-actual->nova->confirmar, persistencia NVS (pin_sett), validacao tamanho. Bump v1.07.
 - 2026-04-22 — Jump-to-line no viewer: botao GPS abre modal com textarea numerica + teclado LVGL, valida 1..s_total_lines, scroll animado ou recarrega janela se fora. Bump v1.06.
