@@ -42,7 +42,7 @@ h2{font-size:1rem;margin:0 0 12px}
 <circle cx="20" cy="20" r="8" fill="#22c55e"/>
 <circle cx="35" cy="20" r="8" fill="#22c55e"/>
 <circle cx="50" cy="20" r="8" fill="#22c55e"/>
-<text x="60" y="26" font-family="system-ui" font-size="12" fill="#22c55e" font-weight="bold">AFR</text>
+<text x="60" y="28" font-family="system-ui" font-size="18" fill="#22c55e" font-weight="bold" text-anchor="middle">AFR</text>
 </svg><h1>FitaDigital</h1><nav>
 <button type="button" class="on" data-p="cfg">Config</button>
 <button type="button" data-p="log">Logs</button>
