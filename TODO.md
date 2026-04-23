@@ -1,12 +1,12 @@
 # TODO — FitaDigital (ESP32-S3-Touch-LCD-4.3B)
 
 ## Em curso
-- 2026-04-23 — Feedback LVGL para OTA via web: modal com progresso 0-100% durante upload HTTP; texto "OTA via HTTP..." + progresso; "Flash OK!" ou "Erro: ..." no final; integrar com handler web_portal.cpp via callback ou variável partilhada.
 
 ## Pendente
 - Fazer modo dark, configuração aba Scr, persistencia no NVS
 
 ## Feito
+- 2026-04-23 — Feedback LVGL para OTA HTTP: timer 500ms mostra toasts em tempo real durante upload .bin via browser — "OTA HTTP: XX%" durante upload, "OK! A reiniciar..." no final com reboot automático em 2s, ou "erro: ..." se falhar. Integração via std::atomic em ota_manager.cpp (thread-safe entre async_tcp core 0 e LVGL core 1). Handler web_portal.cpp chama ota_http_*() em cada fase. Timer criado em ui_app_run(). Commit 54cb4a1.
 - 2026-04-23 — Logo AFR no portal web: logo verde dark (9.8KB PNG) embutida em data URI base64 no header HTML; altura 32px responsiva; exibida ao lado de "FitaDigital". Build + flash sucesso.
 - 2026-04-23 — Dashboard web OTA (HTTP upload .bin): aba "OTA" no portal web (porta 80); input file .bin + botao "Enviar e Flashar"; progresso bar durante upload (XHR onprogress); endpoint POST /api/ota/upload multipart/form-data; integra classe Arduino Update (independente de ArduinoOTA); reboot automatico apos sucesso; response JSON {"ok":true/false, "error":"..."}. Código em web_portal.cpp (handlers + registar endpoint) e web_portal_html.h (painel + JS doUpload). Build sucesso, flash sucesso, endpoint testado. Sem bump versão (feature menor, sem mudança NVS/LVGL).
 - 2026-04-22 — OTA via WiFi (ArduinoOTA push): aba "Sistema" nas Definicoes; botao Activar OTA inicia escuta ArduinoOTA; barra de progresso LVGL 0-100%; reboot automatico apos sucesso; erro apresentado na UI; ota_manager.cpp/h novo modulo; loop integrado em net_services; bump v1.11. Flashado e verificado estavel.
