@@ -205,6 +205,9 @@ $("btnFsGo").onclick=loadFs;
 function doUpload(){
 var f=$("fw-file").files[0];
 if(!f){$("otaMsg").innerHTML='<div class="msg err">Selecione um ficheiro .bin</div>';return;}
+$("otaMsg").innerHTML='<div class="msg ok">Enviando '+f.name+' ('+Math.round(f.size/1024)+'KB)...</div>';
+$("fw-prog").style.display="";
+$("fw-btn").disabled=true;
 var form=new FormData();form.append("firmware",f);
 var xhr=new XMLHttpRequest();
 xhr.open("POST","/api/ota/upload");
@@ -213,17 +216,17 @@ if(e.lengthComputable){
 var pct=Math.round(e.loaded*100/e.total);
 $("fw-bar").value=pct;
 $("fw-pct").textContent=pct+"%";
+if(pct===100)$("otaMsg").innerHTML='<div class="msg ok">Upload concluido, a processar...</div>';
 }
 };
 xhr.onload=function(){
 try{var d=JSON.parse(xhr.responseText);
-if(d.ok){$("otaMsg").innerHTML='<div class="msg ok">Flash OK! A reiniciar...</div>';}
-else{$("otaMsg").innerHTML='<div class="msg err">Erro: '+(d.error||"desconhecido")+'</div>';}
-}catch(e){$("otaMsg").innerHTML='<div class="msg ok">Flash OK! (device reiniciou)</div>';}
+if(d.ok){$("otaMsg").innerHTML='<div class="msg ok">Flash OK! A reiniciar em 2s...</div>';}
+else{$("otaMsg").innerHTML='<div class="msg err">Erro servidor: '+(d.error||"desconhecido")+'</div>';$("fw-btn").disabled=false;}
+}catch(e){$("otaMsg").innerHTML='<div class="msg ok">Flash OK! Device a reiniciar...</div>';}
 };
-xhr.onerror=function(){$("otaMsg").innerHTML='<div class="msg ok">Flash OK! (device reiniciou)</div>';};
-$("fw-prog").style.display="";
-$("fw-btn").disabled=true;
+xhr.onerror=function(){$("otaMsg").innerHTML='<div class="msg ok">Conexao perdida (normal apos reboot). Flash OK!</div>';};
+xhr.ontimeout=function(){$("otaMsg").innerHTML='<div class="msg err">Timeout — tente novamente</div>';$("fw-btn").disabled=false;};
 xhr.send(form);
 }
 loadCfg();

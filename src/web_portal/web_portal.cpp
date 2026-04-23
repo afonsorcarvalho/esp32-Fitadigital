@@ -572,12 +572,12 @@ static void handle_ota_upload_request(AsyncWebServerRequest *request)
 {
     if (Update.hasError()) {
         String err = Update.errorString();
+        app_log_writef("ERROR", "OTA HTTP: resposta erro: %s", err.c_str());
         request->send(500, "application/json",
                       "{\"ok\":false,\"error\":\"" + err + "\"}");
     } else {
+        app_log_writef("INFO", "OTA HTTP: flash completo, reboot em 500ms");
         request->send(200, "application/json", "{\"ok\":true}");
-    }
-    if (!Update.hasError()) {
         delay(500);
         ESP.restart();
     }
