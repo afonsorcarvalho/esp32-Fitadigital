@@ -3,8 +3,17 @@
 ## Em curso
 
 ## Pendente
+- Commit das mudancas v1.13..v1.17 + archive script + svg_to_lvgl (branch main tem diff por commitar).
+- Organizar `SoftwareQualification_*.docx` (3 versoes untracked na raiz): mover para pasta dedicada ou adicionar ao `.gitignore`.
 
 ## Feito
+- 2026-04-23 — Politica `firmware_versions/`: adicionado ao `.gitignore` (binarios reproduziveis do source, evita bloat do repo). Distribuicao externa fica com releases/OTA, nao com git. Docs untracked ja estavam commitados em sessao anterior (nao havia acao pendente real).
+- 2026-04-23 — Botao "Trocar senha" movido da aba Scr para a aba Sistema nas Definicoes (mais logico: sistema agrupa configuracoes de seguranca/OTA). Bump v1.17.
+- 2026-04-23 — Dark mode nos modais (audit fase 2): `ui_pin_entry`, `ui_date_goto`, `ui_wg_enroll`, `ui_share_qr`, e goto-line do file_browser agora usam `ui_color_surface(app_settings_dark_mode())` em vez de `UI_COLOR_WHITE` hardcoded. Splash skip (transient, antes do theme settle). Bump v1.16.
+- 2026-04-23 — Logo AFR dashboard regerada a partir de SVG (nitidez superior): novo `tools/svg_to_lvgl.py` (svglib+reportlab+Pillow) rasteriza SVG com oversample 4x, aplica white→alpha preservando antialias, downsample LANCZOS para tamanho alvo, delega a `png_to_lvgl.py`. `AFR LOGO.svg` → `src/ui/afr_logo_verde.c` (120x37, LV_IMG_CF_TRUE_COLOR_ALPHA). Bump v1.15.
+- 2026-04-23 — Archive automatico de firmware por versao: post-script PlatformIO `tools/save_firmware_version.py` copia `.pio/.../firmware.bin` → `firmware_versions/FitaDigital_v<VER>.bin` a cada build. Registado em `extra_scripts = post:...` no platformio.ini. Backfill v1.14 gerado.
+- 2026-04-23 — Fix dark mode no viewer (file_browser): gutter de numeracao de linhas agora usa bg dark-aware (`UI_COLOR_VIEWER_GUTTER_BG_DARK` #1E1E1E). Helper `ui_color_viewer_gutter_bg(dark)` em ui_theme.h. Bump v1.14.
+- 2026-04-23 — Fix dark mode nos cards do dashboard: bg e border usam helpers dark-aware (`ui_color_surface(dark)`, `ui_color_border(dark)`). Toggle dark faz rebuild do dashboard (cards tem estilo local que o tema LVGL nao sobrepoe sozinho). Novos tokens UI_COLOR_SURFACE_DARK (#2A2A2A) + UI_COLOR_BORDER_DARK (#444). Bump v1.13.
 - 2026-04-23 — Modo dark: toggle aba Scr, persistencia NVS (key `dark`, default false), aplica lv_theme_default_init(dark) ao boot e ao mudar. Bump v1.12.
 - 2026-04-23 — Feedback LVGL para OTA HTTP: timer 500ms mostra toasts em tempo real durante upload .bin via browser — "OTA HTTP: XX%" durante upload, "OK! A reiniciar..." no final com reboot automático em 2s, ou "erro: ..." se falhar. Integração via std::atomic em ota_manager.cpp (thread-safe entre async_tcp core 0 e LVGL core 1). Handler web_portal.cpp chama ota_http_*() em cada fase. Timer criado em ui_app_run(). Commit 54cb4a1.
 - 2026-04-23 — Logo AFR no portal web: logo verde dark (9.8KB PNG) embutida em data URI base64 no header HTML; altura 32px responsiva; exibida ao lado de "FitaDigital". Build + flash sucesso.

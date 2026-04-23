@@ -353,7 +353,7 @@ static void goto_line_open_modal(void) {
   lv_obj_set_height(modal, LV_SIZE_CONTENT);
   lv_obj_set_style_max_height(modal, scr_h - 20, 0);
   lv_obj_center(modal);
-  lv_obj_set_style_bg_color(modal, UI_COLOR_WHITE, 0);
+  lv_obj_set_style_bg_color(modal, ui_color_surface(app_settings_dark_mode()), 0);
   lv_obj_set_style_radius(modal, 12, 0);
   lv_obj_set_style_pad_all(modal, 16, 0);
   lv_obj_set_style_pad_row(modal, 10, 0);
@@ -1087,7 +1087,7 @@ static void viewer_table_draw_part_event_cb(lv_event_t *e) {
   /* Gutter (col 0): fundo cinza claro + texto muted alinhado a direita. */
   if (col == 0U) {
     if (dsc->rect_dsc != nullptr) {
-      dsc->rect_dsc->bg_color = UI_COLOR_VIEWER_GUTTER_BG;
+      dsc->rect_dsc->bg_color = ui_color_viewer_gutter_bg(app_settings_dark_mode());
       dsc->rect_dsc->bg_opa = LV_OPA_COVER;
     }
     if (dsc->label_dsc != nullptr) {

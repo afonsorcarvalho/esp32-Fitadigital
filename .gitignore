@@ -38,6 +38,10 @@ Thumbs.db
 # Registos e saídas locais de teste
 *.log
 
+# Firmware binaries arquivados por versao (tools/save_firmware_version.py).
+# Nao versionar: reproduziveis a partir do source + FITADIGITAL_VERSION.
+firmware_versions/
+
 # Relatórios / exports de texto colocados por engano na raiz do firmware (ex.: autoclave)
 119_*.txt
 

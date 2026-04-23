@@ -10,6 +10,7 @@
 #include <lvgl.h>
 #include <time.h>
 #include "ui_theme.h"
+#include "app_settings.h"
 
 namespace {
 
@@ -139,7 +140,7 @@ void ui_date_goto_show(void) {
   lv_obj_set_height(s_modal, LV_SIZE_CONTENT);
   lv_obj_set_style_max_height(s_modal, scr_h - 20, 0); /* nunca ultrapassa o ecra */
   lv_obj_center(s_modal);
-  lv_obj_set_style_bg_color(s_modal, UI_COLOR_WHITE, 0);
+  lv_obj_set_style_bg_color(s_modal, ui_color_surface(app_settings_dark_mode()), 0);
   lv_obj_set_style_radius(s_modal, 12, 0);
   lv_obj_set_style_pad_all(s_modal, 16, 0);
   lv_obj_set_style_pad_row(s_modal, 12, 0);

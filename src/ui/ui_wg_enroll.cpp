@@ -14,6 +14,7 @@
 #include <lvgl.h>
 #include <string.h>
 #include "ui_theme.h"
+#include "app_settings.h"
 
 namespace {
 
@@ -225,7 +226,7 @@ void ui_wg_enroll_open(const char *server_url) {
     s_modal = lv_obj_create(s_bg);
     lv_obj_set_size(s_modal, (lv_coord_t)(scr_w - 40), (lv_coord_t)(scr_h - 40));
     lv_obj_center(s_modal);
-    lv_obj_set_style_bg_color(s_modal, UI_COLOR_WHITE, 0);
+    lv_obj_set_style_bg_color(s_modal, ui_color_surface(app_settings_dark_mode()), 0);
     lv_obj_set_style_bg_opa(s_modal, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(s_modal, 12, 0);
     lv_obj_set_style_pad_all(s_modal, 14, 0);

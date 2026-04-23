@@ -388,9 +388,10 @@ static lv_obj_t *dashboard_make_card(lv_obj_t *row, const char *icon, const char
   lv_obj_set_flex_grow(card, 1);
   lv_obj_set_height(card, LV_SIZE_CONTENT);
   lv_obj_set_style_radius(card, 8, 0);
+  bool dark = app_settings_dark_mode();
   lv_obj_set_style_border_width(card, 1, 0);
-  lv_obj_set_style_border_color(card, UI_COLOR_BORDER, 0);
-  lv_obj_set_style_bg_color(card, UI_COLOR_SURFACE, 0);
+  lv_obj_set_style_border_color(card, ui_color_border(dark), 0);
+  lv_obj_set_style_bg_color(card, ui_color_surface(dark), 0);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
   lv_obj_set_style_pad_all(card, 8, 0);
   lv_obj_set_style_pad_row(card, 2, 0);
@@ -915,6 +916,12 @@ static void dark_mode_sw_cb(lv_event_t *e) {
   bool on = lv_obj_has_state(sw, LV_STATE_CHECKED);
   app_settings_set_dark_mode(on);
   ui_theme_apply(on);
+  /* Cards do dashboard tem bg/border locais (override ao tema); rebuild p/ reaplicar cores. */
+  if (s_main_view == MainView::Dashboard && s_main_content != nullptr) {
+    dashboard_detach_stale_widgets();
+    lv_obj_clean(s_main_content);
+    dashboard_build(s_main_content);
+  }
 }
 
 static void scr_timeout_sl_cb(lv_event_t *e) {
@@ -2412,18 +2419,6 @@ static void create_settings_screen(void) {
   lv_slider_set_value(s_scr_timeout_sl, (int)app_settings_screensaver_timeout(), LV_ANIM_OFF);
   lv_obj_add_event_cb(s_scr_timeout_sl, scr_timeout_sl_cb, LV_EVENT_VALUE_CHANGED, nullptr);
 
-  /* Separador + botao trocar PIN de acesso */
-  lv_obj_t *pin_sep = lv_label_create(tab_ui);
-  lv_label_set_text(pin_sep, "Senha de acesso:");
-
-  lv_obj_t *pin_btn = lv_btn_create(tab_ui);
-  lv_obj_set_width(pin_btn, LV_PCT(100));
-  lv_obj_set_style_bg_color(pin_btn, UI_COLOR_PRIMARY, 0);
-  lv_obj_t *pin_lbl = lv_label_create(pin_btn);
-  lv_label_set_text(pin_lbl, LV_SYMBOL_SETTINGS " Trocar senha");
-  lv_obj_center(pin_lbl);
-  lv_obj_add_event_cb(pin_btn, pin_change_btn_cb, LV_EVENT_CLICKED, nullptr);
-
   /* --- Aba Sistema (OTA via ArduinoOTA push) --- */
   lv_obj_t *tab_sistema = lv_tabview_add_tab(tv, LV_SYMBOL_UPLOAD " Sistema");
   lv_obj_set_layout(tab_sistema, LV_LAYOUT_FLEX);
@@ -2480,6 +2475,18 @@ static void create_settings_screen(void) {
   lv_obj_center(ota_stop_lbl);
   lv_obj_add_state(s_ota_stop_btn, LV_STATE_DISABLED);
   lv_obj_add_event_cb(s_ota_stop_btn, ota_stop_btn_cb, LV_EVENT_CLICKED, nullptr);
+
+  /* Separador + botao trocar PIN de acesso (movido de Scr) */
+  lv_obj_t *pin_sep = lv_label_create(tab_sistema);
+  lv_label_set_text(pin_sep, "Senha de acesso:");
+
+  lv_obj_t *pin_btn = lv_btn_create(tab_sistema);
+  lv_obj_set_width(pin_btn, LV_PCT(100));
+  lv_obj_set_style_bg_color(pin_btn, UI_COLOR_PRIMARY, 0);
+  lv_obj_t *pin_lbl = lv_label_create(pin_btn);
+  lv_label_set_text(pin_lbl, LV_SYMBOL_SETTINGS " Trocar senha");
+  lv_obj_center(pin_lbl);
+  lv_obj_add_event_cb(pin_btn, pin_change_btn_cb, LV_EVENT_CLICKED, nullptr);
 
   lv_obj_t *sett_tab_btns = lv_tabview_get_tab_btns(tv);
   lv_obj_add_event_cb(sett_tab_btns, settings_tab_btns_cb, LV_EVENT_VALUE_CHANGED, nullptr);

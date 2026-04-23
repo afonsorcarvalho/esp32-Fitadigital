@@ -157,7 +157,7 @@ void show_modal(const char *title_text) {
   lv_obj_set_width(modal, scr_w - 40);
   lv_obj_set_height(modal, LV_SIZE_CONTENT);
   lv_obj_align(modal, LV_ALIGN_TOP_MID, 0, 16);
-  lv_obj_set_style_bg_color(modal, UI_COLOR_WHITE, 0);
+  lv_obj_set_style_bg_color(modal, ui_color_surface(app_settings_dark_mode()), 0);
   lv_obj_set_style_radius(modal, 12, 0);
   lv_obj_set_style_pad_all(modal, 16, 0);
   lv_obj_set_style_pad_row(modal, 12, 0);

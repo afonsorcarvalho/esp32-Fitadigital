@@ -101,7 +101,7 @@ void ui_share_qr_show(const char *path) {
   s_modal = lv_obj_create(s_modal_bg);
   lv_obj_set_size(s_modal, 360, 440);
   lv_obj_center(s_modal);
-  lv_obj_set_style_bg_color(s_modal, UI_COLOR_WHITE, 0);
+  lv_obj_set_style_bg_color(s_modal, ui_color_surface(app_settings_dark_mode()), 0);
   lv_obj_set_style_bg_opa(s_modal, LV_OPA_COVER, 0);
   lv_obj_set_style_radius(s_modal, 12, 0);
   lv_obj_set_style_pad_all(s_modal, 16, 0);

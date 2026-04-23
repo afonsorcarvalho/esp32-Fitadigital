@@ -35,8 +35,19 @@ static inline void ui_theme_apply(bool dark) {
 
 /* Surfaces */
 #define UI_COLOR_SURFACE         lv_color_hex(0xFAFAFA)
+#define UI_COLOR_SURFACE_DARK    lv_color_hex(0x2A2A2A)
+#define UI_COLOR_BORDER_DARK     lv_color_hex(0x444444)
 #define UI_COLOR_WHITE           lv_color_hex(0xFFFFFF)
 #define UI_COLOR_BLACK           lv_color_hex(0x000000)
+
+/** Surface color sensivel ao tema (dark/light). */
+static inline lv_color_t ui_color_surface(bool dark) {
+  return dark ? UI_COLOR_SURFACE_DARK : UI_COLOR_SURFACE;
+}
+/** Border color sensivel ao tema. */
+static inline lv_color_t ui_color_border(bool dark) {
+  return dark ? UI_COLOR_BORDER_DARK : lv_color_hex(0xCCCCCC);
+}
 
 /* Text / neutral */
 #define UI_COLOR_TEXT_DARK       lv_color_hex(0x333333)
@@ -57,4 +68,9 @@ static inline void ui_theme_apply(bool dark) {
 #define UI_COLOR_BOOT_FOOTER     lv_color_hex(0x558877)
 
 /* Text viewer — gutter (line-number column) */
-#define UI_COLOR_VIEWER_GUTTER_BG lv_color_hex(0xEEEEEE) /* light gray, full-cell background */
+#define UI_COLOR_VIEWER_GUTTER_BG      lv_color_hex(0xEEEEEE) /* light gray, full-cell background */
+#define UI_COLOR_VIEWER_GUTTER_BG_DARK lv_color_hex(0x1E1E1E) /* dark variant */
+
+static inline lv_color_t ui_color_viewer_gutter_bg(bool dark) {
+  return dark ? UI_COLOR_VIEWER_GUTTER_BG_DARK : UI_COLOR_VIEWER_GUTTER_BG;
+}
