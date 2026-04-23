@@ -31,6 +31,7 @@
 #include "ui/ui_pin_entry.h"
 #include "ui/ui_wg_enroll.h"
 #include "ui/ui_theme.h"
+#include "ota_manager.h"
 
 static constexpr int kStatusBarH = 46;
 
@@ -102,6 +103,13 @@ static lv_obj_t *s_log_info_lbl = nullptr;
 static lv_obj_t *s_sd_format_status_lbl = nullptr;
 static lv_obj_t *s_sd_format_confirm_btn = nullptr;
 static bool s_sd_format_armed = false;
+
+/** Aba Sistema (OTA): botao, barra de progresso, label de estado. */
+static lv_obj_t *s_ota_status_lbl  = nullptr;
+static lv_obj_t *s_ota_bar         = nullptr;
+static lv_obj_t *s_ota_start_btn   = nullptr;
+static lv_obj_t *s_ota_stop_btn    = nullptr;
+static lv_timer_t *s_ota_ui_timer  = nullptr;
 
 static lv_timer_t *s_status_timer = nullptr;
 
@@ -1304,10 +1312,11 @@ static void settings_hide_wg_keyboard(void) {
 }
 
 /** Indices usados para ocultar teclados ao trocar de aba. */
-static constexpr uint32_t kSettingsTabWifi = 0;
-static constexpr uint32_t kSettingsTabFtp = 1;
-static constexpr uint32_t kSettingsTabTime = 2;
-static constexpr uint32_t kSettingsTabWg = 3;
+static constexpr uint32_t kSettingsTabWifi    = 0;
+static constexpr uint32_t kSettingsTabFtp     = 1;
+static constexpr uint32_t kSettingsTabTime    = 2;
+static constexpr uint32_t kSettingsTabWg      = 3;
+static constexpr uint32_t kSettingsTabSistema = 8; /* RS485=4, Logs=5, SD=6, Scr.=7, Sistema=8 */
 
 /** Ao mudar de aba, esconde teclados dos formularios que deixam de estar visiveis. */
 static void settings_tab_btns_cb(lv_event_t *e) {
@@ -1639,6 +1648,92 @@ static void settings_save_rs485_cb(lv_event_t *e) {
   } else {
     ui_toast_show(ToastKind::Warn, "Guardado na NVS. Monte o SD para aplicar");
   }
+}
+
+
+/* ─── OTA UI callbacks & timer ────────────────────────────────────────────── */
+
+/** Actualiza barra + label de progresso a partir do estado do ota_manager. */
+static void ota_ui_timer_cb(lv_timer_t * /*t*/) {
+  if (s_ota_status_lbl == nullptr || s_ota_bar == nullptr) {
+    return;
+  }
+  const OtaState state  = ota_manager_state();
+  const uint8_t  pct    = ota_manager_progress();
+
+  switch (state) {
+    case OtaState::IDLE:
+      lv_label_set_text(s_ota_status_lbl, "Inativo");
+      lv_bar_set_value(s_ota_bar, 0, LV_ANIM_OFF);
+      if (s_ota_start_btn != nullptr) lv_obj_clear_state(s_ota_start_btn, LV_STATE_DISABLED);
+      if (s_ota_stop_btn  != nullptr) lv_obj_add_state(s_ota_stop_btn, LV_STATE_DISABLED);
+      break;
+    case OtaState::LISTENING:
+      lv_label_set_text(s_ota_status_lbl, LV_SYMBOL_WIFI " A aguardar push (espota.py / IDE)...");
+      lv_bar_set_value(s_ota_bar, 0, LV_ANIM_OFF);
+      if (s_ota_start_btn != nullptr) lv_obj_add_state(s_ota_start_btn, LV_STATE_DISABLED);
+      if (s_ota_stop_btn  != nullptr) lv_obj_clear_state(s_ota_stop_btn, LV_STATE_DISABLED);
+      break;
+    case OtaState::RECEIVING: {
+      char buf[48];
+      snprintf(buf, sizeof buf, LV_SYMBOL_DOWNLOAD " A receber: %u%%", (unsigned)pct);
+      lv_label_set_text(s_ota_status_lbl, buf);
+      lv_bar_set_value(s_ota_bar, (int32_t)pct, LV_ANIM_ON);
+      if (s_ota_start_btn != nullptr) lv_obj_add_state(s_ota_start_btn, LV_STATE_DISABLED);
+      if (s_ota_stop_btn  != nullptr) lv_obj_add_state(s_ota_stop_btn, LV_STATE_DISABLED);
+      break;
+    }
+    case OtaState::DONE:
+      lv_label_set_text(s_ota_status_lbl, LV_SYMBOL_OK " Concluido! A reiniciar em 2 s...");
+      lv_bar_set_value(s_ota_bar, 100, LV_ANIM_OFF);
+      if (s_ota_start_btn != nullptr) lv_obj_add_state(s_ota_start_btn, LV_STATE_DISABLED);
+      if (s_ota_stop_btn  != nullptr) lv_obj_add_state(s_ota_stop_btn, LV_STATE_DISABLED);
+      /* Reboot automatico apos 2 s para dar tempo ao LVGL de redesenhar. */
+      lv_timer_del(s_ota_ui_timer);
+      s_ota_ui_timer = nullptr;
+      lv_timer_create([](lv_timer_t *) { esp_restart(); }, 2000, nullptr);
+      break;
+    case OtaState::ERROR: {
+      char buf[160];
+      snprintf(buf, sizeof buf, LV_SYMBOL_CLOSE " Erro: %s", ota_manager_error_msg());
+      lv_label_set_text(s_ota_status_lbl, buf);
+      lv_bar_set_value(s_ota_bar, 0, LV_ANIM_OFF);
+      if (s_ota_start_btn != nullptr) lv_obj_clear_state(s_ota_start_btn, LV_STATE_DISABLED);
+      if (s_ota_stop_btn  != nullptr) lv_obj_add_state(s_ota_stop_btn, LV_STATE_DISABLED);
+      break;
+    }
+  }
+}
+
+static void ota_start_btn_cb(lv_event_t * /*e*/) {
+  if (WiFi.status() != WL_CONNECTED) {
+    ui_toast_show(ToastKind::Warn, "Wi-Fi nao ligado. Ligue primeiro.");
+    return;
+  }
+  if (!ota_manager_start()) {
+    ui_toast_show(ToastKind::Error, ota_manager_error_msg());
+    return;
+  }
+  if (s_ota_ui_timer == nullptr) {
+    s_ota_ui_timer = lv_timer_create(ota_ui_timer_cb, 500, nullptr);
+  }
+  ui_toast_show(ToastKind::Info, LV_SYMBOL_WIFI " OTA ativo. Use espota.py ou IDE para enviar.");
+}
+
+static void ota_stop_btn_cb(lv_event_t * /*e*/) {
+  ota_manager_stop();
+  if (s_ota_ui_timer != nullptr) {
+    lv_timer_del(s_ota_ui_timer);
+    s_ota_ui_timer = nullptr;
+  }
+  if (s_ota_status_lbl != nullptr) {
+    lv_label_set_text(s_ota_status_lbl, "Inativo");
+  }
+  if (s_ota_bar != nullptr) {
+    lv_bar_set_value(s_ota_bar, 0, LV_ANIM_OFF);
+  }
+  if (s_ota_start_btn != nullptr) lv_obj_clear_state(s_ota_start_btn, LV_STATE_DISABLED);
+  if (s_ota_stop_btn  != nullptr) lv_obj_add_state(s_ota_stop_btn, LV_STATE_DISABLED);
 }
 
 /**
@@ -2274,6 +2369,63 @@ static void create_settings_screen(void) {
   lv_label_set_text(pin_lbl, LV_SYMBOL_SETTINGS " Trocar senha");
   lv_obj_center(pin_lbl);
   lv_obj_add_event_cb(pin_btn, pin_change_btn_cb, LV_EVENT_CLICKED, nullptr);
+
+  /* --- Aba Sistema (OTA via ArduinoOTA push) --- */
+  lv_obj_t *tab_sistema = lv_tabview_add_tab(tv, LV_SYMBOL_UPLOAD " Sistema");
+  lv_obj_set_layout(tab_sistema, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(tab_sistema, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(tab_sistema, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_all(tab_sistema, 8, 0);
+  lv_obj_set_style_pad_row(tab_sistema, 10, 0);
+
+  lv_obj_t *ota_help = lv_label_create(tab_sistema);
+  lv_label_set_long_mode(ota_help, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(ota_help, LV_PCT(100));
+  lv_label_set_text(ota_help,
+      "Gravacao OTA via Wi-Fi (ArduinoOTA push).\n"
+      "Requer Wi-Fi ligado. Apos ativar, use:\n"
+      "  espota.py -i <IP> -f firmware.bin\n"
+      "ou o IDE com porta de rede fitadigital.");
+  lv_obj_t *ota_version_lbl = lv_label_create(tab_sistema);
+  lv_label_set_text_fmt(ota_version_lbl, "Versao atual: " FITADIGITAL_VERSION);
+
+  s_ota_status_lbl = lv_label_create(tab_sistema);
+  lv_label_set_long_mode(s_ota_status_lbl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(s_ota_status_lbl, LV_PCT(100));
+  lv_label_set_text(s_ota_status_lbl, "Inativo");
+
+  s_ota_bar = lv_bar_create(tab_sistema);
+  lv_obj_set_width(s_ota_bar, LV_PCT(100));
+  lv_bar_set_range(s_ota_bar, 0, 100);
+  lv_bar_set_value(s_ota_bar, 0, LV_ANIM_OFF);
+
+  /* Linha de botoes */
+  lv_obj_t *ota_btn_row = lv_obj_create(tab_sistema);
+  lv_obj_set_width(ota_btn_row, LV_PCT(100));
+  lv_obj_set_height(ota_btn_row, LV_SIZE_CONTENT);
+  lv_obj_set_layout(ota_btn_row, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(ota_btn_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(ota_btn_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(ota_btn_row, 0, 0);
+  lv_obj_set_style_pad_column(ota_btn_row, 8, 0);
+  lv_obj_set_style_border_width(ota_btn_row, 0, 0);
+  lv_obj_set_style_bg_opa(ota_btn_row, LV_OPA_TRANSP, 0);
+  lv_obj_clear_flag(ota_btn_row, LV_OBJ_FLAG_SCROLLABLE);
+
+  s_ota_start_btn = lv_btn_create(ota_btn_row);
+  lv_obj_set_style_bg_color(s_ota_start_btn, UI_COLOR_PRIMARY, 0);
+  lv_obj_t *ota_start_lbl = lv_label_create(s_ota_start_btn);
+  lv_label_set_text(ota_start_lbl, LV_SYMBOL_UPLOAD " Activar OTA");
+  lv_obj_center(ota_start_lbl);
+  lv_obj_add_event_cb(s_ota_start_btn, ota_start_btn_cb, LV_EVENT_CLICKED, nullptr);
+
+  s_ota_stop_btn = lv_btn_create(ota_btn_row);
+  lv_obj_set_style_bg_color(s_ota_stop_btn, UI_COLOR_TEXT_MUTED, 0);
+  lv_obj_t *ota_stop_lbl = lv_label_create(s_ota_stop_btn);
+  lv_label_set_text(ota_stop_lbl, LV_SYMBOL_CLOSE " Parar");
+  lv_obj_center(ota_stop_lbl);
+  lv_obj_add_state(s_ota_stop_btn, LV_STATE_DISABLED);
+  lv_obj_add_event_cb(s_ota_stop_btn, ota_stop_btn_cb, LV_EVENT_CLICKED, nullptr);
 
   lv_obj_t *sett_tab_btns = lv_tabview_get_tab_btns(tv);
   lv_obj_add_event_cb(sett_tab_btns, settings_tab_btns_cb, LV_EVENT_VALUE_CHANGED, nullptr);

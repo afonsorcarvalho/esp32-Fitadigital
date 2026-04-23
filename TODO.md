@@ -3,10 +3,10 @@
 ## Em curso
 
 ## Pendente
-
-- Nova Feature de gravação por OTA via wifi
+- Fazer modo dark, configuração aba Scr, persistencia no NVS
 
 ## Feito
+- 2026-04-22 — OTA via WiFi (ArduinoOTA push): aba "Sistema" nas Definicoes; botao Activar OTA inicia escuta ArduinoOTA; barra de progresso LVGL 0-100%; reboot automatico apos sucesso; erro apresentado na UI; ota_manager.cpp/h novo modulo; loop integrado em net_services; bump v1.11. Flashado e verificado estavel.
 - 2026-04-22 — Spinner no modal de entrada de senha (modo Validate): ao clicar "Entrar", desabilita teclado/fundo, mostra lv_spinner centrado, timer 300 ms conclui validacao e fecha modal. Spinner nos botoes "Abrir ciclo de hoje" e "Ver historico": spinner 40x40 sobreposto ao botao, label oculto, botao desabilitado durante acao; restore automatico no final. Bump v1.10.
 - 2026-04-22 — Text viewer: coluna de numeracao de linhas — largura fixa (kViewerGutterW=56px) p/ 4 digitos, fundo cinza claro (UI_COLOR_VIEWER_GUTTER_BG) em toda a celula, texto alinhado a direita, cor muted; highlight piscante RS485 com prioridade. Novo token ui_theme.h. Bump v1.09.
 - 2026-04-22 — Tokens de tema centralizados (ui_theme.h): audit de cores, novos tokens UI_COLOR_PRIMARY_DARKER e UI_COLOR_BOOT_*, substituicao em 7 ficheiros. Bump v1.08.

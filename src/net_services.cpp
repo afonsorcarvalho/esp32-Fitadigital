@@ -15,6 +15,8 @@
 
 #include "net_wireguard.h"
 
+#include "ota_manager.h"
+
 #include <SD.h>
 
 #include <WiFi.h>
@@ -314,6 +316,8 @@ void net_services_loop(void) {
 
 
   net_time_loop();
+
+  ota_manager_loop();
 
   if (s_ftp_suspended) {
     if (s_ftp_running) {
