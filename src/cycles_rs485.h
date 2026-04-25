@@ -3,7 +3,7 @@
  * @brief Leitura RS485 (Serial1) e gravacao de cada linha em /CICLOS/AAAA/MM/AAAAMMDD.txt no SD.
  *
  * Layout de pastas e ficheiro (data local do sistema):
- *   /CICLOS/<ano>/<mes>/<AAAAMMDD>.txt
+ *   /CICLOS/<ano>/<mes>/<AAAOMMDD>.txt
  * Ex.: 13/04/2026 -> /CICLOS/2026/04/20260413.txt
  *
  * Cada linha recebida (terminada em LF ou CR, estilo RS232): grava no ficheiro do dia
@@ -19,12 +19,34 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <time.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /**
  * Preenche o caminho absoluto VFS do ficheiro .txt do dia corrente (hora local).
  * @return false se buffer invalido ou localtime falhou.
  */
 bool cycles_rs485_format_today_path(char *out, size_t out_sz);
+
+/**
+ * Formata o caminho /CICLOS/AAAA/MM/AAAAMMDD.txt a partir de um struct tm local.
+ * Exposto para reutilizacao por rs485_buffer (flush de linhas com timestamps historicos).
+ * @param lt  Estrutura tm ja' preenchida (hora local).
+ * @param out Buffer de destino (minimo 48 bytes).
+ * @param cap Tamanho de out.
+ * @return true se sucesso.
+ */
+bool cycles_rs485_format_path_from_tm(const struct tm *lt, char *out, size_t cap);
+
+/**
+ * Cria /CICLOS, /CICLOS/AAAA e /CICLOS/AAAA/MM se necessario.
+ * Exposto para reutilizacao por rs485_buffer (flush).
+ * Executar apenas no contexto sd_io.
+ */
+void cycles_rs485_mkdirs_for_ym(int year, int month);
 
 /**
  * Ativa ou desativa o sinal a UI para abrir/atualizar o .txt do dia apos cada linha gravada.
@@ -55,3 +77,7 @@ uint32_t cycles_rs485_today_line_count(void);
  * se nenhuma linha foi gravada ainda nesta sessao.
  */
 void cycles_rs485_last_write_hhmmss(char *out, size_t out_sz);
+
+#ifdef __cplusplus
+}
+#endif

@@ -2,11 +2,15 @@
 
 ## Em curso
 
+
 ## Pendente
 - Commit das mudancas v1.13..v1.17 + archive script + svg_to_lvgl (branch main tem diff por commitar).
 - Organizar `SoftwareQualification_*.docx` (3 versoes untracked na raiz): mover para pasta dedicada ou adicionar ao `.gitignore`.
 
 ## Feito
+- 2026-04-25 — v1.35: fix TOCTOU race SD hotplug vs LVGL timer — sd_access_sync em dashboard_refresh_values (totalBytes/usedBytes), sd_access_set_mounted(false) antes de SD.end() no ramo remove, remover SD.end() churn no ramo insert. SD pode ser removido em runtime sem crash. Build + flash COM3 sucesso, 180s estavel.
+- 2026-04-24 — v1.33: debounce SD hotplug (3 falhas SPI consecutivas, ~3s) antes de marcar SD como removido. Filtra glitches ocasionais que causavam oscilação visível ("SEM SD" piscando + dashboard alternando). Build + flash COM3 sucesso.
+- 2026-04-24 — v1.31: badge SD removido das duas topbars; overlay grande (280x96) centralizado na tela via `lv_layer_top()` — sempre acima de qualquer screen; texto "SEM SD" + ícone, font montserrat_28, vermelho com animação respiração.
 - 2026-04-23 — Politica `firmware_versions/`: adicionado ao `.gitignore` (binarios reproduziveis do source, evita bloat do repo). Distribuicao externa fica com releases/OTA, nao com git. Docs untracked ja estavam commitados em sessao anterior (nao havia acao pendente real).
 - 2026-04-23 — Botao "Trocar senha" movido da aba Scr para a aba Sistema nas Definicoes (mais logico: sistema agrupa configuracoes de seguranca/OTA). Bump v1.17.
 - 2026-04-23 — Dark mode nos modais (audit fase 2): `ui_pin_entry`, `ui_date_goto`, `ui_wg_enroll`, `ui_share_qr`, e goto-line do file_browser agora usam `ui_color_surface(app_settings_dark_mode())` em vez de `UI_COLOR_WHITE` hardcoded. Splash skip (transient, antes do theme settle). Bump v1.16.

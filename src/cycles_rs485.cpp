@@ -3,6 +3,7 @@
  * @brief Implementacao de cycles_rs485.h — ver comentarios no header.
  */
 #include "cycles_rs485.h"
+#include "rs485_buffer.h"
 #include "ui/ui_screensaver.h"
 
 /** Sinaliza a UI para reabrir o .txt do dia (definido em file_browser.cpp). */
@@ -108,7 +109,11 @@ static void tx_test_task(void * /*arg*/) {
 }
 #endif
 
-static bool format_path_from_local_tm(const struct tm *lt, char *out, size_t cap) {
+/**
+ * Formata o caminho /CICLOS/AAAA/MM/AAAAMMDD.txt a partir de um struct tm local.
+ * Exposto via cycles_rs485.h para reutilizacao por rs485_buffer.
+ */
+bool cycles_rs485_format_path_from_tm(const struct tm *lt, char *out, size_t cap) {
   if (lt == nullptr || out == nullptr || cap < 48U) {
     return false;
   }
@@ -128,13 +133,14 @@ bool cycles_rs485_format_today_path(char *out, size_t out_sz) {
   if (localtime_r(&now, &lt) == nullptr) {
     return false;
   }
-  return format_path_from_local_tm(&lt, out, out_sz);
+  return cycles_rs485_format_path_from_tm(&lt, out, out_sz);
 }
 
 /**
  * Cria /CICLOS, /CICLOS/AAAA e /CICLOS/AAAA/MM se necessario (FatFs um nivel por mkdir).
+ * Exposto via cycles_rs485.h para reutilizacao por rs485_buffer.
  */
-static void mkdirs_for_ym(int year, int month) {
+void cycles_rs485_mkdirs_for_ym(int year, int month) {
   char p1[24];
   char p2[32];
   char p3[40];
@@ -183,10 +189,16 @@ static uint32_t count_lfs_in_file_sync(const char *path) {
 
 /**
  * Grava uma linha no ficheiro do dia corrente (abre, escreve, fecha).
+ * Se o SD nao estiver montado: envia para o buffer SPIFFS em vez de descartar.
  * Executar apenas no contexto sd_io (via sd_access_sync).
  */
 static void append_line_sync(const char *line, size_t line_len) {
   if (line == nullptr || line_len == 0U) {
+    return;
+  }
+  if (!sd_access_is_mounted()) {
+    /* SD removido: guardar no buffer SPIFFS para drain posterior. */
+    rs485_buffer_append(line, line_len);
     return;
   }
   const time_t now = time(nullptr);
@@ -197,9 +209,9 @@ static void append_line_sync(const char *line, size_t line_len) {
   }
   const int y = lt.tm_year + 1900;
   const int mon = lt.tm_mon + 1;
-  mkdirs_for_ym(y, mon);
+  cycles_rs485_mkdirs_for_ym(y, mon);
   char path[48];
-  if (!format_path_from_local_tm(&lt, path, sizeof path)) {
+  if (!cycles_rs485_format_path_from_tm(&lt, path, sizeof path)) {
     return;
   }
   File f = SD.open(path, FILE_APPEND);

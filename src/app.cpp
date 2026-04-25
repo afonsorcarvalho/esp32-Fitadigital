@@ -32,12 +32,15 @@
 #include "net_services.h"
 #include "sd_access.h"
 #include "cycles_rs485.h"
+#include "rs485_buffer.h"
 #include "net_time.h"
 #include "ui_feedback.h"
 #include "ui/boot_screen.h"
 #include "ui/splash_screen.h"
 #include "ui/ui_app.h"
 #include "web_portal/web_portal.h"
+#include "sd_mount.h"
+#include "sd_hotplug.h"
 
 /** SPI dedicado ao TF (pinos em `board_pins.h`, documentação Waveshare). */
 static SPIClass s_sd_spi;
@@ -68,7 +71,7 @@ static void boot_log_step(boot_step_t step, const char *level, const char *fmt, 
   boot_screen_set_step(step, level ? level : "INFO");
 }
 
-static bool sd_rw_self_test(void) {
+bool sd_rw_self_test(void) {
   static const char *kTestPath = "/.__boot_rw_test.tmp";
   static const char *kMagic = "BOOT_SD_OK";
   File w = SD.open(kTestPath, FILE_WRITE);
@@ -102,7 +105,7 @@ static bool sd_rw_self_test(void) {
  * Erro FatFs (13) = sem volume FAT válido: muitas vezes é tabela GPT (FatFs no ESP espera MBR)
  * ou leitura SPI frágil a 10 MHz — ver serial e documentação Waveshare.
  */
-static bool mount_sd_fallback(void) {
+bool mount_sd_fallback(void) {
   const uint32_t speeds_hz[] = {400000, 1000000, 4000000, 10000000};
   waveshare_sd_cs_set(true);
   for (uint32_t hz : speeds_hz) {
@@ -168,6 +171,8 @@ void setup() {
   app_settings_init();
   (void)boot_journal_init();
   (void)boot_journal_reset();
+  /* SPIFFS montado por boot_journal_init — inicializar buffer RS485 agora. */
+  rs485_buffer_init();
 
   Serial.println("Initialize panel device");
   ESP_Panel *panel = new ESP_Panel();
@@ -205,6 +210,9 @@ void setup() {
   sd_access_set_mounted(sd_ok);
   sd_access_register_tick(net_services_sd_worker_tick);
   sd_access_start_task();
+  sd_hotplug_init();
+  /* Registar callback de flush do buffer SPIFFS ao reinserir SD. */
+  sd_hotplug_set_on_inserted(rs485_buffer_flush_to_sd);
 
   if (rtc_probe_with_retries(3U)) {
     net_time_bootstrap_from_rtc_early();

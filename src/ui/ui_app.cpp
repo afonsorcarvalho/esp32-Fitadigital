@@ -50,6 +50,8 @@ static lv_obj_t *s_bar_time_lbl = nullptr;
 static lv_obj_t *s_bar_settings_wifi_lbl = nullptr;
 /** Barra definicoes: data e hora. */
 static lv_obj_t *s_bar_settings_time_lbl = nullptr;
+/** Overlay global no layer top: badge vermelho centralizado quando SD nao esta montado. */
+static lv_obj_t *s_sd_overlay = nullptr;
 static lv_obj_t *s_main_content = nullptr;
 
 static lv_obj_t *s_ta_wifi_ssid = nullptr;
@@ -300,6 +302,82 @@ static void monitor_pill_set_breathing(lv_obj_t *pill, bool on) {
   }
 }
 
+/** Callback de animacao: varia a opacidade do fundo do badge SD (respiracao). */
+static void sd_badge_bg_opa_exec(void *var, int32_t v) {
+  lv_obj_set_style_bg_opa(static_cast<lv_obj_t *>(var), static_cast<lv_opa_t>(v), 0);
+}
+
+/**
+ * Mostra/oculta o badge de ausencia de SD com animacao de respiracao.
+ * Idempotente: reusar sem reiniciar animacao se ja esta ativa.
+ */
+static void sd_badge_set_visible(lv_obj_t *badge, bool visible) {
+  if (badge == nullptr) {
+    return;
+  }
+  const bool running = (lv_anim_get(badge, sd_badge_bg_opa_exec) != nullptr);
+  if (visible) {
+    lv_obj_clear_flag(badge, LV_OBJ_FLAG_HIDDEN);
+    if (!running) {
+      lv_anim_t a;
+      lv_anim_init(&a);
+      lv_anim_set_var(&a, badge);
+      lv_anim_set_exec_cb(&a, sd_badge_bg_opa_exec);
+      lv_anim_set_values(&a, LV_OPA_COVER, LV_OPA_30);
+      lv_anim_set_time(&a, 400);
+      lv_anim_set_playback_time(&a, 400);
+      lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+      lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+      lv_anim_start(&a);
+    }
+  } else {
+    lv_obj_add_flag(badge, LV_OBJ_FLAG_HIDDEN);
+    if (running) {
+      lv_anim_del(badge, sd_badge_bg_opa_exec);
+      lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
+    }
+  }
+}
+
+/**
+ * Cria overlay central no layer top: badge vermelho grande "SEM SD" com animacao
+ * de respiracao. Layer top = sempre acima de qualquer screen (main/settings/wifi).
+ * Inicia oculto; sd_badge_set_visible(s_sd_overlay, true) aciona-o.
+ */
+static void create_sd_overlay(void) {
+  if (s_sd_overlay != nullptr) {
+    return;
+  }
+  lv_obj_t *top = lv_layer_top();
+  s_sd_overlay = lv_obj_create(top);
+  lv_obj_set_size(s_sd_overlay, 280, 96);
+  lv_obj_align(s_sd_overlay, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_set_style_radius(s_sd_overlay, 16, 0);
+  lv_obj_set_style_border_width(s_sd_overlay, 2, 0);
+  lv_obj_set_style_border_color(s_sd_overlay, lv_color_white(), 0);
+  lv_obj_set_style_pad_all(s_sd_overlay, 8, 0);
+  lv_obj_set_style_bg_color(s_sd_overlay, lv_color_hex(0xC62828u), 0);
+  lv_obj_set_style_bg_opa(s_sd_overlay, LV_OPA_COVER, 0);
+  lv_obj_clear_flag(s_sd_overlay, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(s_sd_overlay, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_layout(s_sd_overlay, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(s_sd_overlay, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(s_sd_overlay, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(s_sd_overlay, 12, 0);
+
+  lv_obj_t *icon = lv_label_create(s_sd_overlay);
+  lv_label_set_text(icon, LV_SYMBOL_SD_CARD);
+  lv_obj_set_style_text_color(icon, lv_color_white(), 0);
+  lv_obj_set_style_text_font(icon, &lv_font_montserrat_28, 0);
+
+  lv_obj_t *txt = lv_label_create(s_sd_overlay);
+  lv_label_set_text(txt, "SEM SD");
+  lv_obj_set_style_text_color(txt, lv_color_white(), 0);
+  lv_obj_set_style_text_font(txt, &lv_font_montserrat_28, 0);
+
+  lv_obj_add_flag(s_sd_overlay, LV_OBJ_FLAG_HIDDEN);
+}
+
 /**
  * Atualiza cor de fundo e texto do oblongo conforme `net_monitor_status()`.
  * Sempre visivel: quando desligado mostra "Configure" como call-to-action.
@@ -346,6 +424,8 @@ static void update_bar_wifi_text(void) {
   bar_label_set_date_time(s_bar_settings_time_lbl);
   update_monitor_pill(s_bar_monitor_pill);
   update_monitor_pill(s_bar_settings_monitor_pill);
+  const bool sd_absent = !sd_access_is_mounted();
+  sd_badge_set_visible(s_sd_overlay, sd_absent);
 }
 
 static void dashboard_refresh_values(void);
@@ -593,11 +673,22 @@ static void dashboard_refresh_values(void) {
     lv_label_set_text(s_dash_today_last, tmp);
   }
 
-  /* SD */
+  /* SD — protegido por sd_access_sync para evitar TOCTOU com sd_hotplug.
+   * Ler total/used dentro do sync; actualizar label FORA (LVGL e thread-local). */
   if (s_dash_sd_value != nullptr) {
+    uint64_t total = 0, used = 0;
+    bool sd_ok = false;
     if (sd_access_is_mounted()) {
-      const uint64_t total = SD.totalBytes();
-      const uint64_t used = SD.usedBytes();
+      sd_access_sync([&]{
+        /* Re-verificar dentro do lock: SD pode ter sido removido entretanto. */
+        if (sd_access_is_mounted()) {
+          total  = SD.totalBytes();
+          used   = SD.usedBytes();
+          sd_ok  = true;
+        }
+      });
+    }
+    if (sd_ok) {
       const uint64_t free_b = (total > used) ? (total - used) : 0;
       const unsigned pct = total > 0 ? (unsigned)((used * 100U) / total) : 0;
       char free_str[24];
@@ -2622,6 +2713,7 @@ void ui_app_run(bool sd_mounted, bool splash_active) {
 
   create_main_screen();
   create_wifi_screen();
+  create_sd_overlay();
 
   if (s_status_timer == nullptr) {
     s_status_timer = lv_timer_create(status_timer_cb, 1000, nullptr);
