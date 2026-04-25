@@ -56,23 +56,29 @@ void net_wireguard_apply(void) {
   strncpy(s_wg_pub, pub.c_str(), sizeof(s_wg_pub) - 1U);
   s_wg_pub[sizeof(s_wg_pub) - 1U] = '\0';
 
-  /* Pre-resolver o endpoint antes de passar à biblioteca WireGuard:
-   * begin() com hostname faz DNS internamente e crasha com double exception
-   * quando a resolução falha (stack overflow no código da biblioteca).
-   * Passamos sempre um IP literal para evitar esse caminho. */
+  /* Endpoint TEM de ser IP literal. Nao usar WiFi.hostByName aqui — a chamada
+   * (ou a propria biblioteca WireGuard fazendo DNS interno) tem corrompido a
+   * stack e causado Double exception ~14s pos-boot quando a resolucao falha
+   * (testado em v1.18/v1.19 — boot loop reproducivel). User configura IP via UI. */
   IPAddress ep_resolved;
-  if (ep_resolved.fromString(ep.c_str())) {
-    strncpy(s_wg_ep, ep.c_str(), sizeof(s_wg_ep) - 1U);
-  } else {
-    if (!WiFi.hostByName(ep.c_str(), ep_resolved)) {
-      app_log_feature_writef("ERROR", "WIREGUARD",
-                             "DNS falhou para endpoint '%s'. Inicio adiado.", ep.c_str());
-      return;
-    }
-    const String resolved_str = ep_resolved.toString();
-    strncpy(s_wg_ep, resolved_str.c_str(), sizeof(s_wg_ep) - 1U);
+  if (!ep_resolved.fromString(ep.c_str())) {
+    Serial.println("[WG] Endpoint nao e IP literal — DNS desactivado p/ evitar crash.");
+    app_log_feature_writef("ERROR", "WIREGUARD",
+                           "Endpoint '%s' nao e IP literal. Configure IPv4 explicito.", ep.c_str());
+    return;
   }
+  strncpy(s_wg_ep, ep.c_str(), sizeof(s_wg_ep) - 1U);
   s_wg_ep[sizeof(s_wg_ep) - 1U] = '\0';
+
+  /* Endpoint resolvido a 0.0.0.0 = provision incompleta. begin() crasha
+   * (Double exception apos add_peer) se lhe passarmos endereco invalido.
+   * Bail antes para evitar boot loop. */
+  if (ep_resolved == IPAddress(0, 0, 0, 0)) {
+    Serial.println("[WG] Endpoint resolveu a 0.0.0.0 — provision incompleta. Inicio adiado.");
+    app_log_feature_writef("ERROR", "WIREGUARD",
+                           "Endpoint '%s' resolveu a 0.0.0.0 (provision incompleta).", ep.c_str());
+    return;
+  }
 
   const uint16_t port = app_settings_wg_port();
   /**
