@@ -16,7 +16,14 @@
  */
 void ui_loading_show(lv_obj_t *parent, const char *message);
 
-/** Remove o overlay criado por ui_loading_show. */
+/**
+ * Agenda overlay para aparecer apenas se a operacao demorar mais de `delay_ms`.
+ * Evita flicker em chamadas rapidas (< 150 ms tipico). Se ui_loading_hide for
+ * chamado antes do timer disparar, o overlay nunca aparece.
+ */
+void ui_loading_show_delayed(lv_obj_t *parent, const char *message, uint32_t delay_ms);
+
+/** Remove o overlay criado por ui_loading_show ou cancela `ui_loading_show_delayed` pendente. */
 void ui_loading_hide(void);
 
 bool ui_loading_is_visible(void);

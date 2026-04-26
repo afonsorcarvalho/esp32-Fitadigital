@@ -147,9 +147,9 @@ static bool s_highlight_on = false;
 
 /* ── Constantes e estado dos botoes do visualizador ──────────────────── */
 
-static constexpr lv_coord_t kViewerBtnColW = 62;
-static constexpr lv_coord_t kViewerBtnH = 48;
-static constexpr lv_coord_t kViewerBtnPad = 6;
+static constexpr lv_coord_t kViewerBtnColW = 74;  /* +20% de 62 — alvos de toque maiores. */
+static constexpr lv_coord_t kViewerBtnH = 58;     /* +20% de 48. */
+static constexpr lv_coord_t kViewerBtnPad = 7;    /* +20% de 6. */
 /** Largura fixa da coluna de numeracao de linhas (gutter).
  *  Suficiente para 4 digitos (9999) com a fonte monospace + padding, sem layout shift. */
 static constexpr lv_coord_t kViewerGutterW = 56;
@@ -1380,9 +1380,9 @@ static void show_text_file(const char *full_path, bool quiet_index, bool scroll_
   strlcpy(s_viewer_path, path_work, sizeof(s_viewer_path));
 
   if (!quiet_index) {
-    ui_loading_show(ov_parent, "Indexando arquivo...");
-    /* Sem lv_refr_now aqui: com o mutex LVGL detido pelo setup ou pela tarefa LVGL, o flush
-     * sincrono pode bloquear a tarefa lvgl (RGB) e congelar barra de estado / touch. */
+    /* Spinner com delay 150 ms: evita flicker em ficheiros pequenos que indexam rapido.
+     * ui_loading_hide chamado adiante cancela o timer se ainda nao disparou. */
+    ui_loading_show_delayed(ov_parent, "Indexando arquivo...", 150U);
   }
 
   /* ── Fase 1: indexar offsets de linhas (sem mutex LVGL) ──────────── */
@@ -1697,8 +1697,8 @@ static void refresh_file_list_finish_cb(void * /*user_data*/) {
   for (unsigned i = 0; i < s_async_scanned; i++) {
     const char *icon = s_entry_is_dir[i] ? LV_SYMBOL_DIRECTORY : LV_SYMBOL_FILE;
     lv_obj_t *btn = lv_list_add_btn(s_list, icon, s_entry_lines[i]);
-    /* Linha ~29% mais alta e icone maior em cor primaria (pasta e ficheiro). */
-    lv_obj_set_style_min_height(btn, 52, 0);
+    /* Linha mais alta e icone maior em cor primaria (pasta e ficheiro). +20% de 52. */
+    lv_obj_set_style_min_height(btn, 62, 0);
     lv_obj_t *icon_lbl = lv_obj_get_child(btn, 0);
     if (icon_lbl != nullptr) {
       lv_obj_set_style_text_font(icon_lbl, &lv_font_montserrat_20, 0);
@@ -1835,8 +1835,8 @@ static void refresh_file_list(bool show_loading_overlay) {
   s_async_show_overlay = show_loading_overlay;
 
   if (show_loading_overlay) {
-    ui_loading_show(file_browser_loading_parent(), "Carregando arquivos da pasta...");
-    ui_loading_flush_display();
+    /* Spinner com delay 150 ms: evita flicker em pastas pequenas (lista < 150 ms). */
+    ui_loading_show_delayed(file_browser_loading_parent(), "Carregando arquivos da pasta...", 150U);
   }
 
   /**

@@ -737,6 +737,63 @@ static void dashboard_refresh_values(void) {
   }
 }
 
+/**
+ * Spinner-em-botao com armado tardio: o spinner so aparece se a operacao demorar
+ * mais que `delay_ms`. Evita flicker em chamadas rapidas (typical < 150 ms).
+ *
+ * Uso:
+ *   static DashSpinnerArm s_arm;
+ *   dash_spinner_arm_delayed(&s_arm, btn, lbl, 150);
+ *   ... trabalho async (unlock LVGL durante SD/rede) ...
+ *   dash_spinner_disarm(&s_arm);
+ */
+struct DashSpinnerArm {
+  lv_obj_t *btn;
+  lv_obj_t *lbl;
+  lv_timer_t *timer;
+  bool fired;
+};
+
+static lv_obj_t *dash_spinner_create_on_btn(lv_obj_t *btn);
+static void dash_spinner_remove_from_btn(lv_obj_t *btn, lv_obj_t *lbl);
+
+static void dash_spinner_arm_timer_cb(lv_timer_t *t) {
+  /* LVGL 8.3: user_data e' campo publico de lv_timer_t, sem getter dedicado. */
+  DashSpinnerArm *a = static_cast<DashSpinnerArm *>(t->user_data);
+  if (a == nullptr) {
+    lv_timer_del(t);
+    return;
+  }
+  if (a->lbl != nullptr) {
+    lv_obj_add_flag(a->lbl, LV_OBJ_FLAG_HIDDEN);
+  }
+  (void)dash_spinner_create_on_btn(a->btn);
+  a->fired = true;
+  a->timer = nullptr;
+  lv_timer_del(t);
+}
+
+static void dash_spinner_arm_delayed(DashSpinnerArm *a, lv_obj_t *btn, lv_obj_t *lbl,
+                                     uint32_t delay_ms) {
+  if (a == nullptr) return;
+  a->btn = btn;
+  a->lbl = lbl;
+  a->fired = false;
+  a->timer = lv_timer_create(dash_spinner_arm_timer_cb, delay_ms, a);
+}
+
+static void dash_spinner_disarm(DashSpinnerArm *a) {
+  if (a == nullptr) return;
+  if (a->timer != nullptr) {
+    lv_timer_del(a->timer);
+    a->timer = nullptr;
+  }
+  if (a->fired) {
+    dash_spinner_remove_from_btn(a->btn, a->lbl);
+    a->fired = false;
+  }
+}
+
 static lv_obj_t *dash_spinner_create_on_btn(lv_obj_t *btn) {
   if (btn == nullptr) return nullptr;
   lv_obj_add_state(btn, LV_STATE_DISABLED);
@@ -764,17 +821,15 @@ static void dash_spinner_remove_from_btn(lv_obj_t *btn, lv_obj_t *lbl) {
 
 static void dashboard_btn_today_cb(lv_event_t *e) {
   (void)e;
-  /* Feedback imediato: mostrar spinner + desabilitar botao enquanto o SD e verificado. */
-  lv_obj_t *sp = nullptr;
+  /* Spinner armado mas so aparece se a operacao demorar > 150 ms (evita flicker). */
+  static DashSpinnerArm s_arm_today;
   if (s_dash_btn_today != nullptr) {
-    if (s_dash_lbl_today != nullptr) { lv_obj_add_flag(s_dash_lbl_today, LV_OBJ_FLAG_HIDDEN); }
-    sp = dash_spinner_create_on_btn(s_dash_btn_today);
+    dash_spinner_arm_delayed(&s_arm_today, s_dash_btn_today, s_dash_lbl_today, 150);
   }
   /* Verifica se ha ciclo gravado hoje ANTES de sair do dashboard. Se nao, toast. */
   char path[256];
   if (!cycles_rs485_format_today_path(path, sizeof path)) {
-    dash_spinner_remove_from_btn(s_dash_btn_today, s_dash_lbl_today);
-    (void)sp;
+    dash_spinner_disarm(&s_arm_today);
     ui_toast_show(ToastKind::Warn, "Data do sistema invalida");
     return;
   }
@@ -792,8 +847,7 @@ static void dashboard_btn_today_cb(lv_event_t *e) {
     }
   });
   (void)lvgl_port_lock(-1);
-  dash_spinner_remove_from_btn(s_dash_btn_today, s_dash_lbl_today);
-  (void)sp;
+  dash_spinner_disarm(&s_arm_today);
   if (!exists) {
     ui_toast_show(ToastKind::Info, "Sem ciclo gravado hoje ainda");
     return;
@@ -804,15 +858,17 @@ static void dashboard_btn_today_cb(lv_event_t *e) {
 
 static void dashboard_btn_history_cb(lv_event_t *e) {
   (void)e;
-  /* Feedback imediato: mostrar spinner brevemente antes de navegar. */
+  /* Spinner armado com delay 150 ms — evita flicker se a transicao for instantanea.
+   * ensure_main_content_browser faz lv_obj_clean em s_main_content, o que destroi
+   * o spinner (filho do btn que e filho do dashboard). dash_spinner_disarm cancela
+   * o timer se ainda nao disparou. */
+  static DashSpinnerArm s_arm_hist;
   if (s_dash_btn_hist != nullptr) {
-    if (s_dash_lbl_hist != nullptr) { lv_obj_add_flag(s_dash_lbl_hist, LV_OBJ_FLAG_HIDDEN); }
-    (void)dash_spinner_create_on_btn(s_dash_btn_hist);
+    dash_spinner_arm_delayed(&s_arm_hist, s_dash_btn_hist, s_dash_lbl_hist, 150);
   }
-  /* ensure_main_content_browser faz lv_obj_clean em s_main_content,
-   * o que destroi o spinner (filho do btn que e filho do dashboard). */
   ensure_main_content_browser();
   file_browser_goto("/CICLOS");
+  dash_spinner_disarm(&s_arm_hist);
 }
 
 static void dashboard_btn_home_cb(lv_event_t *e);

@@ -14,7 +14,22 @@ lv_obj_t *lv_spinner_create(lv_obj_t *parent, uint32_t time, uint32_t arc_length
 
 static lv_obj_t *s_loading_root = nullptr;
 
+/* Estado do show_delayed: timer LVGL agendado + parametros para criar o overlay. */
+static lv_timer_t *s_pending_timer = nullptr;
+static lv_obj_t *s_pending_parent = nullptr;
+static char s_pending_message[128] = {0};
+
+static void pending_clear(void) {
+  if (s_pending_timer != nullptr) {
+    lv_timer_del(s_pending_timer);
+    s_pending_timer = nullptr;
+  }
+  s_pending_parent = nullptr;
+  s_pending_message[0] = '\0';
+}
+
 void ui_loading_hide(void) {
+  pending_clear();
   if (s_loading_root != nullptr) {
     lv_obj_del(s_loading_root);
     s_loading_root = nullptr;
@@ -28,6 +43,33 @@ void ui_loading_flush_display(void) {
   if (d != nullptr) {
     lv_refr_now(d);
   }
+}
+
+static void pending_timer_cb(lv_timer_t *t) {
+  /* Captura parametros antes de qualquer rebuild que possa limpar o estado. */
+  lv_obj_t *parent = s_pending_parent;
+  /* Mensagem em buffer separado para sobreviver ao pending_clear feito por ui_loading_show. */
+  char msg_copy[sizeof(s_pending_message)];
+  strncpy(msg_copy, s_pending_message, sizeof(msg_copy));
+  msg_copy[sizeof(msg_copy) - 1U] = '\0';
+  /* Marca o timer como consumido para impedir double-del em pending_clear. */
+  s_pending_timer = nullptr;
+  lv_timer_del(t);
+  ui_loading_show(parent, msg_copy);
+}
+
+void ui_loading_show_delayed(lv_obj_t *parent, const char *message, uint32_t delay_ms) {
+  /* Substitui qualquer agendamento pendente. */
+  pending_clear();
+  s_pending_parent = parent;
+  if (message != nullptr) {
+    strncpy(s_pending_message, message, sizeof(s_pending_message) - 1U);
+    s_pending_message[sizeof(s_pending_message) - 1U] = '\0';
+  } else {
+    s_pending_message[0] = '\0';
+  }
+  s_pending_timer = lv_timer_create(pending_timer_cb, delay_ms, nullptr);
+  /* Sem repeat_count: o callback faz lv_timer_del(t) na primeira disparada. */
 }
 
 void ui_loading_show(lv_obj_t *parent, const char *message) {

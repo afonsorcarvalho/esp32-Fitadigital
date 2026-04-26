@@ -4,6 +4,7 @@
 
 
 ## Pendente
+- Realizar teste no servidor produção do WireGuard (validar enroll + ping ICMP + conectividade dashboard apos deploy do servidor de produção).
 - Commit das mudancas v1.13..v1.17 + archive script + svg_to_lvgl (branch main tem diff por commitar).
 - Organizar `SoftwareQualification_*.docx` (3 versoes untracked na raiz): mover para pasta dedicada ou adicionar ao `.gitignore`.
 
