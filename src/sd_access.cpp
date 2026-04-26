@@ -27,6 +27,12 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
+/* ets_printf: ROM function, zero VFS / zero FreeRTOS stack overhead.
+ * Safe to call from any context including deep FatFs paths and interrupt
+ * handlers. Use instead of Serial.printf / log_x inside sd_io_task to
+ * avoid the VFS UART stack frame (~2 KB) that causes Double Exception. */
+extern "C" int ets_printf(const char *fmt, ...);
+
 namespace {
 
 static constexpr size_t kMaxTickers = 4U;
@@ -93,11 +99,30 @@ static TaskHandle_t s_sd_task = nullptr;
 static constexpr UBaseType_t kSdTaskPrio = 1U;
 /**
  * Stack da task sd_io em BYTES (ESP-IDF xTaskCreatePinnedToCore usa bytes).
- * 8 KB e' suficiente para o ciclo tipico: job sd_io (listagem ou I/O) + FTP
- * ticks + buffers locais de FatFs/File. Sobrou margem confortavel (~5 KB
- * livres em medicao via uxTaskGetStackHighWaterMark).
+ *
+ * Aumentado de 8192 para 16384 apos crash observado em 2026-04-25:
+ *   Double exception (EXCCAUSE=2) em _xt_context_save com EXCVADDR=0x20.
+ *   addr2line: 0x420954d3 = uart_write (vfs_uart.c:213) -- log_w("no token")
+ *   em sdCommand() causou stack overflow no caminho profundo:
+ *     sd_io_task -> sd_hotplug_tick -> f_opendir/f_readdir (FatFs) ->
+ *     diskio read -> sdCommand loop -> log_w -> esp_log_write -> vfs uart.
+ *   A medicao anterior de "~5 KB livres" nao cobria este caminho sob stress.
+ *   16 KB da margem confortavel (+8 KB) para paths FatFs + log + std::function.
+ *
+ * Aumentado de 16384 para 32768 em 2026-04-25 (segundo crash -- poll 8):
+ *   Mesma assinatura: EXCCAUSE=2, EXCVADDR=0xb33ffffc (stack sentinel poison).
+ *   A9/A13/A14/A15=0xb33fffff nos registos: stack overflow mesmo a 16 KB.
+ *   Fix duplo: (1) stack 32 KB; (2) log_w/log_e removidos das funcoes quentes
+ *   sdWait/sdSelectCard/sdCommand/sdReadSectors -- VFS logging nestas funcoes
+ *   e o verdadeiro motor do overflow no caminho FatFs profundo.
+ *
+ * Fix 4 (2026-04-25): Serial.printf dentro da sd_io_task substituido por
+ *   ets_printf (ROM, sem VFS, stack footprint ~100 B vs ~2 KB do VFS path).
+ *   Serial.printf -> vfs_uart write consome stack extra mesmo quando chamado
+ *   de sd_io_task directamente (nao apenas do path FatFs profundo), confirmado
+ *   por EXCVADDR=0xb33ffffc apos 25 min de uptime com stack 32 KB.
  */
-static constexpr uint32_t kSdTaskStackBytes = 8192U;
+static constexpr uint32_t kSdTaskStackBytes = 32768U;
 static constexpr uint32_t kQueueDepth = 24U;
 static constexpr BaseType_t kSdTaskCore = (BaseType_t)ARDUINO_RUNNING_CORE;
 
@@ -107,13 +132,13 @@ static uint32_t s_last_heap_diag_ms = 0;
 
 static void sd_io_task(void * /*arg*/) {
   /**
-   * Debug: valor configurado vs stack livre observada pela task. Se
-   * uxTaskGetStackHighWaterMark devolve muito menos do que kSdTaskStackBytes
-   * implica, a unidade foi mal interpretada (bytes vs words).
+   * Debug: usa ets_printf (ROM, zero VFS stack) em vez de Serial.printf.
+   * Serial.printf -> vfs_uart -> esp_log_write consome ~2 KB de stack extra
+   * no contexto da sd_io_task e causou Double Exception (Fix 4).
    */
-  Serial.printf("[sd_io] start: configured=%u bytes  initial_free=%u words\n",
-                (unsigned)kSdTaskStackBytes,
-                (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+  ets_printf("[sd_io] start: configured=%u bytes  initial_free=%u words\n",
+             (unsigned)kSdTaskStackBytes,
+             (unsigned)uxTaskGetStackHighWaterMark(nullptr));
   uint32_t s_last_stack_log_ms = 0;
   for (;;) {
     SdJob *job = nullptr;
@@ -139,14 +164,14 @@ static void sd_io_task(void * /*arg*/) {
     const uint32_t now = millis();
     if ((now - s_last_heap_diag_ms) >= kHeapDiagIntervalMs) {
       s_last_heap_diag_ms = now;
-      Serial.printf("[SD] heap_int_free=%u min=%u\n",
-                    (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-                    (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+      ets_printf("[SD] heap_int_free=%u min=%u\n",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     }
     if ((now - s_last_stack_log_ms) >= 5000U) {
       s_last_stack_log_ms = now;
-      Serial.printf("[sd_io] stack_hwm=%u words (lower=closer to overflow)\n",
-                    (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+      ets_printf("[sd_io] stack_hwm=%u words (lower=closer to overflow)\n",
+                 (unsigned)uxTaskGetStackHighWaterMark(nullptr));
     }
 
     vTaskDelay(pdMS_TO_TICKS(2));

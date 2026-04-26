@@ -90,7 +90,7 @@ static inline void sd_cs_low(ardu_sdcard_t *card) {
 
 static ardu_sdcard_t *s_cards[FF_VOLUMES] = {NULL};
 
-#if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_ERROR
+/* fferr2str used by printf in sdcard_mount/sdcard_format — no log level guard */
 const char *fferr2str[] = {
   "(0) Succeeded",
   "(1) A hard error occurred in the low level disk I/O layer",
@@ -113,7 +113,6 @@ const char *fferr2str[] = {
   "(18) Number of open files > FF_FS_LOCK",
   "(19) Given parameter is invalid"
 };
-#endif
 
 /*
  * SD SPI
@@ -127,9 +126,7 @@ bool sdWait(uint8_t pdrv, int timeout) {
     resp = s_cards[pdrv]->spi->transfer(0xFF);
   } while (resp == 0x00 && (millis() - start) < (unsigned int)timeout);
 
-  if (!resp) {
-    log_w("Wait Failed");
-  }
+  /* log_w removed: VFS logging in sdWait causes stack overflow in deep FatFs paths */
   return (resp > 0x00);
 }
 
@@ -147,7 +144,6 @@ bool sdSelectCard(uint8_t pdrv) {
   sd_cs_low(card);
   bool s = sdWait(pdrv, 500);
   if (!s) {
-    log_e("Select Failed");
     sd_cs_high(card);
     return false;
   }
@@ -194,19 +190,16 @@ char sdCommand(uint8_t pdrv, char cmd, unsigned int arg, unsigned int *resp) {
     }
 
     if (token == 0xFF) {
-      log_w("no token received");
       sdDeselectCard(pdrv);
       delay(100);
       sdSelectCard(pdrv);
       continue;
     } else if (token & 0x08) {
-      log_w("crc error");
       sdDeselectCard(pdrv);
       delay(100);
       sdSelectCard(pdrv);
       continue;
     } else if (token > 1) {
-      log_w("token error [%u] 0x%x", cmd, token);
       break;
     }
 
@@ -219,7 +212,6 @@ char sdCommand(uint8_t pdrv, char cmd, unsigned int arg, unsigned int *resp) {
     break;
   }
   if (token == 0xFF) {
-    log_e("Card Failed! cmd: 0x%02x", cmd);
     card->status = STA_NOINIT;
   }
   return token;
@@ -308,7 +300,6 @@ bool sdReadSectors(uint8_t pdrv, char *buffer, unsigned long long sector, int co
       } while (--count);
 
       if (sdCommand(pdrv, STOP_TRANSMISSION, 0, NULL)) {
-        log_e("command failed");
         break;
       }
 
@@ -484,6 +475,9 @@ private:
  * FATFS API
  * */
 
+/* Static counter for sdInitCard failures — safe alternative to log_w in deep diskio path */
+static uint32_t s_sd_init_fail_count = 0;
+
 DSTATUS ff_sd_initialize(uint8_t pdrv) {
   char token;
   unsigned int resp;
@@ -504,11 +498,11 @@ DSTATUS ff_sd_initialize(uint8_t pdrv) {
   // Fix mount issue - sdWait fail ignored before command GO_IDLE_STATE
   sd_cs_low(card);
   if (!sdWait(pdrv, 500)) {
-    log_w("sdWait fail ignored, card initialize continues");
+    /* sdWait fail ignored — card initialize continues */
   }
   if (sdCommand(pdrv, GO_IDLE_STATE, 0, NULL) != 1) {
     sdDeselectCard(pdrv);
-    log_w("GO_IDLE_STATE failed");
+    s_sd_init_fail_count++;
     goto unknown_card;
   }
   sdDeselectCard(pdrv);
@@ -518,18 +512,18 @@ DSTATUS ff_sd_initialize(uint8_t pdrv) {
     //old card maybe
     card->supports_crc = false;
   } else if (token != 1) {
-    log_w("CRC_ON_OFF failed: %u", token);
+    s_sd_init_fail_count++;
     goto unknown_card;
   }
 
   if (sdTransaction(pdrv, SEND_IF_COND, 0x1AA, &resp) == 1) {
     if ((resp & 0xFFF) != 0x1AA) {
-      log_w("SEND_IF_COND failed: %03X", resp & 0xFFF);
+      s_sd_init_fail_count++;
       goto unknown_card;
     }
 
     if (sdTransaction(pdrv, READ_OCR, 0, &resp) != 1 || !(resp & (1 << 20))) {
-      log_w("READ_OCR failed: %X", resp);
+      s_sd_init_fail_count++;
       goto unknown_card;
     }
 
@@ -539,7 +533,7 @@ DSTATUS ff_sd_initialize(uint8_t pdrv) {
     } while (token == 1 && (millis() - start) < 1000);
 
     if (token) {
-      log_w("APP_OP_COND failed: %u", token);
+      s_sd_init_fail_count++;
       goto unknown_card;
     }
 
@@ -550,12 +544,12 @@ DSTATUS ff_sd_initialize(uint8_t pdrv) {
         card->type = CARD_SD;
       }
     } else {
-      log_w("READ_OCR failed: %X", resp);
+      s_sd_init_fail_count++;
       goto unknown_card;
     }
   } else {
     if (sdTransaction(pdrv, READ_OCR, 0, &resp) != 1 || !(resp & (1 << 20))) {
-      log_w("READ_OCR failed: %X", resp);
+      s_sd_init_fail_count++;
       goto unknown_card;
     }
 
@@ -575,7 +569,7 @@ DSTATUS ff_sd_initialize(uint8_t pdrv) {
       if (token == 0x00) {
         card->type = CARD_MMC;
       } else {
-        log_w("SEND_OP_COND failed: %u", token);
+        s_sd_init_fail_count++;
         goto unknown_card;
       }
     }
@@ -583,14 +577,14 @@ DSTATUS ff_sd_initialize(uint8_t pdrv) {
 
   if (card->type != CARD_MMC) {
     if (sdTransaction(pdrv, APP_CLR_CARD_DETECT, 0, NULL)) {
-      log_w("APP_CLR_CARD_DETECT failed");
+      s_sd_init_fail_count++;
       goto unknown_card;
     }
   }
 
   if (card->type != CARD_SDHC) {
     if (sdTransaction(pdrv, SET_BLOCKLEN, 512, NULL) != 0x00) {
-      log_w("SET_BLOCKLEN failed");
+      s_sd_init_fail_count++;
       goto unknown_card;
     }
   }
@@ -614,7 +608,7 @@ DSTATUS ff_sd_status(uint8_t pdrv) {
   AcquireSPI lock(card);
 
   if (sdTransaction(pdrv, SEND_STATUS, 0, NULL)) {
-    log_e("Check status failed");
+    /* log_e removed: VFS logging in diskio status path causes Double Exception */
     return STA_NOINIT;
   }
   return s_cards[pdrv]->status;
@@ -778,10 +772,10 @@ bool sdcard_mount(uint8_t pdrv, const char *path, uint8_t max_files, bool format
   char drv[3] = {(char)('0' + pdrv), ':', 0};
   esp_err_t err = esp_vfs_fat_register(path, drv, max_files, &fs);
   if (err == ESP_ERR_INVALID_STATE) {
-    log_e("esp_vfs_fat_register failed 0x(%x): SD is registered.", err);
+    printf("sd_mount: esp_vfs_fat_register failed 0x(%x): SD is registered.\n", err);
     return false;
   } else if (err != ESP_OK) {
-    log_e("esp_vfs_fat_register failed 0x(%x)", err);
+    printf("sd_mount: esp_vfs_fat_register failed 0x(%x)\n", err);
     return false;
   }
   card->fs = fs;
@@ -789,11 +783,11 @@ bool sdcard_mount(uint8_t pdrv, const char *path, uint8_t max_files, bool format
 
   FRESULT res = f_mount(fs, drv, 1);
   if (res != FR_OK) {
-    log_e("f_mount failed: %s", fferr2str[res]);
+    printf("sd_mount: f_mount failed: %s\n", fferr2str[res]);
     if (res == 13 && format_if_empty) {
       BYTE *work = (BYTE *)malloc(sizeof(BYTE) * FF_MAX_SS);
       if (!work) {
-        log_e("alloc for f_mkfs failed");
+        printf("sd_mount: alloc for f_mkfs failed\n");
         return false;
       }
       //FRESULT f_mkfs (const TCHAR* path, const MKFS_PARM* opt, void* work, UINT len);
@@ -801,13 +795,13 @@ bool sdcard_mount(uint8_t pdrv, const char *path, uint8_t max_files, bool format
       res = f_mkfs(drv, &opt, work, sizeof(BYTE) * FF_MAX_SS);
       free(work);
       if (res != FR_OK) {
-        log_e("f_mkfs failed: %s", fferr2str[res]);
+        printf("sd_mount: f_mkfs failed: %s\n", fferr2str[res]);
         esp_vfs_fat_unregister_path(path);
         return false;
       }
       res = f_mount(fs, drv, 1);
       if (res != FR_OK) {
-        log_e("f_mount failed: %s", fferr2str[res]);
+        printf("sd_mount: f_mount failed: %s\n", fferr2str[res]);
         esp_vfs_fat_unregister_path(path);
         return false;
       }
@@ -830,13 +824,13 @@ bool sdcard_format(uint8_t pdrv) {
   char drv[3] = {(char)('0' + pdrv), ':', 0};
   FRESULT res = f_mount(NULL, drv, 0);
   if (res != FR_OK) {
-    log_e("f_mount(NULL) failed antes de formatar: %s", fferr2str[res]);
+    printf("sd_format: f_mount(NULL) failed antes de formatar: %s\n", fferr2str[res]);
     return false;
   }
 
   BYTE *work = (BYTE *)malloc(sizeof(BYTE) * FF_MAX_SS);
   if (!work) {
-    log_e("alloc for f_mkfs failed");
+    printf("sd_format: alloc for f_mkfs failed\n");
     return false;
   }
 
@@ -844,13 +838,13 @@ bool sdcard_format(uint8_t pdrv) {
   res = f_mkfs(drv, &opt, work, sizeof(BYTE) * FF_MAX_SS);
   free(work);
   if (res != FR_OK) {
-    log_e("f_mkfs failed: %s", fferr2str[res]);
+    printf("sd_format: f_mkfs failed: %s\n", fferr2str[res]);
     return false;
   }
 
   res = f_mount(card->fs, drv, 1);
   if (res != FR_OK) {
-    log_e("f_mount apos f_mkfs falhou: %s", fferr2str[res]);
+    printf("sd_format: f_mount apos f_mkfs falhou: %s\n", fferr2str[res]);
     return false;
   }
 

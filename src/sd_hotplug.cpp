@@ -17,6 +17,12 @@
  *
  * Nota: o ticker corre no contexto sd_io, portanto pode chamar SD.* directamente
  * (mutex FatFs ja garantido pela fila exclusiva da tarefa).
+ *
+ * Fix 4 (2026-04-25): Serial.printf/println substituidos por ets_printf (ROM,
+ *   zero VFS stack) em todas as funcoes chamadas a partir do ticker sd_io_task.
+ *   Serial.printf -> vfs_uart write consome ~2 KB de stack extra no contexto
+ *   da sd_io_task e causou Double Exception (EXCCAUSE=2, EXCVADDR sentinel).
+ *   ets_printf usa a UART directamente via ROM sem passar por esp_vfs.
  */
 
 #include "sd_hotplug.h"
@@ -28,6 +34,12 @@
 #include <SD.h>
 #include "ff.h"
 #include <string.h>
+
+/* ets_printf: ROM function, zero VFS / zero FreeRTOS stack overhead.
+ * Safe to call from any context including deep FatFs paths.
+ * Use instead of Serial.printf / log_x inside sd_io_task ticker context
+ * to avoid the VFS UART stack frame (~2 KB) that causes Double Exception. */
+extern "C" int ets_printf(const char *fmt, ...);
 
 namespace {
 
@@ -49,13 +61,17 @@ static sd_hotplug_event_fn s_on_inserted_fn = nullptr;
  *
  * f_stat("0:/") nao serve: raiz nao e' uma entry indexavel.
  * f_opendir + f_readdir e' valido em qualquer FAT volume montado.
+ *
+ * IMPORTANTE: usa ets_printf em vez de Serial.printf — esta funcao e' chamada
+ * no contexto da sd_io_task (via ticker) onde Serial.printf causa stack overflow
+ * por re-entrancia do VFS UART (Fix 4).
  */
 static bool sd_probe_alive(void) {
   FF_DIR dir;
   memset(&dir, 0, sizeof(dir));
   FRESULT fr = f_opendir(&dir, "0:/");
   if (fr != FR_OK) {
-    Serial.printf("[sd_hotplug] probe opendir fail fr=%d\n", (int)fr);
+    ets_printf("[sd_hotplug] probe opendir fail fr=%d\n", (int)fr);
     return false;
   }
   /* Le 1 entry (forca I/O ao cartao). Aceita FR_OK mesmo que dir fique vazia
@@ -65,7 +81,7 @@ static bool sd_probe_alive(void) {
   fr = f_readdir(&dir, &fno);
   f_closedir(&dir);
   if (fr != FR_OK) {
-    Serial.printf("[sd_hotplug] probe readdir fail fr=%d\n", (int)fr);
+    ets_printf("[sd_hotplug] probe readdir fail fr=%d\n", (int)fr);
     return false;
   }
   return true;
@@ -95,7 +111,7 @@ static void sd_hotplug_tick(void) {
         SD.end();
         sd_access_notify_changed();
         s_consecutive_fails = 0U;
-        Serial.println("[sd_hotplug] removed");
+        ets_printf("[sd_hotplug] removed\n");
         app_log_write("WARN", "[sd_hotplug] removed");
       }
     }
@@ -111,7 +127,7 @@ static void sd_hotplug_tick(void) {
         s_on_inserted_fn();
       }
       sd_access_notify_changed();
-      Serial.println("[sd_hotplug] inserted");
+      ets_printf("[sd_hotplug] inserted\n");
       app_log_write("INFO", "[sd_hotplug] inserted");
     }
   }
@@ -126,5 +142,9 @@ void sd_hotplug_set_on_inserted(sd_hotplug_event_fn fn) {
 void sd_hotplug_init(void) {
   s_last_probe_ms = millis();
   sd_access_register_tick(sd_hotplug_tick);
-  Serial.println("[sd_hotplug] init ok — polling a cada 1000 ms (probe ativo via f_stat)");
+  /* ets_printf safe aqui tambem (init corre antes da task ter carga pesada),
+   * mas a consistencia e' boa pratica — evita regressao se init for invocado
+   * mais tarde no ciclo de vida da aplicacao. */
+  ets_printf("[sd_hotplug] init ok — polling a cada %u ms (probe ativo via f_opendir/f_readdir)\n",
+             (unsigned)kProbeIntervalMs);
 }

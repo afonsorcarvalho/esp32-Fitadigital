@@ -135,32 +135,44 @@ static bool rtc_read_tm_utc(struct tm *out_tm) {
   return true;
 }
 
+/**
+ * Converte struct tm UTC -> time_t UTC sem tocar em variaveis de ambiente.
+ *
+ * Implementacao anterior usava setenv("TZ","UTC0")+tzset()+mktime()+restore. Cada
+ * setenv/tzset alocava na heap interna via newlib (~6 B/call). Esta funcao corre
+ * 4x por tick de status_timer_cb (1 Hz) -> ~1440 B/min, principal causa do drain
+ * linear de heap interna observado em soak (heap_monitor [HEAP] em logs/bisect_*).
+ *
+ * Aritmetica pura, zero alocacao. Range valido: 1970..2099 UTC.
+ */
 static bool tm_to_epoch_utc(const struct tm *utc_tm, time_t *out_ts) {
   if (utc_tm == nullptr || out_ts == nullptr) {
     return false;
   }
-  char old_tz[64];
-  bool had_old_tz = false;
-  const char *tz = getenv("TZ");
-  if (tz != nullptr) {
-    strncpy(old_tz, tz, sizeof(old_tz) - 1U);
-    old_tz[sizeof(old_tz) - 1U] = '\0';
-    had_old_tz = true;
-  }
-  setenv("TZ", "UTC0", 1);
-  tzset();
-  struct tm t = *utc_tm;
-  const time_t ts = mktime(&t);
-  if (had_old_tz) {
-    setenv("TZ", old_tz, 1);
-  } else {
-    unsetenv("TZ");
-  }
-  tzset();
-  if (ts == (time_t)-1) {
+  static const int kDaysBeforeMonth[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
+  const int year = utc_tm->tm_year + 1900;
+  if (year < 1970 || year > 2099 ||
+      utc_tm->tm_mon < 0 || utc_tm->tm_mon > 11 ||
+      utc_tm->tm_mday < 1 || utc_tm->tm_mday > 31 ||
+      utc_tm->tm_hour < 0 || utc_tm->tm_hour > 23 ||
+      utc_tm->tm_min < 0 || utc_tm->tm_min > 59 ||
+      utc_tm->tm_sec < 0 || utc_tm->tm_sec > 60) {
     return false;
   }
-  *out_ts = ts;
+  const bool leap = (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
+  long days = (long)(year - 1970) * 365L
+            + (long)((year - 1969) / 4)
+            - (long)((year - 1901) / 100)
+            + (long)((year - 1601) / 400);
+  days += kDaysBeforeMonth[utc_tm->tm_mon];
+  if (utc_tm->tm_mon > 1 && leap) {
+    days += 1;
+  }
+  days += utc_tm->tm_mday - 1;
+  *out_ts = (time_t)(days * 86400L
+                   + (long)utc_tm->tm_hour * 3600L
+                   + (long)utc_tm->tm_min * 60L
+                   + (long)utc_tm->tm_sec);
   return true;
 }
 

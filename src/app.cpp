@@ -41,6 +41,7 @@
 #include "web_portal/web_portal.h"
 #include "sd_mount.h"
 #include "sd_hotplug.h"
+#include "heap_monitor.h"
 
 /** SPI dedicado ao TF (pinos em `board_pins.h`, documentação Waveshare). */
 static SPIClass s_sd_spi;
@@ -318,6 +319,9 @@ void setup() {
    * é inicializado primeiro.
    */
   net_services_start_background_task();
+
+  /* Telemetria de heap + watchdog: 30s, reboot graceful se int_free < 6 KB. */
+  heap_monitor_start();
 
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("[NET] IP=%s mascara=%s gateway=%s\n", WiFi.localIP().toString().c_str(),
