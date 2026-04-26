@@ -98,6 +98,61 @@ void app_settings_set_wg_port(uint16_t port);
 String app_settings_wg_enroll_server(void);
 void app_settings_set_wg_enroll_server(const char *url);
 
+/* ------------------------------------------------------------------ */
+/* MQTT                                                                  */
+/* ------------------------------------------------------------------ */
+
+/** Liga/desliga cliente MQTT. Default false. */
+bool app_settings_mqtt_enabled(void);
+void app_settings_set_mqtt_enabled(bool on);
+
+/** Host do broker (IP ou hostname). Max 127 chars. Default "". */
+String app_settings_mqtt_host(void);
+void   app_settings_set_mqtt_host(const char *host);
+
+/** Porta do broker. Default 1883. */
+uint16_t app_settings_mqtt_port(void);
+void     app_settings_set_mqtt_port(uint16_t port);
+
+/** Username MQTT (vazio = sem autenticacao). */
+String app_settings_mqtt_user(void);
+
+/** Password MQTT. */
+String app_settings_mqtt_pass(void);
+
+/** Grava username e password MQTT atomicamente. */
+void app_settings_set_mqtt_creds(const char *user, const char *pass);
+
+/**
+ * Topico base MQTT.
+ * Default "fitadigital/<chipid>", gerado da primeira vez que e' lido.
+ * Max 127 chars.
+ */
+String app_settings_mqtt_base_topic(void);
+void   app_settings_set_mqtt_base_topic(const char *topic);
+
+/** Intervalo de telemetria em segundos. Clamp [10..3600]. Default 60. */
+uint16_t app_settings_mqtt_telemetry_interval_s(void);
+void     app_settings_set_mqtt_telemetry_interval_s(uint16_t secs);
+
+/** Lista de palavras-chave separadas por ';' (case-insensitive). Default "". Max 255 chars. */
+String app_settings_mqtt_keywords(void);
+void   app_settings_set_mqtt_keywords(const char *kw);
+
+/* ------------------------------------------------------------------ */
+/* Contadores persistentes                                               */
+/* ------------------------------------------------------------------ */
+
+/** Numero de boots desde fabrica (chave NVS "bc"). Incrementado em boot_journal_init. */
+uint32_t app_settings_boot_count_get(void);
+void     app_settings_boot_count_increment(void);
+
+/** Numero de reboots por heap_guard (chave NVS "hgc"). Incrementado em heap_monitor antes de esp_restart. */
+uint32_t app_settings_heap_guard_count_get(void);
+void     app_settings_heap_guard_count_increment(void);
+
+/* ------------------------------------------------------------------ */
+
 /**
  * Serial1 (RS485): velocidade em baud (valor da lista padrao ou o ultimo guardado).
  * @see app_settings_rs485_std_baud_count

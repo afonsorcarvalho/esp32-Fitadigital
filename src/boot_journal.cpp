@@ -1,6 +1,7 @@
 #include "boot_journal.h"
 
 #include "sd_access.h"
+#include "app_settings.h"
 
 #include <Arduino.h>
 #include <FS.h>
@@ -65,6 +66,8 @@ bool boot_journal_init(void) {
   if (s_boot_log_mutex == nullptr) {
     s_boot_log_mutex = xSemaphoreCreateMutex();
   }
+  /* app_settings_init() foi chamado antes deste ponto em app.cpp. */
+  app_settings_boot_count_increment();
   s_spiffs_ok = SPIFFS.begin(true);
   return s_spiffs_ok;
 }

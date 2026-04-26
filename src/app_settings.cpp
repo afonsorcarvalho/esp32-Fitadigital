@@ -32,6 +32,10 @@ static constexpr size_t kDownloadUrlMax = 127U;
 static constexpr size_t kWgIpMax = 19U;
 static constexpr size_t kWgKeyMax = 127U;
 static constexpr size_t kWgEpMax = 127U;
+static constexpr size_t kMqttHostMax = 127U;
+static constexpr size_t kMqttTopicMax = 127U;
+static constexpr size_t kMqttCredMax = 63U;
+static constexpr size_t kMqttKwMax = 255U;
 /** Tamanho maximo do ficheiro de configuracao no SD (evita RAM excessiva). */
 static constexpr size_t kSdCfgFileMaxBytes = 8192U;
 
@@ -948,4 +952,126 @@ size_t app_settings_rs485_std_baud_nearest_index(uint32_t baud) {
     }
   }
   return best_i;
+}
+
+/* ------------------------------------------------------------------ */
+/* MQTT settings                                                         */
+/* ------------------------------------------------------------------ */
+
+bool app_settings_mqtt_enabled(void) {
+  return s_prefs.getBool("mq_on", false);
+}
+
+void app_settings_set_mqtt_enabled(bool on) {
+  s_prefs.putBool("mq_on", on);
+}
+
+String app_settings_mqtt_host(void) {
+  return s_prefs.getString("mq_h", "");
+}
+
+void app_settings_set_mqtt_host(const char *host) {
+  put_str_max("mq_h", host, kMqttHostMax);
+}
+
+uint16_t app_settings_mqtt_port(void) {
+  uint32_t p = s_prefs.getUInt("mq_p", 1883U);
+  if (p == 0U || p > 65535U) {
+    p = 1883U;
+  }
+  return (uint16_t)p;
+}
+
+void app_settings_set_mqtt_port(uint16_t port) {
+  if (port == 0U) {
+    port = 1883U;
+  }
+  s_prefs.putUInt("mq_p", port);
+}
+
+String app_settings_mqtt_user(void) {
+  return s_prefs.getString("mq_u", "");
+}
+
+String app_settings_mqtt_pass(void) {
+  return s_prefs.getString("mq_pw", "");
+}
+
+void app_settings_set_mqtt_creds(const char *user, const char *pass) {
+  put_str_max("mq_u", user, kMqttCredMax);
+  put_str_max("mq_pw", pass, kMqttCredMax);
+}
+
+static String mqtt_build_default_topic(void) {
+  /* Usa os 3 bytes menos significativos do MAC de fábrica para unicidade curta. */
+  uint64_t mac = ESP.getEfuseMac();
+  char buf[32];
+  snprintf(buf, sizeof(buf), "fitadigital/%02x%02x%02x",
+           (unsigned)((mac >> 16) & 0xFF),
+           (unsigned)((mac >>  8) & 0xFF),
+           (unsigned)(mac & 0xFF));
+  return String(buf);
+}
+
+String app_settings_mqtt_base_topic(void) {
+  String t = s_prefs.getString("mq_b", "");
+  if (t.length() == 0U) {
+    t = mqtt_build_default_topic();
+    /* Persistir para que mudanças de MAC flash não alterem o tópico em campo. */
+    s_prefs.putString("mq_b", t.c_str());
+  }
+  return t;
+}
+
+void app_settings_set_mqtt_base_topic(const char *topic) {
+  put_str_max("mq_b", topic, kMqttTopicMax);
+}
+
+uint16_t app_settings_mqtt_telemetry_interval_s(void) {
+  uint32_t v = s_prefs.getUInt("mq_iv", 60U);
+  if (v < 10U) v = 10U;
+  if (v > 3600U) v = 3600U;
+  return (uint16_t)v;
+}
+
+void app_settings_set_mqtt_telemetry_interval_s(uint16_t secs) {
+  if (secs < 10U) secs = 10U;
+  if (secs > 3600U) secs = 3600U;
+  s_prefs.putUInt("mq_iv", secs);
+}
+
+String app_settings_mqtt_keywords(void) {
+  return s_prefs.getString("mq_kw", "");
+}
+
+void app_settings_set_mqtt_keywords(const char *kw) {
+  /* kMqttKwMax=255 excede o buffer de put_str_max (127); usar buffer local proprio. */
+  char b[kMqttKwMax + 1U];
+  memset(b, 0, sizeof(b));
+  if (kw) {
+    strncpy(b, kw, kMqttKwMax);
+  }
+  s_prefs.putString("mq_kw", b);
+}
+
+/* ------------------------------------------------------------------ */
+/* Contadores persistentes                                               */
+/* ------------------------------------------------------------------ */
+
+uint32_t app_settings_boot_count_get(void) {
+  return s_prefs.getUInt("bc", 0U);
+}
+
+void app_settings_boot_count_increment(void) {
+  const uint32_t v = s_prefs.getUInt("bc", 0U);
+  s_prefs.putUInt("bc", v + 1U);
+}
+
+uint32_t app_settings_heap_guard_count_get(void) {
+  return s_prefs.getUInt("hgc", 0U);
+}
+
+void app_settings_heap_guard_count_increment(void) {
+  const uint32_t v = s_prefs.getUInt("hgc", 0U);
+  s_prefs.putUInt("hgc", v + 1U);
 }

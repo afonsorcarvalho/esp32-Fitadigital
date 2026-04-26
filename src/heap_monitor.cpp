@@ -9,6 +9,7 @@
 #include "esp_system.h"
 
 #include "boot_journal.h"
+#include "app_settings.h"
 
 /* ets_printf: ROM function, sem VFS — mesmo padrão usado em sd_access.cpp/sd_hotplug.cpp. */
 extern "C" int ets_printf(const char *fmt, ...);
@@ -58,6 +59,7 @@ void heap_monitor_task(void *) {
                (unsigned)int_free, (unsigned)int_min, (unsigned)s_threshold_bytes);
       boot_journal_append("HEAP_GUARD", buf);
       boot_journal_flush_to_spiffs();
+      app_settings_heap_guard_count_increment();
       vTaskDelay(pdMS_TO_TICKS(150));
       esp_restart();
     }
