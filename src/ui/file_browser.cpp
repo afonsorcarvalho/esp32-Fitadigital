@@ -888,6 +888,12 @@ static bool load_viewer_window(unsigned first_line, unsigned count) {
   if (first_line + count > s_total_lines) {
     count = s_total_lines - first_line;
   }
+  /* s_line_ptrs[] tem tamanho kWindowLines+2 — clampar antes de split_lines_inplace
+   * para evitar buffer overflow no array de ponteiros (causa do crash LoadProhibited
+   * em truncate_line_for_cell quando file cresce > kWindowLines linhas em soak). */
+  if (count > kWindowLines) {
+    count = kWindowLines;
+  }
   if (count == 0) {
     return false;
   }
