@@ -1380,9 +1380,15 @@ static void show_text_file(const char *full_path, bool quiet_index, bool scroll_
   strlcpy(s_viewer_path, path_work, sizeof(s_viewer_path));
 
   if (!quiet_index) {
-    /* Spinner com delay 150 ms: evita flicker em ficheiros pequenos que indexam rapido.
-     * ui_loading_hide chamado adiante cancela o timer se ainda nao disparou. */
-    ui_loading_show_delayed(ov_parent, "Indexando arquivo...", 150U);
+    /* Spinner imediato + flush_display: o caminho de indexacao usa loop de
+     * sd_access_sync (multiplos chunks de 16 KB) que bloqueia a task LVGL
+     * em xSemaphoreTake. Durante esse bloqueio nenhum timer LVGL dispara,
+     * pelo que ui_loading_show_delayed nao funciona aqui (o bug do delayed
+     * em paths sd_access_sync foi confirmado em testes — funciona apenas
+     * com sd_access_async, ex.: refresh_file_list).
+     * Trade-off: pequeno flicker em ficheiros que indexam < 100 ms. */
+    ui_loading_show(ov_parent, "Indexando arquivo...");
+    ui_loading_flush_display();
   }
 
   /* ── Fase 1: indexar offsets de linhas (sem mutex LVGL) ──────────── */

@@ -27,6 +27,7 @@
 #include "net_time.h"
 #include "net_wireguard.h"
 #include "ui/ui_loading.h"
+#include "ui/ui_async_action.h"
 #include "ui/ui_screensaver.h"
 #include "ui/ui_pin_entry.h"
 #include "ui/ui_wg_enroll.h"
@@ -819,36 +820,33 @@ static void dash_spinner_remove_from_btn(lv_obj_t *btn, lv_obj_t *lbl) {
   if (lbl != nullptr) { lv_obj_clear_flag(lbl, LV_OBJ_FLAG_HIDDEN); }
 }
 
-static void dashboard_btn_today_cb(lv_event_t *e) {
-  (void)e;
-  /* Spinner armado mas so aparece se a operacao demorar > 150 ms (evita flicker). */
-  static DashSpinnerArm s_arm_today;
-  if (s_dash_btn_today != nullptr) {
-    dash_spinner_arm_delayed(&s_arm_today, s_dash_btn_today, s_dash_lbl_today, 150);
-  }
-  /* Verifica se ha ciclo gravado hoje ANTES de sair do dashboard. Se nao, toast. */
+/* Estado partilhado entre work (sd_io) e finish (LVGL) do today_cb.
+ * Single instance — accoes UI nao reentrantes garantidas por ui_async_action_run. */
+struct TodayAsyncCtx {
   char path[256];
-  if (!cycles_rs485_format_today_path(path, sizeof path)) {
-    dash_spinner_disarm(&s_arm_today);
-    ui_toast_show(ToastKind::Warn, "Data do sistema invalida");
-    return;
-  }
-  bool exists = false;
-  lvgl_port_unlock();  /* liberta LVGL: renderiza o spinner durante o acesso ao SD */
-  sd_access_sync([&path, &exists]() {
-    if (SD.exists(path)) {
-      File f = SD.open(path, FILE_READ);
-      if (f && !f.isDirectory()) {
-        exists = true;
-      }
-      if (f) {
-        f.close();
-      }
+  bool exists;
+};
+static TodayAsyncCtx s_today_ctx;
+
+static void today_async_work(void *ud) {
+  /* Corre na task sd_io. */
+  TodayAsyncCtx *c = static_cast<TodayAsyncCtx *>(ud);
+  c->exists = false;
+  if (SD.exists(c->path)) {
+    File f = SD.open(c->path, FILE_READ);
+    if (f && !f.isDirectory()) {
+      c->exists = true;
     }
-  });
-  (void)lvgl_port_lock(-1);
-  dash_spinner_disarm(&s_arm_today);
-  if (!exists) {
+    if (f) {
+      f.close();
+    }
+  }
+}
+
+static void today_async_finish(void *ud) {
+  /* Corre na task LVGL com lock. ui_loading_hide ja foi chamado pelo helper. */
+  TodayAsyncCtx *c = static_cast<TodayAsyncCtx *>(ud);
+  if (!c->exists) {
     ui_toast_show(ToastKind::Info, "Sem ciclo gravado hoje ainda");
     return;
   }
@@ -856,19 +854,32 @@ static void dashboard_btn_today_cb(lv_event_t *e) {
   file_browser_open_today_cycles_txt();
 }
 
+static void dashboard_btn_today_cb(lv_event_t *e) {
+  (void)e;
+  if (!cycles_rs485_format_today_path(s_today_ctx.path, sizeof s_today_ctx.path)) {
+    ui_toast_show(ToastKind::Warn, "Data do sistema invalida");
+    return;
+  }
+  /* Pattern "abrir pastas": overlay com delay 150 ms via ui_async_action_run.
+   * Trabalho corre na task sd_io; finish corre na LVGL com lock. */
+  if (!ui_async_action_run(s_main_content, "Verificando ciclo de hoje...", 150,
+                           today_async_work, today_async_finish, &s_today_ctx)) {
+    /* Outra acao em curso — feedback minimo para nao acumular requests. */
+    ui_toast_show(ToastKind::Warn, "Aguarde a acao actual terminar");
+  }
+}
+
 static void dashboard_btn_history_cb(lv_event_t *e) {
   (void)e;
-  /* Spinner armado com delay 150 ms — evita flicker se a transicao for instantanea.
-   * ensure_main_content_browser faz lv_obj_clean em s_main_content, o que destroi
-   * o spinner (filho do btn que e filho do dashboard). dash_spinner_disarm cancela
-   * o timer se ainda nao disparou. */
-  static DashSpinnerArm s_arm_hist;
-  if (s_dash_btn_hist != nullptr) {
-    dash_spinner_arm_delayed(&s_arm_hist, s_dash_btn_hist, s_dash_lbl_hist, 150);
-  }
+  /* Sem spinner-no-botao: callback sincrono sem unlock LVGL, pelo que um timer de
+   * 150 ms nunca dispararia antes do disarm. Alem disso ensure_main_content_browser
+   * faz lv_obj_clean em s_main_content, destruindo o botao antes de qualquer spinner
+   * aparecer. O feedback visual fica a cargo do overlay "Carregando arquivos da
+   * pasta..." disparado por refresh_file_list (sd_access_async corre na task sd_io
+   * enquanto a task LVGL continua a processar lv_timer_handler — nesse caminho o
+   * delay de 150 ms funciona). */
   ensure_main_content_browser();
   file_browser_goto("/CICLOS");
-  dash_spinner_disarm(&s_arm_hist);
 }
 
 static void dashboard_btn_home_cb(lv_event_t *e);
