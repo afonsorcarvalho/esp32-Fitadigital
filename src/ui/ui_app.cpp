@@ -1170,6 +1170,17 @@ static void pin_change_btn_cb(lv_event_t * /*e*/) {
 
 /* --- Sys / EXPORT-IMPORT --- */
 
+static void reboot_btn_cb(lv_event_t * /*e*/) {
+  ui_toast_show(ToastKind::Warn, "Reboot em 2s...");
+  lv_timer_t *t = lv_timer_create([](lv_timer_t *self) {
+    (void)self;
+    esp_restart();
+  }, 2000, nullptr);
+  if (t) {
+    lv_timer_set_repeat_count(t, 1);
+  }
+}
+
 static void settings_cfg_export_cb(lv_event_t * /*e*/) {
   if (!sd_access_is_mounted()) {
     if (s_cfg_feedback_lbl != nullptr) {
@@ -3033,6 +3044,17 @@ static void create_settings_screen(void) {
   lv_label_set_long_mode(s_cfg_feedback_lbl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(s_cfg_feedback_lbl, LV_PCT(100));
   lv_label_set_text(s_cfg_feedback_lbl, "");
+
+  /* === REBOOT === */
+  sys_section_header(LV_SYMBOL_REFRESH " REBOOT");
+
+  lv_obj_t *reboot_btn = lv_btn_create(sys_scroll);
+  lv_obj_set_width(reboot_btn, LV_PCT(100));
+  lv_obj_set_style_bg_color(reboot_btn, UI_COLOR_ERROR_BG, 0);
+  lv_obj_t *reboot_lbl = lv_label_create(reboot_btn);
+  lv_label_set_text(reboot_lbl, LV_SYMBOL_REFRESH " Reiniciar dispositivo");
+  lv_obj_center(reboot_lbl);
+  lv_obj_add_event_cb(reboot_btn, reboot_btn_cb, LV_EVENT_CLICKED, nullptr);
 
   lv_obj_t *sett_tab_btns = lv_tabview_get_tab_btns(tv);
   lv_obj_add_event_cb(sett_tab_btns, settings_tab_btns_cb, LV_EVENT_VALUE_CHANGED, nullptr);
