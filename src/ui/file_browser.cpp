@@ -90,6 +90,8 @@ static char s_entry_paths[kMaxListEntries][192];
 static bool s_entry_is_dir[kMaxListEntries];
 /** Texto da linha na lista (preenchido durante scan SD sem mutex LVGL). */
 static char s_entry_lines[kMaxListEntries][128];
+/** mtime da entrada (segundos epoch UTC). Usado para ordenar a lista DESC. */
+static time_t s_entry_mtime[kMaxListEntries];
 static unsigned s_entry_count = 0;
 /** Timestamp (millis) da ultima vez que a lista de ficheiros foi atualizada na UI. */
 static uint32_t s_last_refresh_ms = 0;
@@ -485,13 +487,18 @@ static void viewer_nav_btn_cb(lv_event_t *e) {
       /* Linha-alvo fora da janela: carregar nova janela centrada nela. */
       unsigned new_start;
       if (jump_to_end) {
-        /* Garantir que o trecho desde new_start ate EOF cabe no buffer (8 KiB). */
-        new_start = viewer_tail_fit_first_line();
+        /* Forcar carregamento das ULTIMAS kWindowLines linhas: split_lines_inplace
+         * so popula 150 ponteiros (s_line_ptrs[152]). viewer_tail_fit_first_line
+         * usa criterio de BYTES (kTextBufSize) mas se o sufixo tem > 150 linhas,
+         * o split corta na 150a e a ultima linha real nao fica visivel. */
+        new_start = (s_total_lines > kWindowLines) ? s_total_lines - kWindowLines : 0;
       } else {
         const unsigned margin = kWindowLines / 4;
         new_start = (target_line > margin) ? target_line - margin : 0;
         if (new_start + kWindowLines > s_total_lines && s_total_lines > kWindowLines) {
-          new_start = viewer_tail_fit_first_line();
+          /* Coerente com jump_to_end: ancorar nas ultimas kWindowLines linhas para
+           * que a last line real fique no array s_line_ptrs (limite 150 ponteiros). */
+          new_start = s_total_lines - kWindowLines;
         }
       }
 
@@ -1140,7 +1147,11 @@ static void viewer_scroll_to_last_page(void) {
   if (s_viewer_table == nullptr || s_line_offsets == nullptr || s_total_lines == 0) {
     return;
   }
-  const unsigned new_start = viewer_tail_fit_first_line();
+  /* Ancorar nas ultimas kWindowLines linhas em vez de viewer_tail_fit_first_line:
+   * split_lines_inplace so popula 150 ponteiros (s_line_ptrs[152]). Usar criterio
+   * de BYTES deixava a last line real fora do array em ficheiros com sufixo > 150
+   * linhas, fazendo o auto-scroll do RS485 e o botao End pararem na linha 150. */
+  const unsigned new_start = (s_total_lines > kWindowLines) ? s_total_lines - kWindowLines : 0;
   const unsigned max_lines = (s_total_lines > new_start) ? s_total_lines - new_start : 1U;
   (void)load_viewer_window(new_start, max_lines);
   lv_obj_update_layout(s_viewer_table);
@@ -1261,11 +1272,12 @@ static void rs485_open_timer_cb(lv_timer_t * /*t*/) {
   if (seq == s_rs485_saved_last_handled) {
     return;
   }
-  /* Guard heap: abrir viewer aloca widgets LVGL + buffers no heap interno (DRAM).
-   * Com heap interno < 24 KB, skip para evitar OOM/PANIC (v1.02 issue: crash apos
-   * idle prolongado quando chega linha RS485 com heap baixo). Seq fica unhandled,
-   * proxima tentativa re-avalia com heap eventualmente recuperado. */
-  static constexpr uint32_t kRs485OpenMinInternalHeap = 24U * 1024U;
+  /* Guard heap: abrir viewer aloca widgets LVGL (PSRAM via LV_MEM_CUSTOM=1) +
+   * pequenos buffers no heap interno. Threshold baixado de 24 KB -> 14 KB apos
+   * adicao do cliente MQTT (espMqttClient + AsyncTCP buffers ocupam ~5 KB
+   * permanente, baixando heap pos-boot de ~38 KB para ~22 KB). 14 KB ainda da
+   * folga 8 KB acima do watchdog heap_monitor (6 KB) que dispara reboot graceful. */
+  static constexpr uint32_t kRs485OpenMinInternalHeap = 14U * 1024U;
   const uint32_t heap_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   if (heap_free < kRs485OpenMinInternalHeap) {
     static uint32_t last_warn_ms = 0;
@@ -1751,6 +1763,40 @@ static void refresh_file_list_post_finish(void) {
  * vTaskDelay(1) a cada algumas entradas para ceder CPU a async_tcp/FTP
  * (evita TWDT). `kMaxListEntries`=48 mantem o tempo total < 1s tipico.
  */
+/**
+ * Ordena entries por mtime DESC (mais recente primeiro). Pastas e ficheiros
+ * misturados — utilizador prefere ver o ficheiro do dia no topo, mesmo dentro
+ * de /CICLOS/AAAA/MM. Bubble sort: 48 entries max, corre 1x por scan, custo
+ * desprezivel comparado com I/O SD ja feito.
+ */
+static void sort_entries_by_mtime_desc(unsigned n) {
+  if (n < 2U) return;
+  char tmp_path[sizeof(s_entry_paths[0])];
+  char tmp_line[sizeof(s_entry_lines[0])];
+  for (unsigned i = 0; i + 1U < n; ++i) {
+    bool swapped = false;
+    for (unsigned j = 0; j + 1U < n - i; ++j) {
+      /* DESC: o maior mtime fica primeiro. */
+      if (s_entry_mtime[j] < s_entry_mtime[j + 1U]) {
+        memcpy(tmp_path, s_entry_paths[j], sizeof(tmp_path));
+        memcpy(s_entry_paths[j], s_entry_paths[j + 1U], sizeof(tmp_path));
+        memcpy(s_entry_paths[j + 1U], tmp_path, sizeof(tmp_path));
+        memcpy(tmp_line, s_entry_lines[j], sizeof(tmp_line));
+        memcpy(s_entry_lines[j], s_entry_lines[j + 1U], sizeof(tmp_line));
+        memcpy(s_entry_lines[j + 1U], tmp_line, sizeof(tmp_line));
+        const bool d = s_entry_is_dir[j];
+        s_entry_is_dir[j] = s_entry_is_dir[j + 1U];
+        s_entry_is_dir[j + 1U] = d;
+        const time_t t = s_entry_mtime[j];
+        s_entry_mtime[j] = s_entry_mtime[j + 1U];
+        s_entry_mtime[j + 1U] = t;
+        swapped = true;
+      }
+    }
+    if (!swapped) break;
+  }
+}
+
 static void refresh_scan_worker(void) {
   /**
    * VFS Arduino abre um FILE* (newlib fopen) por cada entrada listada, e cada
@@ -1801,6 +1847,7 @@ static void refresh_scan_worker(void) {
     char short_name[48];
     strlcpy(short_name, name, sizeof(short_name));
     const time_t last_write = entry.getLastWrite();
+    s_entry_mtime[s_async_scanned] = last_write;
     char date_buf[20];
     format_entry_datetime(last_write, date_buf, sizeof(date_buf));
     /* Icone passa a ser parametro separado de lv_list_add_btn (permite recolor). */
@@ -1821,6 +1868,8 @@ static void refresh_scan_worker(void) {
     }
   }
   dir.close();
+  /* Ordenar por mtime DESC antes de exibir — ficheiros mais recentes no topo. */
+  sort_entries_by_mtime_desc(s_async_scanned);
   refresh_file_list_post_finish();
 }
 

@@ -113,6 +113,9 @@ static lv_obj_t *s_mqtt_interval_sl = nullptr;
 static lv_obj_t *s_mqtt_feedback_lbl = nullptr;
 static lv_obj_t *s_sett_mqtt_kb = nullptr;
 
+/** Aba Sys / EXPORT-IMPORT: feedback dos botoes Exportar/Importar fdigi.cfg. */
+static lv_obj_t *s_cfg_feedback_lbl = nullptr;
+
 /** Aba RS485: velocidade e trama UART (NVS + reinicio da Serial1). */
 static lv_obj_t *s_rs485_roller_baud = nullptr;
 static lv_obj_t *s_rs485_roller_frame = nullptr;
@@ -1165,6 +1168,41 @@ static void pin_change_btn_cb(lv_event_t * /*e*/) {
   ui_pin_entry_capture_show(LV_SYMBOL_SETTINGS " Senha actual", pin_change_current_cb);
 }
 
+/* --- Sys / EXPORT-IMPORT --- */
+
+static void settings_cfg_export_cb(lv_event_t * /*e*/) {
+  if (!sd_access_is_mounted()) {
+    if (s_cfg_feedback_lbl != nullptr) {
+      lv_label_set_text(s_cfg_feedback_lbl, "SD nao montado.");
+    }
+    ui_toast_show(ToastKind::Warn, "SD nao montado");
+    return;
+  }
+  app_settings_sync_config_file_to_sd();
+  if (s_cfg_feedback_lbl != nullptr) {
+    lv_label_set_text(s_cfg_feedback_lbl, "Exportado: /fdigi.cfg actualizado.");
+  }
+  ui_toast_show(ToastKind::Success, "fdigi.cfg exportado.");
+}
+
+static void settings_cfg_import_cb(lv_event_t * /*e*/) {
+  if (!sd_access_is_mounted()) {
+    if (s_cfg_feedback_lbl != nullptr) {
+      lv_label_set_text(s_cfg_feedback_lbl, "SD nao montado.");
+    }
+    ui_toast_show(ToastKind::Warn, "SD nao montado");
+    return;
+  }
+  const bool ok = app_settings_try_load_from_sd_config();
+  if (s_cfg_feedback_lbl != nullptr) {
+    lv_label_set_text(s_cfg_feedback_lbl,
+                      ok ? "Importado: NVS actualizada. Reboot recomendado."
+                         : "Falhou: ficheiro ausente, formato invalido ou cabecalho errado.");
+  }
+  ui_toast_show(ok ? ToastKind::Success : ToastKind::Error,
+                ok ? "fdigi.cfg importado" : "Importar falhou");
+}
+
 /** Posiciona os rollers RS485 segundo a NVS (chamar ao entrar em definicoes). */
 static void settings_rs485_sync_ui_from_settings(void) {
   if (s_rs485_roller_baud != nullptr) {
@@ -1273,10 +1311,12 @@ static void settings_sd_format_exec_cb(lv_event_t *e) {
   bool ok = false;
   sd_access_sync([&] {
     net_services_set_ftp_suspended(true);
+    net_mqtt_set_suspended(true);
     ok = SD.formatFAT();
     if (ok) {
       app_settings_sync_config_file_to_sd();
     }
+    net_mqtt_set_suspended(false);
     net_services_set_ftp_suspended(false);
   });
 
@@ -2858,15 +2898,41 @@ static void create_settings_screen(void) {
   lv_slider_set_value(s_scr_timeout_sl, (int)app_settings_screensaver_timeout(), LV_ANIM_OFF);
   lv_obj_add_event_cb(s_scr_timeout_sl, scr_timeout_sl_cb, LV_EVENT_VALUE_CHANGED, nullptr);
 
-  /* --- Aba Sistema (OTA via ArduinoOTA push) --- */
-  lv_obj_t *tab_sistema = lv_tabview_add_tab(tv, LV_SYMBOL_UPLOAD " Sistema");
+  /* --- Aba Sys (OTA + SENHA CONFIG + EXPORT/IMPORT) --- */
+  lv_obj_t *tab_sistema = lv_tabview_add_tab(tv, LV_SYMBOL_UPLOAD " Sys");
   lv_obj_set_layout(tab_sistema, LV_LAYOUT_FLEX);
   lv_obj_set_flex_flow(tab_sistema, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(tab_sistema, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_all(tab_sistema, 8, 0);
-  lv_obj_set_style_pad_row(tab_sistema, 10, 0);
+  lv_obj_set_style_pad_all(tab_sistema, 4, 0);
+  lv_obj_set_style_pad_row(tab_sistema, 6, 0);
 
-  lv_obj_t *ota_help = lv_label_create(tab_sistema);
+  lv_obj_t *sys_scroll = lv_obj_create(tab_sistema);
+  lv_obj_set_width(sys_scroll, LV_PCT(100));
+  lv_obj_set_flex_grow(sys_scroll, 1);
+  lv_obj_set_layout(sys_scroll, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(sys_scroll, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_all(sys_scroll, 4, 0);
+  lv_obj_set_style_pad_row(sys_scroll, 6, 0);
+  lv_obj_set_scrollbar_mode(sys_scroll, LV_SCROLLBAR_MODE_AUTO);
+
+  auto sys_section_header = [&](const char *title) {
+    lv_obj_t *sep = lv_obj_create(sys_scroll);
+    lv_obj_set_width(sep, LV_PCT(100));
+    lv_obj_set_height(sep, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_color(sep, UI_COLOR_PRIMARY_LIGHT, 0);
+    lv_obj_set_style_pad_all(sep, 6, 0);
+    lv_obj_set_style_border_width(sep, 0, 0);
+    lv_obj_set_style_radius(sep, 4, 0);
+    lv_obj_clear_flag(sep, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *lbl = lv_label_create(sep);
+    lv_label_set_text(lbl, title);
+    lv_obj_set_style_text_color(lbl, UI_COLOR_PRIMARY_DARK, 0);
+  };
+
+  /* === OTA === */
+  sys_section_header(LV_SYMBOL_UPLOAD " OTA");
+
+  lv_obj_t *ota_help = lv_label_create(sys_scroll);
   lv_label_set_long_mode(ota_help, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(ota_help, LV_PCT(100));
   lv_label_set_text(ota_help,
@@ -2874,21 +2940,20 @@ static void create_settings_screen(void) {
       "Requer Wi-Fi ligado. Apos ativar, use:\n"
       "  espota.py -i <IP> -f firmware.bin\n"
       "ou o IDE com porta de rede fitadigital.");
-  lv_obj_t *ota_version_lbl = lv_label_create(tab_sistema);
+  lv_obj_t *ota_version_lbl = lv_label_create(sys_scroll);
   lv_label_set_text_fmt(ota_version_lbl, "Versao atual: " FITADIGITAL_VERSION);
 
-  s_ota_status_lbl = lv_label_create(tab_sistema);
+  s_ota_status_lbl = lv_label_create(sys_scroll);
   lv_label_set_long_mode(s_ota_status_lbl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(s_ota_status_lbl, LV_PCT(100));
   lv_label_set_text(s_ota_status_lbl, "Inativo");
 
-  s_ota_bar = lv_bar_create(tab_sistema);
+  s_ota_bar = lv_bar_create(sys_scroll);
   lv_obj_set_width(s_ota_bar, LV_PCT(100));
   lv_bar_set_range(s_ota_bar, 0, 100);
   lv_bar_set_value(s_ota_bar, 0, LV_ANIM_OFF);
 
-  /* Linha de botoes */
-  lv_obj_t *ota_btn_row = lv_obj_create(tab_sistema);
+  lv_obj_t *ota_btn_row = lv_obj_create(sys_scroll);
   lv_obj_set_width(ota_btn_row, LV_PCT(100));
   lv_obj_set_height(ota_btn_row, LV_SIZE_CONTENT);
   lv_obj_set_layout(ota_btn_row, LV_LAYOUT_FLEX);
@@ -2915,17 +2980,59 @@ static void create_settings_screen(void) {
   lv_obj_add_state(s_ota_stop_btn, LV_STATE_DISABLED);
   lv_obj_add_event_cb(s_ota_stop_btn, ota_stop_btn_cb, LV_EVENT_CLICKED, nullptr);
 
-  /* Separador + botao trocar PIN de acesso (movido de Scr) */
-  lv_obj_t *pin_sep = lv_label_create(tab_sistema);
-  lv_label_set_text(pin_sep, "Senha de acesso:");
+  /* === SENHA CONFIG === */
+  sys_section_header(LV_SYMBOL_SETTINGS " SENHA CONFIG");
 
-  lv_obj_t *pin_btn = lv_btn_create(tab_sistema);
+  lv_obj_t *pin_btn = lv_btn_create(sys_scroll);
   lv_obj_set_width(pin_btn, LV_PCT(100));
   lv_obj_set_style_bg_color(pin_btn, UI_COLOR_PRIMARY, 0);
   lv_obj_t *pin_lbl = lv_label_create(pin_btn);
   lv_label_set_text(pin_lbl, LV_SYMBOL_SETTINGS " Trocar senha");
   lv_obj_center(pin_lbl);
   lv_obj_add_event_cb(pin_btn, pin_change_btn_cb, LV_EVENT_CLICKED, nullptr);
+
+  /* === EXPORT/IMPORT === */
+  sys_section_header(LV_SYMBOL_DRIVE " EXPORT/IMPORT");
+
+  lv_obj_t *cfg_help = lv_label_create(sys_scroll);
+  lv_label_set_long_mode(cfg_help, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(cfg_help, LV_PCT(100));
+  lv_label_set_text(cfg_help,
+      "Exportar guarda a NVS para /fdigi.cfg no SD (texto editavel).\n"
+      "Importar le /fdigi.cfg do SD e escreve na NVS (reboot recomendado).");
+
+  lv_obj_t *cfg_btn_row = lv_obj_create(sys_scroll);
+  lv_obj_set_width(cfg_btn_row, LV_PCT(100));
+  lv_obj_set_height(cfg_btn_row, LV_SIZE_CONTENT);
+  lv_obj_set_layout(cfg_btn_row, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(cfg_btn_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(cfg_btn_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(cfg_btn_row, 0, 0);
+  lv_obj_set_style_pad_column(cfg_btn_row, 8, 0);
+  lv_obj_set_style_border_width(cfg_btn_row, 0, 0);
+  lv_obj_set_style_bg_opa(cfg_btn_row, LV_OPA_TRANSP, 0);
+  lv_obj_clear_flag(cfg_btn_row, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *cfg_export_btn = lv_btn_create(cfg_btn_row);
+  lv_obj_set_flex_grow(cfg_export_btn, 1);
+  lv_obj_set_style_bg_color(cfg_export_btn, UI_COLOR_PRIMARY, 0);
+  lv_obj_t *cfg_export_lbl = lv_label_create(cfg_export_btn);
+  lv_label_set_text(cfg_export_lbl, LV_SYMBOL_SAVE " Exportar p/ SD");
+  lv_obj_center(cfg_export_lbl);
+  lv_obj_add_event_cb(cfg_export_btn, settings_cfg_export_cb, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t *cfg_import_btn = lv_btn_create(cfg_btn_row);
+  lv_obj_set_flex_grow(cfg_import_btn, 1);
+  lv_obj_set_style_bg_color(cfg_import_btn, UI_COLOR_BLUE, 0);
+  lv_obj_t *cfg_import_lbl = lv_label_create(cfg_import_btn);
+  lv_label_set_text(cfg_import_lbl, LV_SYMBOL_DOWNLOAD " Importar do SD");
+  lv_obj_center(cfg_import_lbl);
+  lv_obj_add_event_cb(cfg_import_btn, settings_cfg_import_cb, LV_EVENT_CLICKED, nullptr);
+
+  s_cfg_feedback_lbl = lv_label_create(sys_scroll);
+  lv_label_set_long_mode(s_cfg_feedback_lbl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(s_cfg_feedback_lbl, LV_PCT(100));
+  lv_label_set_text(s_cfg_feedback_lbl, "");
 
   lv_obj_t *sett_tab_btns = lv_tabview_get_tab_btns(tv);
   lv_obj_add_event_cb(sett_tab_btns, settings_tab_btns_cb, LV_EVENT_VALUE_CHANGED, nullptr);
