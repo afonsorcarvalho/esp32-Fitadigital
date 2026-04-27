@@ -2909,6 +2909,19 @@ static void create_settings_screen(void) {
   lv_slider_set_value(s_scr_timeout_sl, (int)app_settings_screensaver_timeout(), LV_ANIM_OFF);
   lv_obj_add_event_cb(s_scr_timeout_sl, scr_timeout_sl_cb, LV_EVENT_VALUE_CHANGED, nullptr);
 
+  /* Separador SENHA */
+  lv_obj_t *scr_pin_sep = lv_label_create(tab_ui);
+  lv_label_set_text(scr_pin_sep, "Senha de acesso:");
+
+  /* Botao trocar senha */
+  lv_obj_t *scr_pin_btn = lv_btn_create(tab_ui);
+  lv_obj_set_width(scr_pin_btn, LV_PCT(100));
+  lv_obj_set_style_bg_color(scr_pin_btn, UI_COLOR_PRIMARY, 0);
+  lv_obj_t *scr_pin_lbl = lv_label_create(scr_pin_btn);
+  lv_label_set_text(scr_pin_lbl, LV_SYMBOL_SETTINGS " Trocar senha");
+  lv_obj_center(scr_pin_lbl);
+  lv_obj_add_event_cb(scr_pin_btn, pin_change_btn_cb, LV_EVENT_CLICKED, nullptr);
+
   /* --- Aba Sys (OTA + SENHA CONFIG + EXPORT/IMPORT) --- */
   lv_obj_t *tab_sistema = lv_tabview_add_tab(tv, LV_SYMBOL_UPLOAD " Sys");
   lv_obj_set_layout(tab_sistema, LV_LAYOUT_FLEX);

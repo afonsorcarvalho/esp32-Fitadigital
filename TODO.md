@@ -2,7 +2,6 @@
 
 ## Em curso
 
-
 ## Pendente
 - **MQTT — Fase 3: cliente real** — adicionar `bertmelis/espMqttClient` lib_deps, implementar task `mqtt_svc` (core 0, prio 1, 4KB stack), LWT, backoff exponencial, telemetria JSON periódica.
 - **MQTT — Fase 4: keyword detector** — implementar task `mqtt_kw` (core 1, prio 1, 3KB stack), tick 5s, leitura offset SD, match `strcasestr`, publish `/keyword`.
@@ -12,6 +11,8 @@
 - Organizar `SoftwareQualification_*.docx` (3 versoes untracked na raiz): mover para pasta dedicada ou adicionar ao `.gitignore`.
 
 ## Feito
+- 2026-04-27 — Trocar senha de configuração na aba Scr.: botão "Trocar senha" adicionado à aba Scr. (label "Senha de acesso:" + botão primário full-width) reutilizando o fluxo 3 passos (atual → nova → confirmar) já existente em pin_change_btn_cb; NVS via app_settings_set_settings_pin (chave pin_sett, default "1234", 4-16 chars). Bump v1.36→v1.37.
+- 2026-04-25 — Web portal completo + auth (v1.37) — Fases A-D: auth Basic, endpoints novos (/api/settings/{rs485,mqtt,ui,net,pin}, /api/system/{reboot,export,import,status}, /api/health), HTML reescrito com 8 tabs CSS, soak 30 min. Bump v1.36→v1.37.
 - 2026-04-25 — MQTT Fase 2: UI LVGL — aba FTP + WG fundidas em tab "SRV" com headers de secção coloridos; bloco MQTT adicionado (switch, textareas host/port/user/pass/base_topic/keywords, slider intervalo 10-3600s, botao Salvar MQTT, label status refresh 1s em status_timer_cb). Teclados: 3 teclados separados (ftp_kb, wg_kb, mqtt_kb) todos pai de tab_srv. Tabview passa de 9 para 8 tabs (Wi-Fi=0, SRV=1, Hora=2, RS485=3, Logs=4, SD=5, Scr.=6, Sistema=7). Build pendente de validacao pelo deployer.
 - 2026-04-25 — MQTT Fase 1: settings NVS + skeleton stub. Adicionadas chaves `mq_on/h/p/u/pw/b/iv/kw` + contadores `bc`/`hgc` em `app_settings.h/.cpp`. Hooks `boot_count_increment` em `boot_journal_init` e `heap_guard_count_increment` em `heap_monitor` antes de `esp_restart`. Criados `net_mqtt.h/.cpp` e `net_mqtt_keywords.h/.cpp` como stubs com enum `MqttStatus`. `app.cpp` chama `net_mqtt_init()` + `net_mqtt_keywords_start()` após `net_services_start_background_task()`. Build pendente de validação pelo deployer.
 - 2026-04-26 — Heap leak ~1432 B/min eliminado: `tm_to_epoch_utc` (src/net_time.cpp) reescrito p/ aritmética pura UTC, sem `setenv("TZ","UTC0")` + `tzset()` + `mktime()`. Bissecção (envs bisect_a/a2/a3a/a3b/a4) provou: leak NÃO em web_portal/AsyncTCP/WireGuard/FTP/WiFi/lwip nem em LVGL/SD/RS485 — exclusivamente em `update_bar_wifi_text()` chamado a 1Hz por `status_timer_cb`, cadeia até `tm_to_epoch_utc` que invocava 4× setenv + 4× tzset por tick. Match aritmético: 4×6 B × 60 = 1440 B/min ≈ 1432 medido (newlib leak documentado). Soak validação 30 min (61 pontos `[HEAP]`): drain OLS 0.0 B/min, heap interna flat em 39068 B. Antes fix: -1432 B/min linear R²=1.000 → OOM em ~40 min.
