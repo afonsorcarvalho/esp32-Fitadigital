@@ -4,7 +4,6 @@
 
 
 ## Pendente
-- **MQTT — Fase 2: UI LVGL** — secção "MQTT" na aba SRV (ao lado FTP/WG): switch on/off, textareas host/port/user/pass/base_topic, slider intervalo 10–3600s, textarea keywords, label estado refresh 1s, botão Aplicar.
 - **MQTT — Fase 3: cliente real** — adicionar `bertmelis/espMqttClient` lib_deps, implementar task `mqtt_svc` (core 0, prio 1, 4KB stack), LWT, backoff exponencial, telemetria JSON periódica.
 - **MQTT — Fase 4: keyword detector** — implementar task `mqtt_kw` (core 1, prio 1, 3KB stack), tick 5s, leitura offset SD, match `strcasestr`, publish `/keyword`.
 - **MQTT — Fase 5: testes** — soak 30 min Mosquitto local, validar `boot_count`/`heap_guard_reboots` no JSON, LWT, heap drain <50 B/min.
@@ -13,6 +12,7 @@
 - Organizar `SoftwareQualification_*.docx` (3 versoes untracked na raiz): mover para pasta dedicada ou adicionar ao `.gitignore`.
 
 ## Feito
+- 2026-04-25 — MQTT Fase 2: UI LVGL — aba FTP + WG fundidas em tab "SRV" com headers de secção coloridos; bloco MQTT adicionado (switch, textareas host/port/user/pass/base_topic/keywords, slider intervalo 10-3600s, botao Salvar MQTT, label status refresh 1s em status_timer_cb). Teclados: 3 teclados separados (ftp_kb, wg_kb, mqtt_kb) todos pai de tab_srv. Tabview passa de 9 para 8 tabs (Wi-Fi=0, SRV=1, Hora=2, RS485=3, Logs=4, SD=5, Scr.=6, Sistema=7). Build pendente de validacao pelo deployer.
 - 2026-04-25 — MQTT Fase 1: settings NVS + skeleton stub. Adicionadas chaves `mq_on/h/p/u/pw/b/iv/kw` + contadores `bc`/`hgc` em `app_settings.h/.cpp`. Hooks `boot_count_increment` em `boot_journal_init` e `heap_guard_count_increment` em `heap_monitor` antes de `esp_restart`. Criados `net_mqtt.h/.cpp` e `net_mqtt_keywords.h/.cpp` como stubs com enum `MqttStatus`. `app.cpp` chama `net_mqtt_init()` + `net_mqtt_keywords_start()` após `net_services_start_background_task()`. Build pendente de validação pelo deployer.
 - 2026-04-26 — Heap leak ~1432 B/min eliminado: `tm_to_epoch_utc` (src/net_time.cpp) reescrito p/ aritmética pura UTC, sem `setenv("TZ","UTC0")` + `tzset()` + `mktime()`. Bissecção (envs bisect_a/a2/a3a/a3b/a4) provou: leak NÃO em web_portal/AsyncTCP/WireGuard/FTP/WiFi/lwip nem em LVGL/SD/RS485 — exclusivamente em `update_bar_wifi_text()` chamado a 1Hz por `status_timer_cb`, cadeia até `tm_to_epoch_utc` que invocava 4× setenv + 4× tzset por tick. Match aritmético: 4×6 B × 60 = 1440 B/min ≈ 1432 medido (newlib leak documentado). Soak validação 30 min (61 pontos `[HEAP]`): drain OLS 0.0 B/min, heap interna flat em 39068 B. Antes fix: -1432 B/min linear R²=1.000 → OOM em ~40 min.
 - 2026-04-26 — Instrumentação heap_monitor (src/heap_monitor.cpp/.h): task FreeRTOS dedicada (`heap_mon`, core 1, prio 1, 3KB stack) imprime via `ets_printf` linha CSV `[HEAP] t=<ms> int=<bytes> min=<bytes> psram=<bytes>` cada 30s. Watchdog: se `heap_int_free < 6 KB` regista entrada no boot_journal (`HEAP_GUARD: free=... min=... threshold=...`), faz `boot_journal_flush_to_spiffs`, `vTaskDelay(150ms)` p/ flush log, depois `esp_restart()` — reboot graceful em vez de panic OOM. Inicializado em `app.cpp` após `net_services_start_background_task()`.

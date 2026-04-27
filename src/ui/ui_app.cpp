@@ -33,6 +33,7 @@
 #include "ui/ui_wg_enroll.h"
 #include "ui/ui_theme.h"
 #include "ota_manager.h"
+#include "net_mqtt.h"
 
 static constexpr int kStatusBarH = 46;
 
@@ -97,6 +98,21 @@ static lv_obj_t *s_ta_wg_ep = nullptr;
 static lv_obj_t *s_ta_wg_port = nullptr;
 static lv_obj_t *s_wg_feedback_lbl = nullptr;
 static lv_obj_t *s_sett_wg_kb = nullptr;
+
+/** Aba SRV — bloco MQTT. */
+static lv_obj_t *s_sett_mqtt_status_lbl = nullptr;
+static lv_obj_t *s_sw_mqtt = nullptr;
+static lv_obj_t *s_ta_mqtt_host = nullptr;
+static lv_obj_t *s_ta_mqtt_port = nullptr;
+static lv_obj_t *s_ta_mqtt_user = nullptr;
+static lv_obj_t *s_ta_mqtt_pass = nullptr;
+static lv_obj_t *s_ta_mqtt_topic = nullptr;
+static lv_obj_t *s_ta_mqtt_kw = nullptr;
+static lv_obj_t *s_mqtt_interval_lbl = nullptr;
+static lv_obj_t *s_mqtt_interval_sl = nullptr;
+static lv_obj_t *s_mqtt_feedback_lbl = nullptr;
+static lv_obj_t *s_sett_mqtt_kb = nullptr;
+
 /** Aba RS485: velocidade e trama UART (NVS + reinicio da Serial1). */
 static lv_obj_t *s_rs485_roller_baud = nullptr;
 static lv_obj_t *s_rs485_roller_frame = nullptr;
@@ -142,10 +158,12 @@ static bool s_sd_at_boot = false;
 
 static void refresh_settings_wifi_label(void);
 static void refresh_settings_ftp_label(void);
+static void refresh_settings_mqtt_label(void);
 static void settings_hide_wifi_keyboard(void);
 static void settings_hide_ftp_keyboard(void);
 static void settings_hide_time_keyboard(void);
 static void settings_hide_wg_keyboard(void);
+static void settings_hide_srv_keyboard(void);
 static void settings_sd_format_status_refresh(const char *msg_override);
 static void settings_rs485_sync_ui_from_settings(void);
 
@@ -440,6 +458,9 @@ static void status_timer_cb(lv_timer_t *t) {
     }
     if (s_sett_ftp_info_lbl != nullptr) {
       refresh_settings_ftp_label();
+    }
+    if (s_sett_mqtt_status_lbl != nullptr) {
+      refresh_settings_mqtt_label();
     }
   }
   if (s_scr_main != nullptr && lv_disp_get_scr_act(nullptr) == s_scr_main) {
@@ -1329,6 +1350,7 @@ static void settings_screen_enter(void) {
   settings_hide_ftp_keyboard();
   settings_hide_time_keyboard();
   settings_hide_wg_keyboard();
+  settings_hide_srv_keyboard();
   if (s_ta_mon_ip != nullptr) {
     lv_textarea_set_text(s_ta_mon_ip, app_settings_monitor_ip().c_str());
   }
@@ -1396,6 +1418,41 @@ static void settings_screen_enter(void) {
   if (s_ta_wg_enroll_url != nullptr) {
     lv_textarea_set_text(s_ta_wg_enroll_url, app_settings_wg_enroll_server().c_str());
   }
+  if (s_sw_mqtt != nullptr) {
+    if (app_settings_mqtt_enabled()) {
+      lv_obj_add_state(s_sw_mqtt, LV_STATE_CHECKED);
+    } else {
+      lv_obj_clear_state(s_sw_mqtt, LV_STATE_CHECKED);
+    }
+  }
+  if (s_ta_mqtt_host != nullptr) {
+    lv_textarea_set_text(s_ta_mqtt_host, app_settings_mqtt_host().c_str());
+  }
+  if (s_ta_mqtt_port != nullptr) {
+    char pb[8];
+    snprintf(pb, sizeof pb, "%u", (unsigned)app_settings_mqtt_port());
+    lv_textarea_set_text(s_ta_mqtt_port, pb);
+  }
+  if (s_ta_mqtt_user != nullptr) {
+    lv_textarea_set_text(s_ta_mqtt_user, app_settings_mqtt_user().c_str());
+  }
+  if (s_ta_mqtt_pass != nullptr) {
+    lv_textarea_set_text(s_ta_mqtt_pass, app_settings_mqtt_pass().c_str());
+  }
+  if (s_ta_mqtt_topic != nullptr) {
+    lv_textarea_set_text(s_ta_mqtt_topic, app_settings_mqtt_base_topic().c_str());
+  }
+  if (s_ta_mqtt_kw != nullptr) {
+    lv_textarea_set_text(s_ta_mqtt_kw, app_settings_mqtt_keywords().c_str());
+  }
+  if (s_mqtt_interval_sl != nullptr) {
+    lv_slider_set_value(s_mqtt_interval_sl, (int)app_settings_mqtt_telemetry_interval_s(), LV_ANIM_OFF);
+    if (s_mqtt_interval_lbl != nullptr) {
+      char buf[32];
+      snprintf(buf, sizeof buf, "Intervalo: %u s", (unsigned)app_settings_mqtt_telemetry_interval_s());
+      lv_label_set_text(s_mqtt_interval_lbl, buf);
+    }
+  }
   s_sd_format_armed = false;
   if (s_sd_format_confirm_btn != nullptr) {
     lv_obj_set_style_bg_color(s_sd_format_confirm_btn, UI_COLOR_TEXT_MUTED, 0);
@@ -1407,6 +1464,7 @@ static void settings_screen_enter(void) {
   settings_sd_format_status_refresh(nullptr);
   refresh_settings_wifi_label();
   refresh_settings_ftp_label();
+  refresh_settings_mqtt_label();
   settings_log_refresh_view();
   update_bar_wifi_text();
 }
@@ -1484,12 +1542,19 @@ static void settings_hide_wg_keyboard(void) {
   lv_keyboard_set_textarea(s_sett_wg_kb, nullptr);
 }
 
+static void settings_hide_srv_keyboard(void) {
+  if (s_sett_mqtt_kb == nullptr) {
+    return;
+  }
+  lv_obj_add_flag(s_sett_mqtt_kb, LV_OBJ_FLAG_HIDDEN);
+  lv_keyboard_set_textarea(s_sett_mqtt_kb, nullptr);
+}
+
 /** Indices usados para ocultar teclados ao trocar de aba. */
 static constexpr uint32_t kSettingsTabWifi    = 0;
-static constexpr uint32_t kSettingsTabFtp     = 1;
+static constexpr uint32_t kSettingsTabSrv     = 1; /* FTP + WireGuard + MQTT */
 static constexpr uint32_t kSettingsTabTime    = 2;
-static constexpr uint32_t kSettingsTabWg      = 3;
-static constexpr uint32_t kSettingsTabSistema = 8; /* RS485=4, Logs=5, SD=6, Scr.=7, Sistema=8 */
+static constexpr uint32_t kSettingsTabSistema = 7; /* RS485=3, Logs=4, SD=5, Scr.=6, Sistema=7 */
 
 /** Ao mudar de aba, esconde teclados dos formularios que deixam de estar visiveis. */
 static void settings_tab_btns_cb(lv_event_t *e) {
@@ -1501,14 +1566,13 @@ static void settings_tab_btns_cb(lv_event_t *e) {
   if (sel != kSettingsTabWifi) {
     settings_hide_wifi_keyboard();
   }
-  if (sel != kSettingsTabFtp) {
+  if (sel != kSettingsTabSrv) {
     settings_hide_ftp_keyboard();
+    settings_hide_wg_keyboard();
+    settings_hide_srv_keyboard();
   }
   if (sel != kSettingsTabTime) {
     settings_hide_time_keyboard();
-  }
-  if (sel != kSettingsTabWg) {
-    settings_hide_wg_keyboard();
   }
 }
 
@@ -1698,6 +1762,105 @@ static void settings_wg_ta_kb_event_cb(lv_event_t *e) {
   } else if (code == LV_EVENT_DEFOCUSED) {
     settings_hide_wg_keyboard();
   }
+}
+
+static void settings_mqtt_ta_kb_event_cb(lv_event_t *e) {
+  if (s_sett_mqtt_kb == nullptr) {
+    return;
+  }
+  const lv_event_code_t code = lv_event_get_code(e);
+  lv_obj_t *ta = lv_event_get_target(e);
+  if (code == LV_EVENT_FOCUSED) {
+    lv_keyboard_set_textarea(s_sett_mqtt_kb, ta);
+    lv_obj_clear_flag(s_sett_mqtt_kb, LV_OBJ_FLAG_HIDDEN);
+  } else if (code == LV_EVENT_DEFOCUSED) {
+    settings_hide_srv_keyboard();
+  }
+}
+
+static void settings_mqtt_interval_sl_cb(lv_event_t *e) {
+  (void)e;
+  if (s_mqtt_interval_sl == nullptr || s_mqtt_interval_lbl == nullptr) {
+    return;
+  }
+  const int32_t v = lv_slider_get_value(s_mqtt_interval_sl);
+  char buf[32];
+  snprintf(buf, sizeof buf, "Intervalo: %d s", (int)v);
+  lv_label_set_text(s_mqtt_interval_lbl, buf);
+}
+
+static void settings_save_mqtt_cb(lv_event_t *e) {
+  (void)e;
+  if (s_sw_mqtt == nullptr || s_ta_mqtt_host == nullptr || s_ta_mqtt_port == nullptr ||
+      s_ta_mqtt_user == nullptr || s_ta_mqtt_pass == nullptr || s_ta_mqtt_topic == nullptr ||
+      s_ta_mqtt_kw == nullptr || s_mqtt_interval_sl == nullptr) {
+    return;
+  }
+  const bool enabled = lv_obj_has_state(s_sw_mqtt, LV_STATE_CHECKED);
+  app_settings_set_mqtt_enabled(enabled);
+
+  const char *host = lv_textarea_get_text(s_ta_mqtt_host);
+  app_settings_set_mqtt_host(host ? host : "");
+
+  const char *port_str = lv_textarea_get_text(s_ta_mqtt_port);
+  if (port_str != nullptr) {
+    const int p = atoi(port_str);
+    if (p >= 1 && p <= 65535) {
+      app_settings_set_mqtt_port((uint16_t)p);
+    }
+  }
+
+  const char *usr = lv_textarea_get_text(s_ta_mqtt_user);
+  const char *pw  = lv_textarea_get_text(s_ta_mqtt_pass);
+  app_settings_set_mqtt_creds(usr ? usr : "", pw ? pw : "");
+
+  const char *topic = lv_textarea_get_text(s_ta_mqtt_topic);
+  app_settings_set_mqtt_base_topic(topic ? topic : "");
+
+  int32_t iv = lv_slider_get_value(s_mqtt_interval_sl);
+  if (iv < 10) iv = 10;
+  if (iv > 3600) iv = 3600;
+  app_settings_set_mqtt_telemetry_interval_s((uint16_t)iv);
+
+  const char *kw = lv_textarea_get_text(s_ta_mqtt_kw);
+  app_settings_set_mqtt_keywords(kw ? kw : "");
+
+  net_mqtt_apply_settings();
+
+  if (s_mqtt_feedback_lbl != nullptr) {
+    lv_label_set_text(s_mqtt_feedback_lbl, enabled ? "Salvo. MQTT ativo." : "Salvo. MQTT inativo.");
+  }
+  ui_toast_show(ToastKind::Success, "Definicoes MQTT guardadas.");
+}
+
+static void refresh_settings_mqtt_label(void) {
+  if (s_sett_mqtt_status_lbl == nullptr) {
+    return;
+  }
+  char info[128];
+  if (!app_settings_mqtt_enabled()) {
+    snprintf(info, sizeof info, "MQTT: Desativado");
+  } else {
+    const MqttStatus st = net_mqtt_status();
+    switch (st) {
+      case MqttStatus::Connected:
+        snprintf(info, sizeof info, "MQTT: Conectado a %s:%u",
+                 app_settings_mqtt_host().c_str(), (unsigned)app_settings_mqtt_port());
+        break;
+      case MqttStatus::Connecting:
+        snprintf(info, sizeof info, "MQTT: A conectar...");
+        break;
+      case MqttStatus::Error: {
+        const char *err = net_mqtt_last_error();
+        snprintf(info, sizeof info, "MQTT: Erro — %s", err ? err : "?");
+        break;
+      }
+      default:
+        snprintf(info, sizeof info, "MQTT: Desativado");
+        break;
+    }
+  }
+  lv_label_set_text(s_sett_mqtt_status_lbl, info);
 }
 
 static void settings_save_time_cb(lv_event_t *e) {
@@ -2097,40 +2260,58 @@ static void create_settings_screen(void) {
   lv_obj_add_flag(s_sett_wifi_kb, LV_OBJ_FLAG_HIDDEN);
   lv_keyboard_set_textarea(s_sett_wifi_kb, nullptr);
 
-  /* --- Aba FTP --- */
-  lv_obj_t *tab_ftp = lv_tabview_add_tab(tv, LV_SYMBOL_DRIVE " FTP");
-  if (tab_ftp == nullptr) {
+  /* --- Aba SRV (FTP + WireGuard + MQTT) --- */
+  lv_obj_t *tab_srv = lv_tabview_add_tab(tv, LV_SYMBOL_DRIVE " SRV");
+  if (tab_srv == nullptr) {
     fail_settings_create();
     return;
   }
-  lv_obj_set_layout(tab_ftp, LV_LAYOUT_FLEX);
-  lv_obj_set_flex_flow(tab_ftp, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(tab_ftp, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_all(tab_ftp, 4, 0);
-  lv_obj_set_style_pad_row(tab_ftp, 6, 0);
+  lv_obj_set_layout(tab_srv, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(tab_srv, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(tab_srv, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_all(tab_srv, 4, 0);
+  lv_obj_set_style_pad_row(tab_srv, 4, 0);
 
-  lv_obj_t *ftp_scroll = lv_obj_create(tab_ftp);
-  if (ftp_scroll == nullptr) {
+  lv_obj_t *srv_scroll = lv_obj_create(tab_srv);
+  if (srv_scroll == nullptr) {
     fail_settings_create();
     return;
   }
-  lv_obj_set_width(ftp_scroll, LV_PCT(100));
-  lv_obj_set_flex_grow(ftp_scroll, 1);
-  lv_obj_set_layout(ftp_scroll, LV_LAYOUT_FLEX);
-  lv_obj_set_flex_flow(ftp_scroll, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_all(ftp_scroll, 4, 0);
-  lv_obj_set_style_pad_row(ftp_scroll, 6, 0);
-  lv_obj_set_scrollbar_mode(ftp_scroll, LV_SCROLLBAR_MODE_AUTO);
+  lv_obj_set_width(srv_scroll, LV_PCT(100));
+  lv_obj_set_flex_grow(srv_scroll, 1);
+  lv_obj_set_layout(srv_scroll, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(srv_scroll, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_all(srv_scroll, 4, 0);
+  lv_obj_set_style_pad_row(srv_scroll, 6, 0);
+  lv_obj_set_scrollbar_mode(srv_scroll, LV_SCROLLBAR_MODE_AUTO);
 
-  s_sett_ftp_info_lbl = lv_label_create(ftp_scroll);
+  /* Helper local: insere um cabecalho de seccao colorido em srv_scroll. */
+  auto srv_section_header = [&](const char *title) {
+    lv_obj_t *sep = lv_obj_create(srv_scroll);
+    lv_obj_set_width(sep, LV_PCT(100));
+    lv_obj_set_height(sep, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_color(sep, UI_COLOR_PRIMARY_LIGHT, 0);
+    lv_obj_set_style_pad_all(sep, 6, 0);
+    lv_obj_set_style_border_width(sep, 0, 0);
+    lv_obj_set_style_radius(sep, 4, 0);
+    lv_obj_clear_flag(sep, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *lbl = lv_label_create(sep);
+    lv_label_set_text(lbl, title);
+    lv_obj_set_style_text_color(lbl, UI_COLOR_PRIMARY_DARK, 0);
+  };
+
+  /* --- Bloco FTP --- */
+  srv_section_header(LV_SYMBOL_DRIVE " FTP");
+
+  s_sett_ftp_info_lbl = lv_label_create(srv_scroll);
   lv_label_set_long_mode(s_sett_ftp_info_lbl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(s_sett_ftp_info_lbl, LV_PCT(100));
   refresh_settings_ftp_label();
 
-  lv_obj_t *lu = lv_label_create(ftp_scroll);
+  lv_obj_t *lu = lv_label_create(srv_scroll);
   lv_label_set_text(lu, "Usuario FTP:");
 
-  s_ta_ftp_user = lv_textarea_create(ftp_scroll);
+  s_ta_ftp_user = lv_textarea_create(srv_scroll);
   lv_textarea_set_one_line(s_ta_ftp_user, true);
   lv_textarea_set_max_length(s_ta_ftp_user, 15);
   lv_textarea_set_placeholder_text(s_ta_ftp_user, kAppSettingsFtpDefaultUser);
@@ -2139,10 +2320,10 @@ static void create_settings_screen(void) {
   lv_obj_add_event_cb(s_ta_ftp_user, settings_ftp_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
   lv_obj_add_event_cb(s_ta_ftp_user, settings_ftp_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
 
-  lv_obj_t *lpf = lv_label_create(ftp_scroll);
+  lv_obj_t *lpf = lv_label_create(srv_scroll);
   lv_label_set_text(lpf, "Senha FTP:");
 
-  s_ta_ftp_pass = lv_textarea_create(ftp_scroll);
+  s_ta_ftp_pass = lv_textarea_create(srv_scroll);
   lv_textarea_set_one_line(s_ta_ftp_pass, true);
   lv_textarea_set_password_mode(s_ta_ftp_pass, true);
   lv_textarea_set_max_length(s_ta_ftp_pass, 15);
@@ -2152,22 +2333,243 @@ static void create_settings_screen(void) {
   lv_obj_add_event_cb(s_ta_ftp_pass, settings_ftp_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
   lv_obj_add_event_cb(s_ta_ftp_pass, settings_ftp_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
 
-  lv_obj_t *bt_save_ftp = lv_btn_create(ftp_scroll);
+  lv_obj_t *bt_save_ftp = lv_btn_create(srv_scroll);
   lv_obj_t *lbs = lv_label_create(bt_save_ftp);
   lv_label_set_text(lbs, LV_SYMBOL_SAVE " Salvar FTP");
   lv_obj_center(lbs);
   lv_obj_add_event_cb(bt_save_ftp, settings_save_ftp_cb, LV_EVENT_CLICKED, nullptr);
 
-  s_ftp_feedback_lbl = lv_label_create(ftp_scroll);
+  s_ftp_feedback_lbl = lv_label_create(srv_scroll);
   lv_label_set_long_mode(s_ftp_feedback_lbl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(s_ftp_feedback_lbl, LV_PCT(100));
   lv_label_set_text(s_ftp_feedback_lbl, "");
 
-  s_sett_ftp_kb = lv_keyboard_create(tab_ftp);
+  /* Teclado FTP (pai: tab_srv, escondido por omissao). */
+  s_sett_ftp_kb = lv_keyboard_create(tab_srv);
   lv_obj_set_size(s_sett_ftp_kb, LV_PCT(100), (lv_coord_t)(vh * 30 / 100));
   lv_keyboard_set_mode(s_sett_ftp_kb, LV_KEYBOARD_MODE_TEXT_LOWER);
   lv_obj_add_flag(s_sett_ftp_kb, LV_OBJ_FLAG_HIDDEN);
   lv_keyboard_set_textarea(s_sett_ftp_kb, nullptr);
+
+  /* --- Bloco WireGuard (dentro de srv_scroll) --- */
+  srv_section_header(LV_SYMBOL_LOOP " WireGuard");
+
+  lv_obj_t *wg_help = lv_label_create(srv_scroll);
+  lv_label_set_long_mode(wg_help, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(wg_help, LV_PCT(100));
+  lv_label_set_text(wg_help,
+                    "VPN WireGuard (lib ciniml/WireGuard-ESP32). Exige Wi-Fi e hora valida (NTP). "
+                    "Chaves em Base64 (formato wg).");
+
+  lv_obj_t *lwg = lv_label_create(srv_scroll);
+  lv_label_set_text(lwg, "Ativar tunel:");
+  s_sw_wg = lv_switch_create(srv_scroll);
+  if (app_settings_wireguard_enabled()) {
+    lv_obj_add_state(s_sw_wg, LV_STATE_CHECKED);
+  }
+
+  lv_obj_t *lwip = lv_label_create(srv_scroll);
+  lv_label_set_text(lwip, "IP local (tunel):");
+  s_ta_wg_ip = lv_textarea_create(srv_scroll);
+  lv_textarea_set_one_line(s_ta_wg_ip, true);
+  lv_textarea_set_max_length(s_ta_wg_ip, 19);
+  lv_textarea_set_text(s_ta_wg_ip, app_settings_wg_local_ip().c_str());
+  lv_obj_set_width(s_ta_wg_ip, LV_PCT(100));
+  lv_obj_add_event_cb(s_ta_wg_ip, settings_wg_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
+  lv_obj_add_event_cb(s_ta_wg_ip, settings_wg_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
+
+  lv_obj_t *lpk = lv_label_create(srv_scroll);
+  lv_label_set_text(lpk, "Chave privada (cliente):");
+  s_ta_wg_priv = lv_textarea_create(srv_scroll);
+  lv_textarea_set_one_line(s_ta_wg_priv, true);
+  lv_textarea_set_max_length(s_ta_wg_priv, 127);
+  lv_textarea_set_text(s_ta_wg_priv, app_settings_wg_private_key().c_str());
+  lv_obj_set_width(s_ta_wg_priv, LV_PCT(100));
+  lv_obj_add_event_cb(s_ta_wg_priv, settings_wg_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
+  lv_obj_add_event_cb(s_ta_wg_priv, settings_wg_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
+
+  lv_obj_t *lpub = lv_label_create(srv_scroll);
+  lv_label_set_text(lpub, "Chave publica do servidor:");
+  s_ta_wg_pub = lv_textarea_create(srv_scroll);
+  lv_textarea_set_one_line(s_ta_wg_pub, true);
+  lv_textarea_set_max_length(s_ta_wg_pub, 127);
+  lv_textarea_set_text(s_ta_wg_pub, app_settings_wg_peer_public_key().c_str());
+  lv_obj_set_width(s_ta_wg_pub, LV_PCT(100));
+  lv_obj_add_event_cb(s_ta_wg_pub, settings_wg_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
+  lv_obj_add_event_cb(s_ta_wg_pub, settings_wg_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
+
+  lv_obj_t *lep = lv_label_create(srv_scroll);
+  lv_label_set_text(lep, "Endpoint (hostname ou IP):");
+  s_ta_wg_ep = lv_textarea_create(srv_scroll);
+  lv_textarea_set_one_line(s_ta_wg_ep, true);
+  lv_textarea_set_max_length(s_ta_wg_ep, 127);
+  lv_textarea_set_text(s_ta_wg_ep, app_settings_wg_endpoint().c_str());
+  lv_obj_set_width(s_ta_wg_ep, LV_PCT(100));
+  lv_obj_add_event_cb(s_ta_wg_ep, settings_wg_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
+  lv_obj_add_event_cb(s_ta_wg_ep, settings_wg_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
+
+  lv_obj_t *lpt = lv_label_create(srv_scroll);
+  lv_label_set_text(lpt, "Porta UDP:");
+  s_ta_wg_port = lv_textarea_create(srv_scroll);
+  lv_textarea_set_one_line(s_ta_wg_port, true);
+  lv_textarea_set_max_length(s_ta_wg_port, 5);
+  {
+    char pb[8];
+    snprintf(pb, sizeof pb, "%u", (unsigned)app_settings_wg_port());
+    lv_textarea_set_text(s_ta_wg_port, pb);
+  }
+  lv_obj_set_width(s_ta_wg_port, LV_PCT(100));
+  lv_obj_add_event_cb(s_ta_wg_port, settings_wg_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
+  lv_obj_add_event_cb(s_ta_wg_port, settings_wg_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
+
+  lv_obj_t *lenroll = lv_label_create(srv_scroll);
+  lv_label_set_text(lenroll, "Servidor de enrollment (URL):");
+  s_ta_wg_enroll_url = lv_textarea_create(srv_scroll);
+  lv_textarea_set_one_line(s_ta_wg_enroll_url, true);
+  lv_textarea_set_max_length(s_ta_wg_enroll_url, 127);
+  lv_textarea_set_placeholder_text(s_ta_wg_enroll_url, "http://192.168.x.x:5000");
+  lv_obj_set_width(s_ta_wg_enroll_url, LV_PCT(100));
+  lv_obj_add_event_cb(s_ta_wg_enroll_url, settings_wg_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
+  lv_obj_add_event_cb(s_ta_wg_enroll_url, settings_wg_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
+
+  lv_obj_t *bt_enroll = lv_btn_create(srv_scroll);
+  lv_obj_set_width(bt_enroll, LV_PCT(100));
+  lv_obj_set_style_bg_color(bt_enroll, UI_COLOR_BLUE, 0);
+  lv_obj_t *lbe = lv_label_create(bt_enroll);
+  lv_label_set_text(lbe, LV_SYMBOL_LOOP " Provisionar via QR");
+  lv_obj_center(lbe);
+  lv_obj_add_event_cb(bt_enroll, settings_wg_enroll_cb, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t *bt_wg = lv_btn_create(srv_scroll);
+  lv_obj_t *lbw = lv_label_create(bt_wg);
+  lv_label_set_text(lbw, LV_SYMBOL_SAVE " Salvar WireGuard");
+  lv_obj_center(lbw);
+  lv_obj_add_event_cb(bt_wg, settings_save_wg_cb, LV_EVENT_CLICKED, nullptr);
+
+  s_wg_feedback_lbl = lv_label_create(srv_scroll);
+  lv_label_set_long_mode(s_wg_feedback_lbl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(s_wg_feedback_lbl, LV_PCT(100));
+  lv_label_set_text(s_wg_feedback_lbl, "");
+
+  /* Teclado WireGuard (pai: tab_srv). */
+  s_sett_wg_kb = lv_keyboard_create(tab_srv);
+  lv_obj_set_size(s_sett_wg_kb, LV_PCT(100), (lv_coord_t)(vh * 28 / 100));
+  lv_keyboard_set_mode(s_sett_wg_kb, LV_KEYBOARD_MODE_TEXT_LOWER);
+  lv_obj_add_flag(s_sett_wg_kb, LV_OBJ_FLAG_HIDDEN);
+  lv_keyboard_set_textarea(s_sett_wg_kb, nullptr);
+
+  /* --- Bloco MQTT (dentro de srv_scroll) --- */
+  srv_section_header(LV_SYMBOL_UPLOAD " MQTT");
+
+  s_sett_mqtt_status_lbl = lv_label_create(srv_scroll);
+  lv_label_set_long_mode(s_sett_mqtt_status_lbl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(s_sett_mqtt_status_lbl, LV_PCT(100));
+  refresh_settings_mqtt_label();
+
+  lv_obj_t *lmq_on = lv_label_create(srv_scroll);
+  lv_label_set_text(lmq_on, "Ativar MQTT:");
+  s_sw_mqtt = lv_switch_create(srv_scroll);
+  if (app_settings_mqtt_enabled()) {
+    lv_obj_add_state(s_sw_mqtt, LV_STATE_CHECKED);
+  }
+
+  lv_obj_t *lmq_host = lv_label_create(srv_scroll);
+  lv_label_set_text(lmq_host, "Host broker:");
+  s_ta_mqtt_host = lv_textarea_create(srv_scroll);
+  lv_textarea_set_one_line(s_ta_mqtt_host, true);
+  lv_textarea_set_max_length(s_ta_mqtt_host, 63);
+  lv_textarea_set_placeholder_text(s_ta_mqtt_host, "192.168.1.10");
+  lv_textarea_set_text(s_ta_mqtt_host, app_settings_mqtt_host().c_str());
+  lv_obj_set_width(s_ta_mqtt_host, LV_PCT(100));
+  lv_obj_add_event_cb(s_ta_mqtt_host, settings_mqtt_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
+  lv_obj_add_event_cb(s_ta_mqtt_host, settings_mqtt_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
+
+  lv_obj_t *lmq_port = lv_label_create(srv_scroll);
+  lv_label_set_text(lmq_port, "Porta:");
+  s_ta_mqtt_port = lv_textarea_create(srv_scroll);
+  lv_textarea_set_one_line(s_ta_mqtt_port, true);
+  lv_textarea_set_max_length(s_ta_mqtt_port, 5);
+  {
+    char mq_pb[8];
+    snprintf(mq_pb, sizeof mq_pb, "%u", (unsigned)app_settings_mqtt_port());
+    lv_textarea_set_text(s_ta_mqtt_port, mq_pb);
+  }
+  lv_obj_set_width(s_ta_mqtt_port, LV_PCT(100));
+  lv_obj_add_event_cb(s_ta_mqtt_port, settings_mqtt_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
+  lv_obj_add_event_cb(s_ta_mqtt_port, settings_mqtt_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
+
+  lv_obj_t *lmq_usr = lv_label_create(srv_scroll);
+  lv_label_set_text(lmq_usr, "Utilizador:");
+  s_ta_mqtt_user = lv_textarea_create(srv_scroll);
+  lv_textarea_set_one_line(s_ta_mqtt_user, true);
+  lv_textarea_set_max_length(s_ta_mqtt_user, 31);
+  lv_textarea_set_text(s_ta_mqtt_user, app_settings_mqtt_user().c_str());
+  lv_obj_set_width(s_ta_mqtt_user, LV_PCT(100));
+  lv_obj_add_event_cb(s_ta_mqtt_user, settings_mqtt_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
+  lv_obj_add_event_cb(s_ta_mqtt_user, settings_mqtt_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
+
+  lv_obj_t *lmq_pw = lv_label_create(srv_scroll);
+  lv_label_set_text(lmq_pw, "Senha:");
+  s_ta_mqtt_pass = lv_textarea_create(srv_scroll);
+  lv_textarea_set_one_line(s_ta_mqtt_pass, true);
+  lv_textarea_set_password_mode(s_ta_mqtt_pass, true);
+  lv_textarea_set_max_length(s_ta_mqtt_pass, 31);
+  lv_textarea_set_text(s_ta_mqtt_pass, app_settings_mqtt_pass().c_str());
+  lv_obj_set_width(s_ta_mqtt_pass, LV_PCT(100));
+  lv_obj_add_event_cb(s_ta_mqtt_pass, settings_mqtt_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
+  lv_obj_add_event_cb(s_ta_mqtt_pass, settings_mqtt_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
+
+  lv_obj_t *lmq_topic = lv_label_create(srv_scroll);
+  lv_label_set_text(lmq_topic, "Topico base:");
+  s_ta_mqtt_topic = lv_textarea_create(srv_scroll);
+  lv_textarea_set_one_line(s_ta_mqtt_topic, true);
+  lv_textarea_set_max_length(s_ta_mqtt_topic, 63);
+  lv_textarea_set_text(s_ta_mqtt_topic, app_settings_mqtt_base_topic().c_str());
+  lv_obj_set_width(s_ta_mqtt_topic, LV_PCT(100));
+  lv_obj_add_event_cb(s_ta_mqtt_topic, settings_mqtt_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
+  lv_obj_add_event_cb(s_ta_mqtt_topic, settings_mqtt_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
+
+  lv_obj_t *lmq_kw = lv_label_create(srv_scroll);
+  lv_label_set_text(lmq_kw, "Palavras-chave (separadas por ;):");
+  s_ta_mqtt_kw = lv_textarea_create(srv_scroll);
+  lv_textarea_set_one_line(s_ta_mqtt_kw, true);
+  lv_textarea_set_max_length(s_ta_mqtt_kw, 255);
+  lv_textarea_set_placeholder_text(s_ta_mqtt_kw, "ALARME;FALHA;CICLO");
+  lv_textarea_set_text(s_ta_mqtt_kw, app_settings_mqtt_keywords().c_str());
+  lv_obj_set_width(s_ta_mqtt_kw, LV_PCT(100));
+  lv_obj_add_event_cb(s_ta_mqtt_kw, settings_mqtt_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
+  lv_obj_add_event_cb(s_ta_mqtt_kw, settings_mqtt_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
+
+  {
+    char iv_buf[32];
+    snprintf(iv_buf, sizeof iv_buf, "Intervalo: %u s",
+             (unsigned)app_settings_mqtt_telemetry_interval_s());
+    s_mqtt_interval_lbl = lv_label_create(srv_scroll);
+    lv_label_set_text(s_mqtt_interval_lbl, iv_buf);
+  }
+  s_mqtt_interval_sl = lv_slider_create(srv_scroll);
+  lv_obj_set_width(s_mqtt_interval_sl, LV_PCT(100));
+  lv_slider_set_range(s_mqtt_interval_sl, 10, 3600);
+  lv_slider_set_value(s_mqtt_interval_sl, (int)app_settings_mqtt_telemetry_interval_s(), LV_ANIM_OFF);
+  lv_obj_add_event_cb(s_mqtt_interval_sl, settings_mqtt_interval_sl_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+  lv_obj_t *bt_save_mqtt = lv_btn_create(srv_scroll);
+  lv_obj_t *lbmq = lv_label_create(bt_save_mqtt);
+  lv_label_set_text(lbmq, LV_SYMBOL_SAVE " Salvar MQTT");
+  lv_obj_center(lbmq);
+  lv_obj_add_event_cb(bt_save_mqtt, settings_save_mqtt_cb, LV_EVENT_CLICKED, nullptr);
+
+  s_mqtt_feedback_lbl = lv_label_create(srv_scroll);
+  lv_label_set_long_mode(s_mqtt_feedback_lbl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(s_mqtt_feedback_lbl, LV_PCT(100));
+  lv_label_set_text(s_mqtt_feedback_lbl, "");
+
+  /* Teclado MQTT (pai: tab_srv). */
+  s_sett_mqtt_kb = lv_keyboard_create(tab_srv);
+  lv_obj_set_size(s_sett_mqtt_kb, LV_PCT(100), (lv_coord_t)(vh * 28 / 100));
+  lv_keyboard_set_mode(s_sett_mqtt_kb, LV_KEYBOARD_MODE_TEXT_LOWER);
+  lv_obj_add_flag(s_sett_mqtt_kb, LV_OBJ_FLAG_HIDDEN);
+  lv_keyboard_set_textarea(s_sett_mqtt_kb, nullptr);
 
   /* --- Aba Data/Hora --- */
   lv_obj_t *tab_time = lv_tabview_add_tab(tv, LV_SYMBOL_LIST " Hora");
@@ -2259,127 +2661,6 @@ static void create_settings_screen(void) {
   lv_keyboard_set_mode(s_sett_time_kb, LV_KEYBOARD_MODE_TEXT_LOWER);
   lv_obj_add_flag(s_sett_time_kb, LV_OBJ_FLAG_HIDDEN);
   lv_keyboard_set_textarea(s_sett_time_kb, nullptr);
-
-  /* --- Aba WireGuard (biblioteca ciniml/WireGuard-ESP32) --- */
-  lv_obj_t *tab_wg = lv_tabview_add_tab(tv, LV_SYMBOL_LOOP " WG");
-  lv_obj_set_layout(tab_wg, LV_LAYOUT_FLEX);
-  lv_obj_set_flex_flow(tab_wg, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(tab_wg, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_all(tab_wg, 4, 0);
-  lv_obj_set_style_pad_row(tab_wg, 6, 0);
-
-  lv_obj_t *wg_scroll = lv_obj_create(tab_wg);
-  lv_obj_set_width(wg_scroll, LV_PCT(100));
-  lv_obj_set_flex_grow(wg_scroll, 1);
-  lv_obj_set_layout(wg_scroll, LV_LAYOUT_FLEX);
-  lv_obj_set_flex_flow(wg_scroll, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_all(wg_scroll, 4, 0);
-  lv_obj_set_style_pad_row(wg_scroll, 6, 0);
-  lv_obj_set_scrollbar_mode(wg_scroll, LV_SCROLLBAR_MODE_AUTO);
-
-  lv_obj_t *wg_help = lv_label_create(wg_scroll);
-  lv_label_set_long_mode(wg_help, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(wg_help, LV_PCT(100));
-  lv_label_set_text(wg_help,
-                    "VPN WireGuard (lib ciniml/WireGuard-ESP32). Exige Wi-Fi e hora valida (NTP). "
-                    "Chaves em Base64 (formato wg).");
-
-  lv_obj_t *lwg = lv_label_create(wg_scroll);
-  lv_label_set_text(lwg, "Ativar tunel:");
-  s_sw_wg = lv_switch_create(wg_scroll);
-  if (app_settings_wireguard_enabled()) {
-    lv_obj_add_state(s_sw_wg, LV_STATE_CHECKED);
-  }
-
-  lv_obj_t *lwip = lv_label_create(wg_scroll);
-  lv_label_set_text(lwip, "IP local (tunel):");
-  s_ta_wg_ip = lv_textarea_create(wg_scroll);
-  lv_textarea_set_one_line(s_ta_wg_ip, true);
-  lv_textarea_set_max_length(s_ta_wg_ip, 19);
-  lv_textarea_set_text(s_ta_wg_ip, app_settings_wg_local_ip().c_str());
-  lv_obj_set_width(s_ta_wg_ip, LV_PCT(100));
-  lv_obj_add_event_cb(s_ta_wg_ip, settings_wg_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
-  lv_obj_add_event_cb(s_ta_wg_ip, settings_wg_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
-
-  lv_obj_t *lpk = lv_label_create(wg_scroll);
-  lv_label_set_text(lpk, "Chave privada (cliente):");
-  s_ta_wg_priv = lv_textarea_create(wg_scroll);
-  lv_textarea_set_one_line(s_ta_wg_priv, true);
-  lv_textarea_set_max_length(s_ta_wg_priv, 127);
-  lv_textarea_set_text(s_ta_wg_priv, app_settings_wg_private_key().c_str());
-  lv_obj_set_width(s_ta_wg_priv, LV_PCT(100));
-  lv_obj_add_event_cb(s_ta_wg_priv, settings_wg_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
-  lv_obj_add_event_cb(s_ta_wg_priv, settings_wg_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
-
-  lv_obj_t *lpub = lv_label_create(wg_scroll);
-  lv_label_set_text(lpub, "Chave publica do servidor:");
-  s_ta_wg_pub = lv_textarea_create(wg_scroll);
-  lv_textarea_set_one_line(s_ta_wg_pub, true);
-  lv_textarea_set_max_length(s_ta_wg_pub, 127);
-  lv_textarea_set_text(s_ta_wg_pub, app_settings_wg_peer_public_key().c_str());
-  lv_obj_set_width(s_ta_wg_pub, LV_PCT(100));
-  lv_obj_add_event_cb(s_ta_wg_pub, settings_wg_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
-  lv_obj_add_event_cb(s_ta_wg_pub, settings_wg_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
-
-  lv_obj_t *lep = lv_label_create(wg_scroll);
-  lv_label_set_text(lep, "Endpoint (hostname ou IP):");
-  s_ta_wg_ep = lv_textarea_create(wg_scroll);
-  lv_textarea_set_one_line(s_ta_wg_ep, true);
-  lv_textarea_set_max_length(s_ta_wg_ep, 127);
-  lv_textarea_set_text(s_ta_wg_ep, app_settings_wg_endpoint().c_str());
-  lv_obj_set_width(s_ta_wg_ep, LV_PCT(100));
-  lv_obj_add_event_cb(s_ta_wg_ep, settings_wg_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
-  lv_obj_add_event_cb(s_ta_wg_ep, settings_wg_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
-
-  lv_obj_t *lpt = lv_label_create(wg_scroll);
-  lv_label_set_text(lpt, "Porta UDP:");
-  s_ta_wg_port = lv_textarea_create(wg_scroll);
-  lv_textarea_set_one_line(s_ta_wg_port, true);
-  lv_textarea_set_max_length(s_ta_wg_port, 5);
-  {
-    char pb[8];
-    snprintf(pb, sizeof pb, "%u", (unsigned)app_settings_wg_port());
-    lv_textarea_set_text(s_ta_wg_port, pb);
-  }
-  lv_obj_set_width(s_ta_wg_port, LV_PCT(100));
-  lv_obj_add_event_cb(s_ta_wg_port, settings_wg_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
-  lv_obj_add_event_cb(s_ta_wg_port, settings_wg_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
-
-  /* --- Enrollment via QR --- */
-  lv_obj_t *lenroll = lv_label_create(wg_scroll);
-  lv_label_set_text(lenroll, "Servidor de enrollment (URL):");
-  s_ta_wg_enroll_url = lv_textarea_create(wg_scroll);
-  lv_textarea_set_one_line(s_ta_wg_enroll_url, true);
-  lv_textarea_set_max_length(s_ta_wg_enroll_url, 127);
-  lv_textarea_set_placeholder_text(s_ta_wg_enroll_url, "http://192.168.x.x:5000");
-  lv_obj_set_width(s_ta_wg_enroll_url, LV_PCT(100));
-  lv_obj_add_event_cb(s_ta_wg_enroll_url, settings_wg_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
-  lv_obj_add_event_cb(s_ta_wg_enroll_url, settings_wg_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
-
-  lv_obj_t *bt_enroll = lv_btn_create(wg_scroll);
-  lv_obj_set_width(bt_enroll, LV_PCT(100));
-  lv_obj_set_style_bg_color(bt_enroll, UI_COLOR_BLUE, 0);
-  lv_obj_t *lbe = lv_label_create(bt_enroll);
-  lv_label_set_text(lbe, LV_SYMBOL_LOOP " Provisionar via QR");
-  lv_obj_center(lbe);
-  lv_obj_add_event_cb(bt_enroll, settings_wg_enroll_cb, LV_EVENT_CLICKED, nullptr);
-
-  lv_obj_t *bt_wg = lv_btn_create(wg_scroll);
-  lv_obj_t *lbw = lv_label_create(bt_wg);
-  lv_label_set_text(lbw, LV_SYMBOL_SAVE " Salvar WireGuard");
-  lv_obj_center(lbw);
-  lv_obj_add_event_cb(bt_wg, settings_save_wg_cb, LV_EVENT_CLICKED, nullptr);
-
-  s_wg_feedback_lbl = lv_label_create(wg_scroll);
-  lv_label_set_long_mode(s_wg_feedback_lbl, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(s_wg_feedback_lbl, LV_PCT(100));
-  lv_label_set_text(s_wg_feedback_lbl, "");
-
-  s_sett_wg_kb = lv_keyboard_create(tab_wg);
-  lv_obj_set_size(s_sett_wg_kb, LV_PCT(100), (lv_coord_t)(vh * 28 / 100));
-  lv_keyboard_set_mode(s_sett_wg_kb, LV_KEYBOARD_MODE_TEXT_LOWER);
-  lv_obj_add_flag(s_sett_wg_kb, LV_OBJ_FLAG_HIDDEN);
-  lv_keyboard_set_textarea(s_sett_wg_kb, nullptr);
 
   /* --- Aba RS485 (Serial1: baud e trama; start bit UART e' sempre 1) --- */
   lv_obj_t *tab_rs485 = lv_tabview_add_tab(tv, LV_SYMBOL_LOOP " RS485");
