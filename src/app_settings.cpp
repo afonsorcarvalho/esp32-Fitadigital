@@ -119,6 +119,22 @@ typedef struct {
   char mon_ip[kMonitorIpMax + 1U];
   bool have_dl_url;
   char dl_url[kDownloadUrlMax + 1U];
+  bool have_mq_on;
+  bool mq_on;
+  bool have_mq_h;
+  char mq_h[kMqttHostMax + 1U];
+  bool have_mq_p;
+  uint32_t mq_p;
+  bool have_mq_u;
+  char mq_u[kMqttCredMax + 1U];
+  bool have_mq_pw;
+  char mq_pw[kMqttCredMax + 1U];
+  bool have_mq_b;
+  char mq_b[kMqttTopicMax + 1U];
+  bool have_mq_iv;
+  uint32_t mq_iv;
+  bool have_mq_kw;
+  char mq_kw[kMqttKwMax + 1U];
 } ParsedSdCfg;
 
 static bool copy_key_str(char *dst, size_t cap, const char *val) {
@@ -344,6 +360,58 @@ static bool cfg_parse_kv(int sec, const char *key, const char *val, ParsedSdCfg 
       return true;
     }
     return true;
+  case 8: /* [mqtt] */
+    if (!strcmp(key, "mq_on")) {
+      c->mq_on = atoi(val) != 0;
+      c->have_mq_on = true;
+      return true;
+    }
+    if (!strcmp(key, "mq_h")) {
+      if (strlen(val) > kMqttHostMax) return false;
+      if (!copy_key_str(c->mq_h, sizeof(c->mq_h), val)) return false;
+      c->have_mq_h = true;
+      return true;
+    }
+    if (!strcmp(key, "mq_p")) {
+      const long p = atol(val);
+      if (p < 1 || p > 65535) return false;
+      c->mq_p = (uint32_t)p;
+      c->have_mq_p = true;
+      return true;
+    }
+    if (!strcmp(key, "mq_u")) {
+      if (strlen(val) > kMqttCredMax) return false;
+      if (!copy_key_str(c->mq_u, sizeof(c->mq_u), val)) return false;
+      c->have_mq_u = true;
+      return true;
+    }
+    if (!strcmp(key, "mq_pw")) {
+      if (strlen(val) > kMqttCredMax) return false;
+      if (!copy_key_str(c->mq_pw, sizeof(c->mq_pw), val)) return false;
+      c->have_mq_pw = true;
+      return true;
+    }
+    if (!strcmp(key, "mq_b")) {
+      if (strlen(val) > kMqttTopicMax) return false;
+      if (!copy_key_str(c->mq_b, sizeof(c->mq_b), val)) return false;
+      c->have_mq_b = true;
+      return true;
+    }
+    if (!strcmp(key, "mq_iv")) {
+      long iv = atol(val);
+      if (iv < 10) iv = 10;
+      if (iv > 3600) iv = 3600;
+      c->mq_iv = (uint32_t)iv;
+      c->have_mq_iv = true;
+      return true;
+    }
+    if (!strcmp(key, "mq_kw")) {
+      if (strlen(val) > kMqttKwMax) return false;
+      if (!copy_key_str(c->mq_kw, sizeof(c->mq_kw), val)) return false;
+      c->have_mq_kw = true;
+      return true;
+    }
+    return true;
   default:
     return true;
   }
@@ -393,6 +461,10 @@ static bool cfg_parse_section_line(const char *line, int *sec) {
   }
   if (!strcmp(name, "net")) {
     *sec = 7;
+    return true;
+  }
+  if (!strcmp(name, "mqtt")) {
+    *sec = 8;
     return true;
   }
   return false;
@@ -457,6 +529,30 @@ static void cfg_apply_parsed(const ParsedSdCfg *c) {
   }
   if (c->have_dl_url) {
     s_prefs.putString("dl_url", c->dl_url);
+  }
+  if (c->have_mq_on) {
+    s_prefs.putBool("mq_on", c->mq_on);
+  }
+  if (c->have_mq_h) {
+    s_prefs.putString("mq_h", c->mq_h);
+  }
+  if (c->have_mq_p) {
+    s_prefs.putUInt("mq_p", c->mq_p);
+  }
+  if (c->have_mq_u) {
+    s_prefs.putString("mq_u", c->mq_u);
+  }
+  if (c->have_mq_pw) {
+    s_prefs.putString("mq_pw", c->mq_pw);
+  }
+  if (c->have_mq_b) {
+    s_prefs.putString("mq_b", c->mq_b);
+  }
+  if (c->have_mq_iv) {
+    s_prefs.putUInt("mq_iv", c->mq_iv);
+  }
+  if (c->have_mq_kw) {
+    s_prefs.putString("mq_kw", c->mq_kw);
   }
 }
 
@@ -581,6 +677,20 @@ void app_settings_sync_config_file_to_sd(void) {
     f.print(app_settings_monitor_ip().c_str());
     f.print("\ndl_url=");
     f.print(app_settings_download_url().c_str());
+    f.print("\n\n[mqtt]\n");
+    f.printf("mq_on=%d\n", app_settings_mqtt_enabled() ? 1 : 0);
+    f.print("mq_h=");
+    f.print(app_settings_mqtt_host().c_str());
+    f.printf("\nmq_p=%u\n", (unsigned)app_settings_mqtt_port());
+    f.print("mq_u=");
+    f.print(app_settings_mqtt_user().c_str());
+    f.print("\nmq_pw=");
+    f.print(app_settings_mqtt_pass().c_str());
+    f.print("\nmq_b=");
+    f.print(app_settings_mqtt_base_topic().c_str());
+    f.printf("\nmq_iv=%u\n", (unsigned)app_settings_mqtt_telemetry_interval_s());
+    f.print("mq_kw=");
+    f.print(app_settings_mqtt_keywords().c_str());
     f.print("\n");
     f.close();
   });
@@ -964,6 +1074,7 @@ bool app_settings_mqtt_enabled(void) {
 
 void app_settings_set_mqtt_enabled(bool on) {
   s_prefs.putBool("mq_on", on);
+  app_settings_sync_config_file_to_sd();
 }
 
 String app_settings_mqtt_host(void) {
@@ -972,6 +1083,7 @@ String app_settings_mqtt_host(void) {
 
 void app_settings_set_mqtt_host(const char *host) {
   put_str_max("mq_h", host, kMqttHostMax);
+  app_settings_sync_config_file_to_sd();
 }
 
 uint16_t app_settings_mqtt_port(void) {
@@ -987,6 +1099,7 @@ void app_settings_set_mqtt_port(uint16_t port) {
     port = 1883U;
   }
   s_prefs.putUInt("mq_p", port);
+  app_settings_sync_config_file_to_sd();
 }
 
 String app_settings_mqtt_user(void) {
@@ -1000,6 +1113,7 @@ String app_settings_mqtt_pass(void) {
 void app_settings_set_mqtt_creds(const char *user, const char *pass) {
   put_str_max("mq_u", user, kMqttCredMax);
   put_str_max("mq_pw", pass, kMqttCredMax);
+  app_settings_sync_config_file_to_sd();
 }
 
 static String mqtt_build_default_topic(void) {
@@ -1025,6 +1139,7 @@ String app_settings_mqtt_base_topic(void) {
 
 void app_settings_set_mqtt_base_topic(const char *topic) {
   put_str_max("mq_b", topic, kMqttTopicMax);
+  app_settings_sync_config_file_to_sd();
 }
 
 uint16_t app_settings_mqtt_telemetry_interval_s(void) {
@@ -1038,6 +1153,7 @@ void app_settings_set_mqtt_telemetry_interval_s(uint16_t secs) {
   if (secs < 10U) secs = 10U;
   if (secs > 3600U) secs = 3600U;
   s_prefs.putUInt("mq_iv", secs);
+  app_settings_sync_config_file_to_sd();
 }
 
 String app_settings_mqtt_keywords(void) {
@@ -1052,6 +1168,7 @@ void app_settings_set_mqtt_keywords(const char *kw) {
     strncpy(b, kw, kMqttKwMax);
   }
   s_prefs.putString("mq_kw", b);
+  app_settings_sync_config_file_to_sd();
 }
 
 /* ------------------------------------------------------------------ */
