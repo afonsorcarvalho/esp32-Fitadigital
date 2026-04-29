@@ -78,6 +78,17 @@ static void publish_telemetry(void) {
         return;
     }
 
+    /* Fix 4 v2: skip se heap interna < 8 KB — evita pico de alloc do StaticJsonDocument
+     * + String WiFi.localIP + SD bytes quando heap ja esta sob pressao.
+     * Originalmente 9 KB; baixou para 8 KB porque baseline pos-MQTT e ~14 KB e 9 KB
+     * estava a fazer skip na maioria dos ticks, escondendo o estado. */
+    const uint32_t heap_int = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (heap_int < 8192U) {
+        ESP_LOGW(TAG, "skip telemetry: heap_int_free=%u < 8KB", (unsigned)heap_int);
+        s_last_telemetry_ms = millis(); /* evitar busy-loop */
+        return;
+    }
+
     StaticJsonDocument<384> doc;
     doc["online"]          = true;
     doc["ts"]              = (uint32_t)time(nullptr);

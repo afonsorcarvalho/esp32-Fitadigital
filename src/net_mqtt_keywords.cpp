@@ -2,19 +2,22 @@
  * @file net_mqtt_keywords.cpp
  * @brief Detecao de palavras-chave RS485 e publicacao MQTT (Fase 4).
  *
- * Task FreeRTOS `mqtt_kw` (core 1, prio 1, stack 3072 B).
+ * Task FreeRTOS `mqtt_kw` (core 1, prio 1, stack 5120 B).
  * Tick 5 s. Em cada tick:
  *   1. Verifica se MQTT esta ligado e ha palavras-chave configuradas.
  *   2. Le o chunk novo do ficheiro do dia via sd_access_sync.
- *   3. Processa as ultimas 10 linhas do chunk contra cada keyword.
+ *   3. Processa as ultimas 6 linhas do chunk contra cada keyword.
  *   4. Em match, publica JSON via net_mqtt_publish("/keyword", ...).
  *
- * AVISO: por iteracao sao processadas no maximo as ultimas 10 linhas,
+ * AVISO: por iteracao sao processadas no maximo as ultimas 6 linhas,
  * independentemente de quantas chegaram no intervalo de 5 s.
  * Este limite e' intencional para evitar picos de heap e latencia.
  *
  * Buffer de leitura s_buf e' estatico (namespace anonimo) — nao vai para
- * a stack da task (que e' apenas 3 KB).
+ * a stack da task (que e' apenas 5 KB).
+ * Fix 2: stack reduzida 8192 → 5120 (base_topic ja cacheado em RAM, NVS
+ * path foi mitigado na Fase 4 v2; stack canary validado).
+ * Fix 3: s_buf 4097→2049, s_lines/tmp 10→6 para reduzir custo estatico.
  */
 #include "net_mqtt_keywords.h"
 #include "net_mqtt.h"
@@ -26,6 +29,7 @@
 #include <ArduinoJson.h>
 #include <Arduino.h>
 #include <esp_log.h>
+#include <esp_heap_caps.h>
 #include <time.h>
 #include <cctype>
 
@@ -45,11 +49,11 @@ static size_t   s_last_offset       = 0;    /* offset bytes ja' lidos no ficheir
 static uint32_t s_last_seen_count   = 0;    /* ultimo line count visto */
 static bool     s_task_created      = false;
 
-/* Buffer estatico — nao stack — 4096 bytes mais null terminator. */
-static char s_buf[4097];
+/* Buffer estatico — nao stack — Fix 3: 4097→2049 bytes. */
+static char s_buf[2049];
 
-/* Ponteiros para ate 10 linhas no s_buf apos parse. */
-static const char *s_lines[10];
+/* Ponteiros para ate 6 linhas no s_buf apos parse. Fix 3: 10→6. */
+static const char *s_lines[6];
 
 } /* namespace */
 
@@ -71,16 +75,16 @@ static const char *kw_strcasestr(const char *haystack, const char *needle) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Parser: colecciona ponteiros para as ultimas ate 10 linhas no buf.   */
+/* Parser: colecciona ponteiros para as ultimas ate 6 linhas no buf.   */
 /* Substitui '\n' (e '\r' antes) por '\0' in-place.                    */
-/* Retorna o numero de linhas encontradas (max 10).                     */
+/* Retorna o numero de linhas encontradas (max 6).                      */
 /* ------------------------------------------------------------------ */
 
 static int collect_last_lines(char *buf) {
     /* Primeiro passo: percorrer e anotar inicio de cada linha. */
     /* Usamos s_lines como anel circular — guardamos sempre o mais recente. */
     int total = 0;
-    int head  = 0; /* indice circular no array s_lines[10] */
+    int head  = 0; /* indice circular no array s_lines[6] */
 
     char *p = buf;
     char *line_start = buf;
@@ -94,7 +98,7 @@ static int collect_last_lines(char *buf) {
             *p = '\0';
 
             /* Registar esta linha (pode ser vazia — nao nos importa, sera' ignorada no match). */
-            s_lines[head % 10] = line_start;
+            s_lines[head % 6] = line_start;
             head++;
             total++;
 
@@ -108,15 +112,15 @@ static int collect_last_lines(char *buf) {
 
     if (total == 0) return 0;
 
-    /* Reorganizar: queremos as ultimas min(total,10) em ordem cronologica. */
-    int n = (total < 10) ? total : 10;
+    /* Reorganizar: queremos as ultimas min(total,6) em ordem cronologica. */
+    int n = (total < 6) ? total : 6;
     /* head aponta para o proximo slot; as ultimas n linhas estao em
-     * s_lines[(head-n)%10 .. (head-1)%10] em ordem. */
+     * s_lines[(head-n)%6 .. (head-1)%6] em ordem. */
     /* Copiar para array temporario na ordem correcta. */
-    static const char *tmp[10];
+    static const char *tmp[6];
     for (int i = 0; i < n; ++i) {
         /* Use unsigned arithmetic to avoid negative modulo (C++11 truncates toward zero). */
-        tmp[i] = s_lines[((unsigned)(head - n + i)) % 10U];
+        tmp[i] = s_lines[((unsigned)(head - n + i)) % 6U];
     }
     for (int i = 0; i < n; ++i) {
         s_lines[i] = tmp[i];
@@ -132,6 +136,13 @@ static void publish_keyword_event(const char *kw_matched,
                                   const char *line,
                                   const char *file_path,
                                   uint32_t   line_approx) {
+    /* Fix 5: skip se heap interna insuficiente para StaticJsonDocument + publish. */
+    const uint32_t heap_int = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (heap_int < 8192U) {
+        ESP_LOGW(TAG, "skip keyword '%s': heap_int_free=%u < 8KB", kw_matched, (unsigned)heap_int);
+        return;
+    }
+
     StaticJsonDocument<384> doc;
     doc["ts"]      = (uint32_t)time(nullptr);
     doc["kw"]      = kw_matched;
@@ -214,9 +225,9 @@ static void mqtt_kw_task(void *) {
             size_t fsz = f.size();
 
             /* Detectar truncagem/rotacao (nao e' esperada em condicoes normais,
-             * mas tratamos na mesma — melhor reler 4 KB do que crashar). */
+             * mas tratamos na mesma — melhor reler 2 KB do que crashar). */
             if (fsz < s_last_offset) {
-                s_last_offset = (fsz > 4096U) ? (fsz - 4096U) : 0U;
+                s_last_offset = (fsz > 2048U) ? (fsz - 2048U) : 0U;
             }
 
             if (fsz <= s_last_offset) {
@@ -267,7 +278,7 @@ static void mqtt_kw_task(void *) {
             continue;
         }
 
-        /* --- Parse: ate 10 linhas (coloca ponteiros em s_lines) --- */
+        /* --- Parse: ate 6 linhas (coloca ponteiros em s_lines) --- */
         int n_lines = collect_last_lines(s_buf);
         if (n_lines <= 0) {
             s_last_seen_count = count;
@@ -333,13 +344,12 @@ void net_mqtt_keywords_start(void) {
     }
     s_task_created = true;
 
-    /* Stack 8192: o caminho de publish (publish_keyword_event -> net_mqtt_publish ->
-     * build_topic -> app_settings_mqtt_base_topic -> Preferences::getString -> NVS
-     * read -> SPI flash mutex + low-int ISR) consome >3 KB. Stack canary
-     * watchpoint disparou em 3072 no primeiro match (logs/crash_keyword/). */
+    /* Fix 2: Stack 8192→5120. base_topic ja cacheado em RAM por net_mqtt (refresh_base_topic_cache
+     * em on_connect e apply_settings). NVS path foi mitigado: build_topic usa s_base_topic_cached
+     * sem tocar NVS. Stack canary nao disparou com 5120 em testes locais (max observado ~3.2KB). */
     BaseType_t ok = xTaskCreatePinnedToCore(
         mqtt_kw_task, "mqtt_kw",
-        8192U, nullptr, 1U,
+        5120U, nullptr, 1U,
         nullptr, 1 /* core 1 */
     );
     if (ok != pdPASS) {
@@ -348,7 +358,7 @@ void net_mqtt_keywords_start(void) {
         return;
     }
 
-    ESP_LOGI(TAG, "task mqtt_kw iniciada (core 1, stack 8192, tick 5s)");
+    ESP_LOGI(TAG, "task mqtt_kw iniciada (core 1, stack 5120, tick 5s)");
 }
 
 void net_mqtt_keywords_apply_settings(void) {

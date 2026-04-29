@@ -3,6 +3,7 @@
 ## Em curso
 
 ## Pendente
+- **Soak RS485 burst v1.39** — quando COM7 (CH340 dongle) for replugado fisicamente, correr `tools/rs485_send_keyword.py --port COM7 --baud 9600 --count 60 --interval 2.0 --keyword OPERACAO` em paralelo com `tools/mqtt_sub_check.py --duration 240`; confirmar 0 reboots, 0 HEAP_GUARD events, todas as 60 keyword msgs em MQTT. Driver CH340 ficou em Windows error 31 após uso anterior; só recupera com replug ou pnputil admin.
 - **MQTT — Fase 3: cliente real** — adicionar `bertmelis/espMqttClient` lib_deps, implementar task `mqtt_svc` (core 0, prio 1, 4KB stack), LWT, backoff exponencial, telemetria JSON periódica.
 - **MQTT — Fase 4: keyword detector** — implementar task `mqtt_kw` (core 1, prio 1, 3KB stack), tick 5s, leitura offset SD, match `strcasestr`, publish `/keyword`.
 - **MQTT — Fase 5: testes** — soak 30 min Mosquitto local, validar `boot_count`/`heap_guard_reboots` no JSON, LWT, heap drain <50 B/min.
@@ -11,6 +12,8 @@
 - Organizar `SoftwareQualification_*.docx` (3 versoes untracked na raiz): mover para pasta dedicada ou adicionar ao `.gitignore`.
 
 ## Feito
+- 2026-04-29 — Heap headroom v1.39: rollback Fix 1 9K→7K (causou reboot loop em v1.38, baseline pos-MQTT é ~14K) + telemetry skip 9K→8K. Validado por MQTT: heap_int_free baseline subiu 14112→18256 B (+4K), heap_int_min 4492→5088 B, heap_guard_reboots=0, MQTT estável. RS485 burst soak pendente (COM7 driver stuck em Windows error 31, requer replug). Bump v1.38→v1.39.
+- 2026-04-27 — Heap headroom fixes v1.37→v1.38 (heap_monitor 9K/5s [revertido v1.39], mqtt_kw stack 5K, s_buf 2K/6 lines, skip publish sob pressão). Fix 1: kReportIntervalMs 30s→5s, kRebootThresholdDef 6K→9K. Fix 2: mqtt_kw stack 8192→5120. Fix 3: s_buf 4097→2049, s_lines/tmp 10→6. Fix 4: skip telemetry se heap_int<9KB [baixado a 8K em v1.39]. Fix 5: skip keyword publish se heap_int<8KB.
 - 2026-04-27 — Trocar senha de configuração na aba Scr.: botão "Trocar senha" adicionado à aba Scr. (label "Senha de acesso:" + botão primário full-width) reutilizando o fluxo 3 passos (atual → nova → confirmar) já existente em pin_change_btn_cb; NVS via app_settings_set_settings_pin (chave pin_sett, default "1234", 4-16 chars). Bump v1.36→v1.37.
 - 2026-04-25 — Web portal completo + auth (v1.37) — Fases A-D: auth Basic, endpoints novos (/api/settings/{rs485,mqtt,ui,net,pin}, /api/system/{reboot,export,import,status}, /api/health), HTML reescrito com 8 tabs CSS, soak 30 min. Bump v1.36→v1.37.
 - 2026-04-25 — MQTT Fase 2: UI LVGL — aba FTP + WG fundidas em tab "SRV" com headers de secção coloridos; bloco MQTT adicionado (switch, textareas host/port/user/pass/base_topic/keywords, slider intervalo 10-3600s, botao Salvar MQTT, label status refresh 1s em status_timer_cb). Teclados: 3 teclados separados (ftp_kb, wg_kb, mqtt_kb) todos pai de tab_srv. Tabview passa de 9 para 8 tabs (Wi-Fi=0, SRV=1, Hora=2, RS485=3, Logs=4, SD=5, Scr.=6, Sistema=7). Build pendente de validacao pelo deployer.

@@ -16,9 +16,9 @@ extern "C" int ets_printf(const char *fmt, ...);
 
 namespace {
 
-constexpr uint32_t kReportIntervalMs   = 30000U;
+constexpr uint32_t kReportIntervalMs   = 5000U;   /* Fix 1: 30s → 5s (detecao rapida de dips) */
 constexpr uint32_t kRebootThresholdMin = 4096U;   /* mínimo defensivo (4 KB) */
-constexpr uint32_t kRebootThresholdDef = 6144U;   /* default 6 KB */
+constexpr uint32_t kRebootThresholdDef = 7168U;   /* Fix 1 v2: 6 KB → 7 KB (9 KB causou reboot loop em v1.38; baseline pos-MQTT ~14 KB) */
 constexpr uint32_t kTaskStackBytes     = 3072U;
 constexpr UBaseType_t kTaskPrio        = 1U;
 constexpr BaseType_t kTaskCore         = 1;       /* core 1 — fora do core dos drivers SPI/SD */
