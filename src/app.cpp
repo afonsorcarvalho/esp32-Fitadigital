@@ -182,6 +182,11 @@ void setup() {
   panel->init();
 #if LVGL_PORT_AVOID_TEAR
   ESP_PanelBus_RGB *rgb_bus = static_cast<ESP_PanelBus_RGB *>(panel->getLcd()->getBus());
+  /* PCLK reduzido 16MHz -> 12MHz em v1.41: bounce *20 não chegava para evitar drift visual
+   * ("rolling/tearing tipo TV CRT") sob carga MQTT publish + RS485 SD writes + LVGL render.
+   * 12MHz dá ~29 fps com porches do board built-in (820x500 totais), suficiente para UI
+   * dominantemente estática. *40 starvou heap interno (network tasks falharam). */
+  rgb_bus->configRgbTimingFreqHz(12 * 1000 * 1000);
   rgb_bus->configRgbFrameBufferNumber(LVGL_PORT_DISP_BUFFER_NUM);
   rgb_bus->configRgbBounceBufferSize(LVGL_PORT_RGB_BOUNCE_BUFFER_SIZE);
 #endif

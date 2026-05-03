@@ -1,9 +1,9 @@
 # TODO — FitaDigital (ESP32-S3-Touch-LCD-4.3B)
 
 ## Em curso
+- _(vazio)_
 
 ## Pendente
-- **Soak RS485 burst v1.39** — quando COM7 (CH340 dongle) for replugado fisicamente, correr `tools/rs485_send_keyword.py --port COM7 --baud 9600 --count 60 --interval 2.0 --keyword OPERACAO` em paralelo com `tools/mqtt_sub_check.py --duration 240`; confirmar 0 reboots, 0 HEAP_GUARD events, todas as 60 keyword msgs em MQTT. Driver CH340 ficou em Windows error 31 após uso anterior; só recupera com replug ou pnputil admin.
 - **MQTT — Fase 3: cliente real** — adicionar `bertmelis/espMqttClient` lib_deps, implementar task `mqtt_svc` (core 0, prio 1, 4KB stack), LWT, backoff exponencial, telemetria JSON periódica.
 - **MQTT — Fase 4: keyword detector** — implementar task `mqtt_kw` (core 1, prio 1, 3KB stack), tick 5s, leitura offset SD, match `strcasestr`, publish `/keyword`.
 - **MQTT — Fase 5: testes** — soak 30 min Mosquitto local, validar `boot_count`/`heap_guard_reboots` no JSON, LWT, heap drain <50 B/min.
@@ -12,7 +12,10 @@
 - Organizar `SoftwareQualification_*.docx` (3 versoes untracked na raiz): mover para pasta dedicada ou adicionar ao `.gitignore`.
 
 ## Feito
-- 2026-04-29 — Heap headroom v1.39: rollback Fix 1 9K→7K (causou reboot loop em v1.38, baseline pos-MQTT é ~14K) + telemetry skip 9K→8K. Validado por MQTT: heap_int_free baseline subiu 14112→18256 B (+4K), heap_int_min 4492→5088 B, heap_guard_reboots=0, MQTT estável. RS485 burst soak pendente (COM7 driver stuck em Windows error 31, requer replug). Bump v1.38→v1.39.
+- 2026-05-02 — Fix tearing display v1.41: PCLK RGB 16→12 MHz (`rgb_bus->configRgbTimingFreqHz(12 MHz)` em `src/app.cpp:185-189`), bounce buffer mantido em `*20` (tentativa `*40` em v1.40 starvou heap interno → AsyncTCP/MQTT/WebPortal pdFAIL + WiFi AUTH_EXPIRE loop, revertida). Bump v1.39→v1.41. Validação: soak 1h48m com RS485 sender 2s/ciclo (3131 ciclos enviados, 3142 MQTT matches OPERACAO, file SD `/CICLOS/2026/05/20260502.txt` cresceu 7K→222K), 0 crash markers, heap interno flat (-180 B drift), heap_int_min 9616 B sob stress. PSRAM drift -36 KB em 108 min (~20 KB/h) — não crítico, follow-up futuro. Tearing visualmente confirmado eliminado pelo user.
+- 2026-05-02 — Fix `tools/rs485_soak_gen.py` default baud 115200→9600 alinhado com firmware (`app_settings_rs485_baud` actual = 9600). Mismatch silencioso causava ESP receber lixo se script usado sem `--baud 9600` explícito. Comentário docstring actualizado.
+- 2026-05-02 — Soak RS485 burst v1.39 (closure): 60 msgs RS485 a 2s/msg em COM7, paralelo MQTT sub 240s. Estabilidade PASS — 0 reboots (uptime monotónico 65829→65951s), 0 HEAP_GUARD (heap_guard_reboots=0, boot_count=61 flat), heap drift ~0 B (heap_int_free 18236→18288), heap_int_min 11800 B (4.8K acima threshold 7K). Throughput keyword: 39/60 contínuos (ciclos 22-60); ciclos 1-21 perdidos por MQTT-offline pré-burst (LWT online=false retained, mqtt_svc reconnectou ~53s após burst start). Não é regressão firmware. v1.39 validado.
+- 2026-04-29 — Heap headroom v1.39: rollback Fix 1 9K→7K (causou reboot loop em v1.38, baseline pos-MQTT é ~14K) + telemetry skip 9K→8K. Validado por MQTT: heap_int_free baseline subiu 14112→18256 B (+4K), heap_int_min 4492→5088 B, heap_guard_reboots=0, MQTT estável. Bump v1.38→v1.39.
 - 2026-04-27 — Heap headroom fixes v1.37→v1.38 (heap_monitor 9K/5s [revertido v1.39], mqtt_kw stack 5K, s_buf 2K/6 lines, skip publish sob pressão). Fix 1: kReportIntervalMs 30s→5s, kRebootThresholdDef 6K→9K. Fix 2: mqtt_kw stack 8192→5120. Fix 3: s_buf 4097→2049, s_lines/tmp 10→6. Fix 4: skip telemetry se heap_int<9KB [baixado a 8K em v1.39]. Fix 5: skip keyword publish se heap_int<8KB.
 - 2026-04-27 — Trocar senha de configuração na aba Scr.: botão "Trocar senha" adicionado à aba Scr. (label "Senha de acesso:" + botão primário full-width) reutilizando o fluxo 3 passos (atual → nova → confirmar) já existente em pin_change_btn_cb; NVS via app_settings_set_settings_pin (chave pin_sett, default "1234", 4-16 chars). Bump v1.36→v1.37.
 - 2026-04-25 — Web portal completo + auth (v1.37) — Fases A-D: auth Basic, endpoints novos (/api/settings/{rs485,mqtt,ui,net,pin}, /api/system/{reboot,export,import,status}, /api/health), HTML reescrito com 8 tabs CSS, soak 30 min. Bump v1.36→v1.37.

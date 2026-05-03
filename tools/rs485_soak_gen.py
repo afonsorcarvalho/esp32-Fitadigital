@@ -5,8 +5,8 @@ Por defeito: a cada 60 s envia uma rajada de 5 linhas de 35 caracteres
 (alfanumericos + espaco), terminadas em '\n'. Pára por Ctrl+C ou ao atingir
 --max-hours. Regista cada linha enviada em --log para auditoria posterior.
 
-Baud por defeito: 115200 (default em code app_settings_rs485_baud).
-Se o ESP32 estiver configurado para outra taxa (ex.: 9600), passar via --baud.
+Baud por defeito: 9600 (alinhado com cycles_rs485 init no firmware actual).
+Se o ESP32 estiver configurado para outra taxa, passar via --baud.
 """
 
 import argparse
@@ -27,7 +27,7 @@ def random_line(length: int) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", default="COM7")
-    ap.add_argument("--baud", type=int, default=115200)
+    ap.add_argument("--baud", type=int, default=9600)
     ap.add_argument("--interval", type=float, default=60.0,
                     help="segundos entre rajadas")
     ap.add_argument("--lines", type=int, default=5,

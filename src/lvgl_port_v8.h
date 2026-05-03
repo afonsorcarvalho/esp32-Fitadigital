@@ -86,7 +86,11 @@
  * This feature will occupy `LVGL_PORT_RGB_BOUNCE_BUFFER_SIZE * 2 * bytes_per_pixel` of SRAM memory.
  *
  */
-/** Maior bounce buffer reduz pressão na largura de banda PSRAM↔LCD (doc ESP32_Display_Panel / esp_lcd RGB). */
+/** Maior bounce buffer reduz pressão na largura de banda PSRAM↔LCD (doc ESP32_Display_Panel / esp_lcd RGB).
+ * Tentativa v1.40 de *40 (128 KB SRAM total) starvou heap interno: MQTT/AsyncTCP/WebPortal
+ * task stacks falharam em alocar (xTaskCreate=pdFAIL), WiFi AUTH_EXPIRE loop sem DRAM para
+ * supplicant. Revertido para *20 em v1.41. Tearing sob carga MQTT+RS485+SD endereçado
+ * via redução de PCLK (override em board built-in / Custom Board). */
 #define LVGL_PORT_RGB_BOUNCE_BUFFER_SIZE        (LVGL_PORT_DISP_WIDTH * 20)
 /**
  * When avoid tearing is enabled, the LVGL software rotation `lv_disp_set_rotation()` is not supported.
