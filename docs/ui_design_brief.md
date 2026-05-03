@@ -262,6 +262,6 @@ material comercial; formato Figma seria ideal para iteracao futura.
 
 **Metadados do projeto:**
 - Produto: FitaDigital
-- Fabricante: AFR
+- Fabricante: AFR Soluções Inteligentes
 - Versao do firmware nos mockups: 1.02v
 - Ano dos exemplos: 2026
