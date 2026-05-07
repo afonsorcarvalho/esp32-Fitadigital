@@ -38,6 +38,15 @@ Thumbs.db
 # Registos e saídas locais de teste
 *.log
 
+# Logs de soak/capture/monitor (locais por máquina/sessão)
+logs/
+
+# Brainstorming notes (rascunhos locais, não versionados)
+docs/brainstorm/
+
+# Scripts ad-hoc de soak (helpers temporários)
+tools/soak_partial.ps1
+
 # Firmware binaries arquivados por versao (tools/save_firmware_version.py).
 # Nao versionar: reproduziveis a partir do source + FITADIGITAL_VERSION.
 firmware_versions/
