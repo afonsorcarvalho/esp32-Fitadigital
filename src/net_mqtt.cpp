@@ -280,6 +280,15 @@ static void mqtt_svc_task(void *) {
             ESP_LOGI(TAG, "a ligar a %s:%u", host.c_str(), (unsigned)app_settings_mqtt_port());
             s_client.connect();
 
+            /* Throttle: se o broker rejeita silenciosamente (sem on_disconnect),
+             * o backoff em on_disconnect nunca atualiza s_next_attempt_ms e o loop
+             * tentava reconectar a cada 200 ms, drenando heap interno e fazendo
+             * crash de outras paths (ex.: download HTTP grande). Avancar o timer
+             * agora garante throttle minimo independente de callbacks. */
+            const uint32_t now2 = (uint32_t)millis();
+            const uint32_t delay_ms = kBackoffTableMs[s_backoff_idx];
+            s_next_attempt_ms = now2 + delay_ms;
+
             vTaskDelay(kTickMs);
             continue;
         }

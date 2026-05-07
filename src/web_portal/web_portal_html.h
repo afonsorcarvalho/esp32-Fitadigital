@@ -41,6 +41,7 @@ h2{font-size:1rem;margin:0 0 12px}
 <button type="button" class="on" data-p="cfg">Config</button>
 <button type="button" data-p="log">Logs</button>
 <button type="button" data-p="fs">Ficheiros</button>
+<button type="button" data-p="scr">Screen</button>
 <button type="button" data-p="ota">OTA</button>
 </nav><span id="ip"></span></header>
 <main>
@@ -85,6 +86,21 @@ h2{font-size:1rem;margin:0 0 12px}
 <table><thead><tr><th>Nome</th><th>Tam.</th><th></th></tr></thead><tbody id="fsBody"></tbody></table>
 </div>
 </section>
+<section id="p-scr" class="panel"><h2>Captura de tela</h2>
+<div id="scrMsg"></div>
+<div class="card">
+<button class="btn" type="button" id="btnScrShot">Capturar tela atual</button>
+<p style="font-size:13px;opacity:.8">Snapshot do display gravado em <code>/screenshots/screen-AAAAMMDD-HHMMSS.jpg</code> no SD (JPEG ~50-150 KB).</p>
+<div id="scrPreview" style="margin-top:12px;display:none">
+<img id="scrImg" alt="screenshot" style="max-width:100%;border:1px solid #ccc;border-radius:4px">
+<div style="margin-top:6px;font-size:13px"><a id="scrImgDl" href="#" target="_blank">Abrir em nova aba</a></div>
+</div>
+</div>
+<div class="card"><h2>Capturas no SD</h2>
+<button class="btn btn2" type="button" id="btnScrRefresh">Recarregar</button>
+<table><thead><tr><th>Nome</th><th>Tam.</th><th></th></tr></thead><tbody id="scrBody"></tbody></table>
+</div>
+</section>
 <section id="p-ota" class="panel"><h2>Atualizar Firmware</h2>
 <div id="otaMsg"></div>
 <div class="card">
@@ -109,6 +125,7 @@ document.querySelector('nav button[data-p="'+id+'"]').classList.add("on");
 if(id==="log") connectLog();
 else disconnectLog();
 if(id==="fs") loadFs();
+if(id==="scr") loadScrList();
 }
 document.querySelectorAll("nav button").forEach(function(b){
 b.onclick=function(){showPanel(b.getAttribute("data-p"));};
@@ -202,6 +219,47 @@ tr.appendChild(td1);tr.appendChild(td2);tr.appendChild(td3);tb.appendChild(tr);
 }).catch(function(e){$("fsBody").innerHTML="<tr><td colspan='3'>Erro: "+(e&&e.message?e.message:String(e))+"</td></tr>";});
 }
 $("btnFsGo").onclick=loadFs;
+function loadScrList(){
+fetch("/api/fs/list?path=/screenshots").then(function(r){return r.json();}).then(function(d){
+var tb=$("scrBody");tb.innerHTML="";
+var ents=(d.entries||[]).filter(function(e){return !e.dir;});
+if(!ents.length){tb.innerHTML='<tr><td colspan="3">(nenhuma captura ainda)</td></tr>';return;}
+ents.forEach(function(e){
+var tr=document.createElement("tr");
+var td1=document.createElement("td");td1.textContent=e.name;
+var td2=document.createElement("td");td2.textContent=String(e.size);
+var td3=document.createElement("td");
+var dl=document.createElement("a");dl.textContent="Descarregar";
+dl.href="/api/fs/file?path="+encodeURIComponent("/screenshots/"+e.name);dl.target="_blank";
+td3.appendChild(dl);
+tr.appendChild(td1);tr.appendChild(td2);tr.appendChild(td3);tb.appendChild(tr);
+});
+}).catch(function(e){$("scrBody").innerHTML='<tr><td colspan="3">Erro: '+(e&&e.message?e.message:String(e))+'</td></tr>';});
+}
+$("btnScrRefresh").onclick=loadScrList;
+$("btnScrShot").onclick=function(){
+$("scrMsg").innerHTML='<div class="msg ok">A capturar (wake screensaver + encode+SD ~7s)...</div>';
+$("scrPreview").style.display="none";
+$("btnScrShot").disabled=true;
+fetch("/api/screenshot/take",{method:"POST",headers:{"Content-Type":"application/json"}})
+.then(function(r){return r.json();})
+.then(function(d){
+if(d.ok){
+$("scrMsg").innerHTML='<div class="msg ok">Agendado: '+d.file+'. Aguardando ~7s (wake+encode+SD)...</div>';
+setTimeout(function(){
+loadScrList();
+var url=d.download+"&_ts="+Date.now();
+$("scrImg").src=url;
+$("scrImgDl").href=d.download;
+$("scrPreview").style.display="";
+$("scrMsg").innerHTML='<div class="msg ok">Pronto: '+d.file+'</div>';
+},7500);
+}else{
+$("scrMsg").innerHTML='<div class="msg err">Erro: '+(d.error||"desconhecido")+'</div>';
+}
+}).catch(function(e){$("scrMsg").innerHTML='<div class="msg err">'+e.message+'</div>';
+}).finally(function(){$("btnScrShot").disabled=false;});
+};
 function doUpload(){
 var f=$("fw-file").files[0];
 if(!f){$("otaMsg").innerHTML='<div class="msg err">Selecione um ficheiro .bin</div>';return;}

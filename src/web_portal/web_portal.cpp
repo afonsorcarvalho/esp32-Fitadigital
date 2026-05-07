@@ -14,6 +14,7 @@
 #include <Update.h>
 #include <WiFi.h>
 #include <cstring>
+#include <strings.h>
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_system.h>
@@ -23,16 +24,16 @@
 #include "net_mqtt.h"
 #include "net_services.h"
 #include "ota_manager.h"
+#include "screenshot.h"
 #include "sd_access.h"
+#include "ui/ui_screensaver.h"
 
 static const char *TAG = "web_portal";
 
 static constexpr uint16_t kHttpPort = 80;
 static constexpr size_t kLogLineQ = 24;
 static constexpr size_t kLogLineMax = 384;
-/** Ficheiros ate este tamanho: leitura unica para RAM + String (como antes). */
-static constexpr size_t kPortalFsMaxFileBytes = 512U * 1024U;
-/** Download HTTP acima de kPortalFsMaxFileBytes: streaming por callback (sem bufferizar o ficheiro inteiro). */
+/** Download HTTP: streaming por callback (sem bufferizar o ficheiro inteiro). */
 static constexpr size_t kPortalFsStreamMaxFileBytes = 32U * 1024U * 1024U;
 
 static AsyncWebServer *s_srv = nullptr;
@@ -447,7 +448,30 @@ static bool portal_parse_bytes_range(AsyncWebServerRequest *request, size_t file
     return true;
 }
 
-static void portal_fs_set_download_name(AsyncWebServerResponse *resp, const String &vfs_path)
+static const char *portal_fs_content_type(const char *path)
+{
+    const char *ext = strrchr(path, '.');
+    if (ext == nullptr) {
+        return "application/octet-stream";
+    }
+    if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0) return "image/jpeg";
+    if (strcasecmp(ext, ".png") == 0) return "image/png";
+    if (strcasecmp(ext, ".bmp") == 0) return "image/bmp";
+    if (strcasecmp(ext, ".gif") == 0) return "image/gif";
+    if (strcasecmp(ext, ".txt") == 0 || strcasecmp(ext, ".log") == 0) return "text/plain";
+    if (strcasecmp(ext, ".csv") == 0) return "text/csv";
+    if (strcasecmp(ext, ".json") == 0) return "application/json";
+    return "application/octet-stream";
+}
+
+static bool portal_fs_is_inline_type(const char *content_type)
+{
+    return strncmp(content_type, "image/", 6) == 0 ||
+           strncmp(content_type, "text/", 5) == 0;
+}
+
+static void portal_fs_set_download_name(AsyncWebServerResponse *resp, const String &vfs_path,
+                                        const char *content_type)
 {
     if (resp == nullptr) {
         return;
@@ -457,7 +481,8 @@ static void portal_fs_set_download_name(AsyncWebServerResponse *resp, const Stri
     if (slash >= 0) {
         fn = vfs_path.c_str() + slash + 1;
     }
-    const String cd = String("attachment; filename=\"") + fn + '"';
+    const char *disp = portal_fs_is_inline_type(content_type) ? "inline" : "attachment";
+    const String cd = String(disp) + "; filename=\"" + fn + '"';
     resp->addHeader("Content-Disposition", cd.c_str(), false);
 }
 
@@ -473,10 +498,7 @@ static void handle_fs_file(AsyncWebServerRequest *request)
         return;
     }
 
-    uint8_t *heap_buf = nullptr;
-    size_t heap_len = 0;
     int err = 0;
-    bool use_stream = false;
     size_t stream_total = 0;
 
     sd_access_sync_front([&]() {
@@ -493,116 +515,122 @@ static void handle_fs_file(AsyncWebServerRequest *request)
             return;
         }
         const size_t sz = test.size();
+        test.close();
         if (sz > kPortalFsStreamMaxFileBytes) {
-            test.close();
             err = 3;
             return;
         }
-        if (sz > kPortalFsMaxFileBytes) {
-            test.close();
-            stream_total = sz;
-            use_stream = true;
-            return;
-        }
-        heap_buf = static_cast<uint8_t *>(heap_caps_malloc(sz, MALLOC_CAP_8BIT));
-        if (heap_buf == nullptr) {
-            test.close();
-            err = 2;
-            return;
-        }
-        const size_t r = test.read(heap_buf, sz);
-        test.close();
-        if (r != sz) {
-            heap_caps_free(heap_buf);
-            heap_buf = nullptr;
-            err = 2;
-            return;
-        }
-        heap_len = sz;
+        stream_total = sz;
     });
 
     if (err == 1) {
         request->send(503, "text/plain", "no sd");
         return;
     }
+    if (err == 2) {
+        request->send(404, "text/plain", "not found");
+        return;
+    }
     if (err == 3) {
         request->send(413, "text/plain", "file too large");
         return;
     }
-    if (use_stream) {
-        size_t range_lo = 0;
-        size_t range_hi = 0;
-        bool client_range = false;
-        if (!portal_parse_bytes_range(request, stream_total, &range_lo, &range_hi, &client_range)) {
-            AsyncWebServerResponse *r416 = request->beginResponse(416, "text/plain", "range not satisfiable");
-            if (r416 == nullptr) {
-                request->send(416, "text/plain", "range not satisfiable");
-                return;
-            }
-            {
-                const String cr = String("bytes */") + String(static_cast<unsigned long>(stream_total));
-                r416->addHeader("Content-Range", cr.c_str(), false);
-            }
-            request->send(r416);
+
+    size_t range_lo = 0;
+    size_t range_hi = 0;
+    bool client_range = false;
+    if (!portal_parse_bytes_range(request, stream_total, &range_lo, &range_hi, &client_range)) {
+        AsyncWebServerResponse *r416 = request->beginResponse(416, "text/plain", "range not satisfiable");
+        if (r416 == nullptr) {
+            request->send(416, "text/plain", "range not satisfiable");
             return;
         }
-        const size_t out_len = range_hi - range_lo + 1U;
-        const int http_code = client_range ? 206 : 200;
-        const String path_copy = p;
-        const size_t body_off = range_lo;
-        const size_t body_len = out_len;
-        AsyncWebServerResponse *resp = request->beginResponse(
-            "application/octet-stream", body_len,
-            [path_copy, body_off, body_len](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
-                if (index >= body_len || maxLen == 0U) {
-                    return 0;
-                }
-                size_t want = body_len - index;
-                if (want > maxLen) {
-                    want = maxLen;
-                }
-                size_t read_once = 0;
-                sd_access_sync_front([&]() {
-                    File f = SD.open(path_copy.c_str(), FILE_READ);
-                    if (!f || f.isDirectory()) {
-                        return;
-                    }
-                    const size_t file_pos = body_off + index;
-                    if (!f.seek(static_cast<uint32_t>(file_pos))) {
-                        f.close();
-                        return;
-                    }
-                    read_once = f.read(buffer, want);
-                    f.close();
-                });
-                return read_once;
-            });
-        if (resp == nullptr) {
-            request->send(500, "text/plain", "oom");
-            return;
+        {
+            const String cr = String("bytes */") + String(static_cast<unsigned long>(stream_total));
+            r416->addHeader("Content-Range", cr.c_str(), false);
         }
-        resp->setCode(http_code);
-        if (http_code == 206) {
-            const String cr = String("bytes ") + String(static_cast<unsigned long>(range_lo)) + '-' +
-                              String(static_cast<unsigned long>(range_hi)) + '/' +
-                              String(static_cast<unsigned long>(stream_total));
-            resp->addHeader("Content-Range", cr.c_str(), false);
-        }
-        (void)resp->addHeader("Accept-Ranges", "bytes", true);
-        portal_fs_set_download_name(resp, p);
-        request->send(resp);
+        request->send(r416);
         return;
     }
-    if (heap_buf == nullptr) {
-        request->send(404, "text/plain", "not found");
+    const size_t out_len = range_hi - range_lo + 1U;
+    const int http_code = client_range ? 206 : 200;
+    const size_t body_off = range_lo;
+    const size_t body_len = out_len;
+    const char *ctype = portal_fs_content_type(p.c_str());
+
+    /* Pre-load entire requested range into PSRAM so the AsyncTCP body callback
+     * never blocks on SD. Per-chunk sd_access_sync_front would serialize lwIP
+     * behind SD I/O (~550 chunks for a 100 KB JPEG), starve TCP, drain heap,
+     * and crash AsyncTCP with a Double Exception under load. */
+    static constexpr size_t kPortalFsBlobMaxBytes = 2U * 1024U * 1024U;
+    if (body_len > kPortalFsBlobMaxBytes) {
+        request->send(413, "text/plain", "file too large");
+        return;
+    }
+    uint8_t *blob = static_cast<uint8_t *>(heap_caps_malloc(body_len, MALLOC_CAP_SPIRAM));
+    if (blob == nullptr) {
+        blob = static_cast<uint8_t *>(heap_caps_malloc(body_len, MALLOC_CAP_8BIT));
+    }
+    if (blob == nullptr) {
+        request->send(500, "text/plain", "oom");
+        return;
+    }
+    int read_err = 0;
+    sd_access_sync_front([&]() {
+        File f = SD.open(p.c_str(), FILE_READ);
+        if (!f || f.isDirectory()) {
+            if (f) {
+                f.close();
+            }
+            read_err = 1;
+            return;
+        }
+        if (!f.seek(static_cast<uint32_t>(body_off))) {
+            f.close();
+            read_err = 2;
+            return;
+        }
+        const size_t r = f.read(blob, body_len);
+        f.close();
+        if (r != body_len) {
+            read_err = 3;
+        }
+    });
+    if (read_err != 0) {
+        heap_caps_free(blob);
+        request->send(500, "text/plain", "read failed");
         return;
     }
 
-    String body;
-    body.reserve(heap_len);
-    body.concat(reinterpret_cast<const char *>(heap_buf), heap_len);
-    heap_caps_free(heap_buf);
-    request->send(200, "application/octet-stream", body);
+    AsyncWebServerResponse *resp = request->beginResponse(
+        ctype, body_len,
+        [blob, body_len](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
+            if (index >= body_len || maxLen == 0U) {
+                return 0;
+            }
+            size_t want = body_len - index;
+            if (want > maxLen) {
+                want = maxLen;
+            }
+            memcpy(buffer, blob + index, want);
+            return want;
+        });
+    if (resp == nullptr) {
+        heap_caps_free(blob);
+        request->send(500, "text/plain", "oom");
+        return;
+    }
+    request->onDisconnect([blob]() { heap_caps_free(blob); });
+    resp->setCode(http_code);
+    if (http_code == 206) {
+        const String cr = String("bytes ") + String(static_cast<unsigned long>(range_lo)) + '-' +
+                          String(static_cast<unsigned long>(range_hi)) + '/' +
+                          String(static_cast<unsigned long>(stream_total));
+        resp->addHeader("Content-Range", cr.c_str(), false);
+    }
+    (void)resp->addHeader("Accept-Ranges", "bytes", true);
+    portal_fs_set_download_name(resp, p, ctype);
+    request->send(resp);
 }
 
 /* ------------------------------------------------------------------ */
@@ -891,6 +919,48 @@ static void handle_system_status(AsyncWebServerRequest *request)
     String out;
     serializeJson(doc, out);
     request->send(200, "application/json", out);
+}
+
+/* --- /api/screenshot/take --- */
+
+static void handle_screenshot_take(AsyncWebServerRequest *request)
+{
+    if (!sd_access_is_mounted()) {
+        request->send(503, "application/json", "{\"ok\":false,\"error\":\"SD nao montado\"}");
+        return;
+    }
+    char fname[80];
+    time_t now = time(nullptr);
+    struct tm tm_now;
+    localtime_r(&now, &tm_now);
+    if (tm_now.tm_year > 100) {
+        strftime(fname, sizeof(fname), "/screenshots/screen-%Y%m%d-%H%M%S.jpg", &tm_now);
+    } else {
+        snprintf(fname, sizeof(fname), "/screenshots/screen-uptime-%lu.jpg",
+                 (unsigned long)(millis() / 1000UL));
+    }
+    /* Pre-captura: pedir wake do screensaver (idempotente — se nao estiver activo, no-op).
+     * Worker faz vTaskDelay(1500ms) antes de encodar para garantir que:
+     *   1. Timer screensaver (1 Hz) processou o flag e fechou o overlay
+     *   2. LVGL re-desenhou a tela actual
+     *   3. Flush hook copiou o frame fresco para o shadow buffer PSRAM
+     * Sem este wake, captura pos-screensaver mostra logo bounce em fundo preto. */
+    ui_screensaver_wake();
+    constexpr uint32_t kPreCaptureDelayMs = 1500U;
+
+    /* screenshot_capture_to_sd_delayed agenda em sd_io task; ~3-5s encode+write SD + delay.
+     * Retornamos 202 Accepted imediato para evitar bloquear o async TCP worker. */
+    if (screenshot_capture_to_sd_delayed(fname, kPreCaptureDelayMs)) {
+        char body[220];
+        snprintf(body, sizeof(body),
+                 "{\"ok\":true,\"queued\":true,\"file\":\"%s\",\"size\":%u,"
+                 "\"download\":\"/api/fs/file?path=%s\"}",
+                 fname, (unsigned)screenshot_bmp_size(), fname);
+        request->send(202, "application/json", body);
+    } else {
+        request->send(500, "application/json",
+                      "{\"ok\":false,\"error\":\"capture queue falhou (PSRAM/heap)\"}");
+    }
 }
 
 /* --- /api/system/reboot --- */
@@ -1190,6 +1260,12 @@ void web_portal_init(void)
     s_srv->on("/api/system/reboot", HTTP_POST, [](AsyncWebServerRequest *request) {
         if (!web_auth_check(request)) return;
         handle_system_reboot(request);
+    });
+
+    /* --- /api/screenshot/take --- */
+    s_srv->on("/api/screenshot/take", HTTP_POST, [](AsyncWebServerRequest *request) {
+        if (!web_auth_check(request)) return;
+        handle_screenshot_take(request);
     });
 
     /* --- /api/system/export --- */

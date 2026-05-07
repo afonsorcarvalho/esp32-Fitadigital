@@ -16,6 +16,12 @@ static TaskHandle_t lvgl_task_handle = nullptr;
 static esp_timer_handle_t lvgl_tick_timer = NULL;
 static void *lvgl_buf[LVGL_PORT_BUFFER_NUM_MAX] = {};
 
+static lvgl_port_flush_hook_t s_flush_hook = nullptr;
+
+void lvgl_port_set_flush_hook(lvgl_port_flush_hook_t fn) {
+    s_flush_hook = fn;
+}
+
 #if LVGL_PORT_ROTATION_DEGREE != 0
 static void *get_next_frame_buffer(ESP_PanelLcd *lcd)
 {
@@ -378,6 +384,7 @@ static void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t
 
 static void flush_callback(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_map)
 {
+    if (s_flush_hook) s_flush_hook(area, color_map);
     ESP_PanelLcd *lcd = (ESP_PanelLcd *)drv->user_data;
     const int offsetx1 = area->x1;
     const int offsetx2 = area->x2;

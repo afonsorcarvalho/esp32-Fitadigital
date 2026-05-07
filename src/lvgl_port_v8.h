@@ -142,6 +142,12 @@
 
 // *INDENT-OFF*
 
+// Flush hook: optional callback invoked from flush_callback (LVGL render path).
+// Used by screenshot module to maintain a PSRAM shadow buffer of the framebuffer.
+// color_map = full 800x480 framebuffer in direct mode (ROTATION_DEGREE=0).
+typedef void (*lvgl_port_flush_hook_t)(const lv_area_t *area, const lv_color_t *color_map);
+void lvgl_port_set_flush_hook(lvgl_port_flush_hook_t fn);
+
 #ifdef __cplusplus
 extern "C" {
 #endif
