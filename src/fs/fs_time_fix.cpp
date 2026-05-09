@@ -7,10 +7,23 @@
 #include <sys/utime.h>
 #include <time.h>
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
 namespace {
 
 static bool is_dot_name(const char *name) {
   return (strcmp(name, ".") == 0) || (strcmp(name, "..") == 0);
+}
+
+/*
+ * Diretorios que nao precisam de mtime fix (conteudo transient/regenerado).
+ * Saltar evita gastar segundos em FAT lookups + alimenta WDT em diretorios
+ * grandes (ex.: /sd/screenshots pode ter centenas de JPEGs apos soak).
+ */
+static bool should_skip_subdir(const char *child_path) {
+  return strstr(child_path, "/screenshots") != nullptr ||
+         strstr(child_path, "/SCREENSHOTS") != nullptr;
 }
 
 /*
@@ -29,7 +42,15 @@ static uint32_t touch_tree_recursive(const char *path, const struct utimbuf *tb)
   }
 
   struct dirent *ent = nullptr;
+  uint32_t iter = 0;
   while ((ent = readdir(dir)) != nullptr) {
+    /* Yield a cada 16 entradas: stat() chama SPI sincrono na sd_io task,
+     * uma traversal grande (ex.: /screenshots com centenas de ficheiros)
+     * mantem CPU 1 ocupado >5s e dispara TWDT em async_tcp. */
+    if ((++iter & 0x0FU) == 0U) {
+      vTaskDelay(1);
+    }
+
     if (is_dot_name(ent->d_name)) {
       continue;
     }
@@ -46,6 +67,9 @@ static uint32_t touch_tree_recursive(const char *path, const struct utimbuf *tb)
     }
 
     if (S_ISDIR(st.st_mode)) {
+      if (should_skip_subdir(child)) {
+        continue;
+      }
       touched += touch_tree_recursive(child, tb);
       if (st.st_mtime < kValidEpoch && utime(child, tb) == 0) {
         touched++;
