@@ -905,7 +905,7 @@ static void handle_system_status(AsyncWebServerRequest *request)
     doc["sd_mounted"] = sd_access_is_mounted();
     doc["wifi_rssi"] = (int)WiFi.RSSI();
     doc["ip"] = WiFi.localIP().toString();
-    doc["fw_ver"] = "1.36";
+    doc["fw_ver"] = FITADIGITAL_VERSION;
     /* MQTT status */
     const MqttStatus ms = net_mqtt_status();
     const char *ms_str = "disabled";

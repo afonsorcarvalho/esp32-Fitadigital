@@ -22,10 +22,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <algorithm>
-#include <string>
-#include <vector>
-
 static const char *TAG = "screenshot";
 
 static constexpr int    kDispW = LVGL_PORT_DISP_WIDTH;
@@ -73,17 +69,25 @@ size_t screenshot_bmp_size(void) {
     return 120UL * 1024UL;
 }
 
-/* Rotation com enumeracao bounded: le ate kEnumCap entradas (FAT dir-order
- * tipicamente cronologico p/ writes sequenciais), se ja viu mais que keep_last
- * apaga ate max_delete das mais antigas. Dir bloated converge gradualmente.
+/* Rotation com enumeracao bounded: le ate kEnumCap entradas, ordena, apaga
+ * ate max_delete das mais antigas. Dir bloated converge gradualmente.
  *
- * Nao tenta enumerar dir inteiro: /api/fs/list em /screenshots com 480 entries
- * fez timeout 10s (entrada FAT scan + stat por nome). Limitando enumeracao
- * controlamos custo por chamada do worker. Chamar dentro de sd_io task. */
+ * v1.44: stack-only (sem std::vector/std::string). std::string com 28+ chars
+ * (ex.: "screen-YYYYMMDD-HHMMSS.jpg") excede SSO -> aloca heap interno por
+ * entrada. 49 entries × ~32 B + vector buffer = ~2.7 KB heap interno por
+ * chamada, fragmentando heap a cada snapshot worker (60s). v1.43 com snapshot
+ * loop activo drenou heap_int 13K→5K em 2 min e travou LVGL+AsyncTCP.
+ * Buffer estatico kEnumCap×kMaxNameLen = ~3 KB no stack do sd_io worker
+ * (32 KB stack), zero heap. */
+static int name_qsort_cmp(const void *a, const void *b) {
+    return strcmp((const char *)a, (const char *)b);
+}
+
 static size_t rotate_dir_keep_last(const char *dir_path, size_t keep_last,
                                    size_t max_delete) {
     if (!dir_path || !*dir_path) return 0;
-    static constexpr size_t kEnumCap = 64;
+    static constexpr size_t kEnumCap     = 64;
+    static constexpr size_t kMaxNameLen  = 48;
 
     File dir = SD.open(dir_path);
     if (!dir || !dir.isDirectory()) {
@@ -91,32 +95,36 @@ static size_t rotate_dir_keep_last(const char *dir_path, size_t keep_last,
         return 0;
     }
 
-    std::vector<std::string> names;
-    names.reserve(kEnumCap);
-    while (names.size() < kEnumCap) {
+    char names[kEnumCap][kMaxNameLen];
+    size_t count = 0;
+    while (count < kEnumCap) {
         File f = dir.openNextFile();
         if (!f) break;
         if (!f.isDirectory()) {
             const char *n = f.name();
-            if (n) names.emplace_back(n);
+            if (n && *n) {
+                strncpy(names[count], n, kMaxNameLen - 1);
+                names[count][kMaxNameLen - 1] = '\0';
+                count++;
+            }
         }
         f.close();
-        if ((names.size() & 0x0FU) == 0U) {
+        if ((count & 0x0FU) == 0U) {
             vTaskDelay(1);
         }
     }
     dir.close();
 
-    if (names.size() <= keep_last) return 0;
+    if (count <= keep_last) return 0;
 
-    std::sort(names.begin(), names.end());
-    const size_t to_delete_total = names.size() - keep_last;
+    qsort(names, count, kMaxNameLen, name_qsort_cmp);
+    const size_t to_delete_total = count - keep_last;
     const size_t to_delete = (to_delete_total > max_delete) ? max_delete
                                                             : to_delete_total;
     size_t deleted = 0;
     for (size_t i = 0; i < to_delete; ++i) {
         char full[200];
-        snprintf(full, sizeof(full), "%s/%s", dir_path, names[i].c_str());
+        snprintf(full, sizeof(full), "%s/%s", dir_path, names[i]);
         if (SD.remove(full)) {
             deleted++;
         } else {
@@ -128,7 +136,7 @@ static size_t rotate_dir_keep_last(const char *dir_path, size_t keep_last,
     }
     if (deleted > 0) {
         log_i("[screenshot] rotate %s: %u removidos (visiveis=%u, keep=%u, cap=%u)",
-              dir_path, (unsigned)deleted, (unsigned)names.size(),
+              dir_path, (unsigned)deleted, (unsigned)count,
               (unsigned)keep_last, (unsigned)kEnumCap);
     }
     return deleted;

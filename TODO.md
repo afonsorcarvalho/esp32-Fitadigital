@@ -1,7 +1,7 @@
 # TODO — FitaDigital (ESP32-S3-Touch-LCD-4.3B)
 
 ## Em curso
-- **Soak 8h overnight v1.43** (2026-05-09) — validar rotation `/screenshots` keep20 + endpoint `POST /api/fs/delete`. Carga: RS485 sender + snapshot loop. Critérios PASS: 0 crash markers, heap drift flat, dir `/screenshots` ≤ 20 files no fim.
+- **Soak v1.44** (2026-05-09) — validar fix rotation stack-only (sem std::vector/std::string). Bug v1.43: rotate_dir_keep_last() alocava ~2.7 KB heap interno por chamada (49 std::strings 28-char excedem SSO + vector buffer). Sob snapshot loop 60s, heap_int caía 13K→5K em 2 min, LVGL+AsyncTCP travavam (sem reboot — current free nunca <7K threshold). Idle v1.43 OK (heap flat 19212). Fix v1.44: `char names[64][48]` stack + qsort, zero heap allocations. Bonus: `fw_ver` hardcoded "1.36" em web_portal.cpp:908 → `FITADIGITAL_VERSION`.
 
 ## Pendente
 - **MQTT — Fase 3: cliente real** — adicionar `bertmelis/espMqttClient` lib_deps, implementar task `mqtt_svc` (core 0, prio 1, 4KB stack), LWT, backoff exponencial, telemetria JSON periódica.
