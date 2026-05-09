@@ -921,6 +921,54 @@ static void handle_system_status(AsyncWebServerRequest *request)
     request->send(200, "application/json", out);
 }
 
+/* --- /api/fs/delete (POST ?path=/abs/path) --- */
+
+static void handle_fs_delete(AsyncWebServerRequest *request)
+{
+    const String p = path_param_from_request(request);
+    if (p.length() == 0) {
+        request->send(400, "application/json", "{\"ok\":false,\"error\":\"path\"}");
+        return;
+    }
+    if (!fs_path_ok(p.c_str())) {
+        request->send(403, "application/json", "{\"ok\":false,\"error\":\"forbidden\"}");
+        return;
+    }
+    if (!sd_access_is_mounted()) {
+        request->send(503, "application/json",
+                      "{\"ok\":false,\"error\":\"SD nao montado\"}");
+        return;
+    }
+    bool ok = false;
+    bool was_dir = false;
+    sd_access_sync_front([&]() {
+        if (!SD.exists(p)) {
+            ok = false;
+            return;
+        }
+        File f = SD.open(p);
+        if (f) {
+            was_dir = f.isDirectory();
+            f.close();
+        }
+        if (was_dir) {
+            ok = SD.rmdir(p);
+        } else {
+            ok = SD.remove(p);
+        }
+    });
+    if (!ok) {
+        request->send(409, "application/json",
+                      "{\"ok\":false,\"error\":\"falhou\"}");
+        return;
+    }
+    char body[128];
+    snprintf(body, sizeof(body),
+             "{\"ok\":true,\"path\":\"%s\",\"dir\":%s}",
+             p.c_str(), was_dir ? "true" : "false");
+    request->send(200, "application/json", body);
+}
+
 /* --- /api/screenshot/take --- */
 
 static void handle_screenshot_take(AsyncWebServerRequest *request)
@@ -1300,6 +1348,11 @@ void web_portal_init(void)
     s_srv->on("/api/fs/file", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!web_auth_check(request)) return;
         handle_fs_file(request);
+    });
+
+    s_srv->on("/api/fs/delete", HTTP_POST, [](AsyncWebServerRequest *request) {
+        if (!web_auth_check(request)) return;
+        handle_fs_delete(request);
     });
 
     /* --- /api/ota/upload --- */

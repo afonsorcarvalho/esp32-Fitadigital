@@ -1,7 +1,7 @@
 # TODO — FitaDigital (ESP32-S3-Touch-LCD-4.3B)
 
 ## Em curso
-- _(vazio)_
+- **Soak 8h overnight v1.43** (2026-05-09) — validar rotation `/screenshots` keep20 + endpoint `POST /api/fs/delete`. Carga: RS485 sender + snapshot loop. Critérios PASS: 0 crash markers, heap drift flat, dir `/screenshots` ≤ 20 files no fim.
 
 ## Pendente
 - **MQTT — Fase 3: cliente real** — adicionar `bertmelis/espMqttClient` lib_deps, implementar task `mqtt_svc` (core 0, prio 1, 4KB stack), LWT, backoff exponencial, telemetria JSON periódica.

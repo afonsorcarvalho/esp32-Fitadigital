@@ -22,11 +22,22 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <algorithm>
+#include <string>
+#include <vector>
+
 static const char *TAG = "screenshot";
 
 static constexpr int    kDispW = LVGL_PORT_DISP_WIDTH;
 static constexpr int    kDispH = LVGL_PORT_DISP_HEIGHT;
 static constexpr size_t kShadowBufBytes = (size_t)kDispW * kDispH * 2;
+
+/* Rotation: keep last N screenshots, delete oldest (sorted lexicograficamente
+ * pelo nome — formato `screen-YYYYMMDD-HHMMSS.jpg` ordena por tempo).
+ * Tampa max_delete por chamada para evitar segurar sd_io demasiado tempo
+ * quando dir esta muito cheio (cleanup gradual ao longo de varios snapshots). */
+static constexpr size_t kRotateKeepLast       = 20;
+static constexpr size_t kRotateMaxDeletePerCb = 8;
 
 static uint8_t *s_shadow_buf = nullptr;
 
@@ -60,6 +71,67 @@ void screenshot_init(void) {
 size_t screenshot_bmp_size(void) {
     /* JPEG quality HIGH 800x480 ≈ 60-120 KB tipicamente. Estimativa optimista. */
     return 120UL * 1024UL;
+}
+
+/* Rotation com enumeracao bounded: le ate kEnumCap entradas (FAT dir-order
+ * tipicamente cronologico p/ writes sequenciais), se ja viu mais que keep_last
+ * apaga ate max_delete das mais antigas. Dir bloated converge gradualmente.
+ *
+ * Nao tenta enumerar dir inteiro: /api/fs/list em /screenshots com 480 entries
+ * fez timeout 10s (entrada FAT scan + stat por nome). Limitando enumeracao
+ * controlamos custo por chamada do worker. Chamar dentro de sd_io task. */
+static size_t rotate_dir_keep_last(const char *dir_path, size_t keep_last,
+                                   size_t max_delete) {
+    if (!dir_path || !*dir_path) return 0;
+    static constexpr size_t kEnumCap = 64;
+
+    File dir = SD.open(dir_path);
+    if (!dir || !dir.isDirectory()) {
+        if (dir) dir.close();
+        return 0;
+    }
+
+    std::vector<std::string> names;
+    names.reserve(kEnumCap);
+    while (names.size() < kEnumCap) {
+        File f = dir.openNextFile();
+        if (!f) break;
+        if (!f.isDirectory()) {
+            const char *n = f.name();
+            if (n) names.emplace_back(n);
+        }
+        f.close();
+        if ((names.size() & 0x0FU) == 0U) {
+            vTaskDelay(1);
+        }
+    }
+    dir.close();
+
+    if (names.size() <= keep_last) return 0;
+
+    std::sort(names.begin(), names.end());
+    const size_t to_delete_total = names.size() - keep_last;
+    const size_t to_delete = (to_delete_total > max_delete) ? max_delete
+                                                            : to_delete_total;
+    size_t deleted = 0;
+    for (size_t i = 0; i < to_delete; ++i) {
+        char full[200];
+        snprintf(full, sizeof(full), "%s/%s", dir_path, names[i].c_str());
+        if (SD.remove(full)) {
+            deleted++;
+        } else {
+            log_w("[screenshot] rotate: SD.remove(%s) falhou", full);
+        }
+        if ((i & 0x07U) == 0U) {
+            vTaskDelay(1);
+        }
+    }
+    if (deleted > 0) {
+        log_i("[screenshot] rotate %s: %u removidos (visiveis=%u, keep=%u, cap=%u)",
+              dir_path, (unsigned)deleted, (unsigned)names.size(),
+              (unsigned)keep_last, (unsigned)kEnumCap);
+    }
+    return deleted;
 }
 
 /* mkdir -p no ficheiro pai. Chamar dentro de sd_io task. */
@@ -107,6 +179,11 @@ static void screenshot_worker(char *filepath_dup, uint32_t delay_ms) {
         vTaskDelay(pdMS_TO_TICKS(delay_ms));
     }
     ensure_parent_dirs(filepath_dup);
+
+    /* Rotation: limpar excesso ANTES de gravar — evita que dir bloated cause
+     * SD.open/stat patologicos em snapshots futuros. Cap kRotateMaxDeletePerCb
+     * limita custo: dir grande limpa-se ao longo de varias capturas. */
+    rotate_dir_keep_last("/screenshots", kRotateKeepLast, kRotateMaxDeletePerCb);
 
     JPEGENC jpg;
     JPEGENCODE enc;
