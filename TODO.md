@@ -1,7 +1,8 @@
 # TODO — FitaDigital (ESP32-S3-Touch-LCD-4.3B)
 
 ## Em curso
-- **Soak v1.44** (2026-05-09) — validar fix rotation stack-only (sem std::vector/std::string). Bug v1.43: rotate_dir_keep_last() alocava ~2.7 KB heap interno por chamada (49 std::strings 28-char excedem SSO + vector buffer). Sob snapshot loop 60s, heap_int caía 13K→5K em 2 min, LVGL+AsyncTCP travavam (sem reboot — current free nunca <7K threshold). Idle v1.43 OK (heap flat 19212). Fix v1.44: `char names[64][48]` stack + qsort, zero heap allocations. Bonus: `fw_ver` hardcoded "1.36" em web_portal.cpp:908 → `FITADIGITAL_VERSION`.
+- **Soak v1.45** (2026-05-09) — rotation **desactivada**. v1.44 stack-only (3K stack) também travou sd_io task sob snapshot loop (`[sd_io] stack_hwm` log parou aos 4s; heap flat 17884 mas display+AsyncTCP morrem). Bypass: comentar chamada `rotate_dir_keep_last()` em screenshot_worker. /screenshots cresce sem limite — limpeza manual via FTP/api. Validar baseline screenshot+MQTT estavel sob load. Investigar root cause rotation (PSRAM buffer? sd_io interaction?) depois.
+- **Pendente**: fix rotation root cause (v1.43 std::vector heap drain; v1.44 stack 3K trava sd_io). Hipoteses: stack overflow sd_io worker, SD.remove block, qsort recursion. Solucao provavel: PSRAM-allocated buffer no screenshot_init.
 
 ## Pendente
 - **MQTT — Fase 3: cliente real** — adicionar `bertmelis/espMqttClient` lib_deps, implementar task `mqtt_svc` (core 0, prio 1, 4KB stack), LWT, backoff exponencial, telemetria JSON periódica.

@@ -83,6 +83,7 @@ static int name_qsort_cmp(const void *a, const void *b) {
     return strcmp((const char *)a, (const char *)b);
 }
 
+__attribute__((unused))
 static size_t rotate_dir_keep_last(const char *dir_path, size_t keep_last,
                                    size_t max_delete) {
     if (!dir_path || !*dir_path) return 0;
@@ -188,10 +189,14 @@ static void screenshot_worker(char *filepath_dup, uint32_t delay_ms) {
     }
     ensure_parent_dirs(filepath_dup);
 
-    /* Rotation: limpar excesso ANTES de gravar — evita que dir bloated cause
-     * SD.open/stat patologicos em snapshots futuros. Cap kRotateMaxDeletePerCb
-     * limita custo: dir grande limpa-se ao longo de varias capturas. */
-    rotate_dir_keep_last("/screenshots", kRotateKeepLast, kRotateMaxDeletePerCb);
+    /* Rotation desactivada (v1.45) — v1.43 std::vector<std::string> alocava
+     * ~2.7K heap interno por chamada (filenames 28 chars excedem SSO);
+     * v1.44 stack-only `char names[64][48]` (~3K stack) bloqueou sd_io task
+     * silenciosamente sob carga snapshot loop (sd_io stack_hwm log parou aos
+     * 4s, display+web travaram). Investigar root cause separadamente.
+     * Sem rotation, /screenshots cresce sem limite — tem que ser limpo
+     * manualmente via FTP ou /api/fs/delete. */
+    /* rotate_dir_keep_last("/screenshots", kRotateKeepLast, kRotateMaxDeletePerCb); */
 
     JPEGENC jpg;
     JPEGENCODE enc;
