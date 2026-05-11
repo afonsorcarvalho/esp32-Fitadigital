@@ -25,6 +25,7 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 #include <esp_random.h>
+#include <esp_heap_caps.h>
 #include <mbedtls/base64.h>
 #include <mbedtls/ecp.h>
 #include <mbedtls/platform_util.h>
@@ -126,11 +127,19 @@ static bool keygen(char *priv_out, size_t priv_sz, char *pub_out, size_t pub_sz)
 
 /* ── HTTP helpers ─────────────────────────────────────────────────────────── */
 
+static void add_odoo_db_header(HTTPClient &http) {
+    String db = app_settings_wg_enroll_db();
+    if (db.length() > 0) {
+        http.addHeader("X-Odoo-Db", db);
+    }
+}
+
 static int http_post(const char *url, const char *body, String &resp_out) {
     HTTPClient http;
     WiFiClient client;
     if (!http.begin(client, url)) return -1;
     http.addHeader("Content-Type", "application/json");
+    add_odoo_db_header(http);
     http.setTimeout(10000);
     int code = http.POST((uint8_t *)body, strlen(body));
     if (code > 0) resp_out = http.getString();
@@ -142,6 +151,7 @@ static int http_get(const char *url, String &resp_out) {
     HTTPClient http;
     WiFiClient client;
     if (!http.begin(client, url)) return -1;
+    add_odoo_db_header(http);
     http.setTimeout(10000);
     int code = http.GET();
     if (code > 0) resp_out = http.getString();
@@ -166,10 +176,11 @@ static bool do_enroll(const char *pub_b64) {
 
     String resp;
     const int code = http_post(url, body.c_str(), resp);
-    if (code != 200) {
-        Serial.printf("[%s] enroll HTTP %d\n", TAG, code);
+    if (code != 200 && code != 201) {
+        Serial.printf("[%s] enroll HTTP %d resp=%s\n", TAG, code, resp.c_str());
         return false;
     }
+    Serial.printf("[%s] enroll HTTP %d ok\n", TAG, code);
 
     JsonDocument rdoc;
     if (deserializeJson(rdoc, resp) != DeserializationError::Ok) return false;
@@ -177,9 +188,19 @@ static bool do_enroll(const char *pub_b64) {
     const char *act_url  = rdoc["activation_url"]  | "";
     if (!act_code[0] || !act_url[0]) return false;
 
+    /* Inject db=<name> into activation_url so admin browser hits the right Odoo DB. */
+    String final_url(act_url);
+    String db = app_settings_wg_enroll_db();
+    if (db.length() > 0) {
+        final_url += (final_url.indexOf('?') >= 0) ? '&' : '?';
+        final_url += "db=";
+        final_url += db;
+    }
+
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     strncpy(s_status.activation_code, act_code, sizeof(s_status.activation_code) - 1);
-    strncpy(s_status.activation_url,  act_url,  sizeof(s_status.activation_url)  - 1);
+    strncpy(s_status.activation_url, final_url.c_str(), sizeof(s_status.activation_url) - 1);
+    s_status.activation_url[sizeof(s_status.activation_url) - 1] = '\0';
     s_status.expires_at_ms = millis() + 600000UL; /* 10 min */
     xSemaphoreGive(s_mutex);
 
@@ -208,16 +229,30 @@ static int do_poll(const char *code) {
     }
 
     /* 200: received WireGuard config */
+    Serial.printf("[%s] poll 200 body=%s\n", TAG, resp.c_str());
     JsonDocument doc;
-    if (deserializeJson(doc, resp) != DeserializationError::Ok) return -2;
+    const DeserializationError jerr = deserializeJson(doc, resp);
+    if (jerr != DeserializationError::Ok) {
+        Serial.printf("[%s] poll json err=%s\n", TAG, jerr.c_str());
+        return -2;
+    }
 
     const char *addr   = doc["address"]           | "";
-    const char *srv_pk = doc["server_public_key"]  | "";
-    const char *ep     = doc["server_endpoint"]    | "";
-    const char *dns    = doc["dns"]                | "";
-    const char *aips   = doc["allowed_ips"]        | "";
+    /* Accept multiple field name variants to be robust against server schema changes. */
+    const char *srv_pk = doc["server_public_key"] | doc["serverPublicKey"]
+                                                   | doc["peer_public_key"]
+                                                   | doc["pubkey"] | "";
+    const char *ep     = doc["server_endpoint"]   | doc["serverEndpoint"]
+                                                   | doc["endpoint"] | "";
+    const char *dns    = doc["dns"]               | "";
+    const char *aips   = doc["allowed_ips"]       | doc["allowedIps"] | "";
 
-    if (!addr[0] || !srv_pk[0] || !ep[0]) return -2;
+    Serial.printf("[%s] poll parsed addr=%s srv_pk_len=%u ep=%s\n",
+                  TAG, addr, (unsigned)strlen(srv_pk), ep);
+    if (!addr[0] || !srv_pk[0] || !ep[0]) {
+        Serial.printf("[%s] poll missing required fields\n", TAG);
+        return -2;
+    }
 
     /* Strip CIDR suffix from address for NVS (net_wireguard_apply uses IPAddress::fromString). */
     char ip_only[24] = {};
@@ -255,7 +290,11 @@ static int do_poll(const char *code) {
     app_settings_set_wg_port(ep_port);
     app_settings_set_wireguard_enabled(true);
 
-    Serial.printf("[%s] config saved ip=%s ep=%s:%u\n", TAG, ip_only, ep_host, ep_port);
+    /* Read-back verification: catches silent NVS write failures. */
+    String pub_back = app_settings_wg_peer_public_key();
+    Serial.printf("[%s] config saved ip=%s ep=%s:%u pub_readback_len=%u match=%d\n",
+                  TAG, ip_only, ep_host, ep_port,
+                  (unsigned)pub_back.length(), (int)(pub_back == srv_pk));
     (void)dns; (void)aips; /* stored in WG config server-side */
     return 1;
 }
@@ -363,8 +402,19 @@ void wg_provision_start(const char *server_url) {
     s_status.state = WgProvState::IDLE;
     strncpy(s_server_url, server_url ? server_url : "", sizeof(s_server_url) - 1);
 
-    /* 16 KB: mbedTLS entropy+DRBG+ECP contexts together exceed 8 KB on ESP32. */
-    xTaskCreatePinnedToCore(provision_task, "wg_prov", 16384, nullptr, 5, &s_task, 0);
+    /* 6 KB: only ECP keypair gen lives on the stack (no entropy/DRBG/ECDH). */
+    const size_t free_int  = ESP.getFreeHeap();
+    const size_t max_block = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+    Serial.printf("[%s] pre-create free_int=%u largest_internal=%u\n",
+                  TAG, (unsigned)free_int, (unsigned)max_block);
+    const BaseType_t rc = xTaskCreatePinnedToCore(
+        provision_task, "wg_prov", 6144, nullptr, 5, &s_task, 0);
+    if (rc != pdPASS) {
+        s_task = nullptr;
+        Serial.printf("[%s] xTaskCreate failed rc=%d free_int=%u largest=%u\n",
+                      TAG, (int)rc, (unsigned)free_int, (unsigned)max_block);
+        set_state(WgProvState::ERROR, "Sem memoria para iniciar provisionamento");
+    }
 }
 
 void wg_provision_cancel(void) {

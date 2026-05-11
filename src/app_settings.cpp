@@ -994,6 +994,14 @@ void app_settings_set_wg_enroll_server(const char *url) {
   put_str_max("wg_srv", url, kDownloadUrlMax);
 }
 
+String app_settings_wg_enroll_db(void) {
+  return s_prefs.getString("wg_db", "");
+}
+
+void app_settings_set_wg_enroll_db(const char *db) {
+  put_str_max("wg_db", db, 64);
+}
+
 static uint32_t rs485_nearest_std_baud(uint32_t baud) {
   if (kRs485StdBaudCount == 0U) {
     return 115200U;

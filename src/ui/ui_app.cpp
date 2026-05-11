@@ -91,6 +91,7 @@ static lv_obj_t *s_sett_time_kb = nullptr;
 
 static lv_obj_t *s_sw_wg = nullptr;
 static lv_obj_t *s_ta_wg_enroll_url = nullptr;
+static lv_obj_t *s_ta_wg_enroll_db  = nullptr;
 static lv_obj_t *s_ta_wg_ip = nullptr;
 static lv_obj_t *s_ta_wg_priv = nullptr;
 static lv_obj_t *s_ta_wg_pub = nullptr;
@@ -1469,6 +1470,9 @@ static void settings_screen_enter(void) {
   if (s_ta_wg_enroll_url != nullptr) {
     lv_textarea_set_text(s_ta_wg_enroll_url, app_settings_wg_enroll_server().c_str());
   }
+  if (s_ta_wg_enroll_db != nullptr) {
+    lv_textarea_set_text(s_ta_wg_enroll_db, app_settings_wg_enroll_db().c_str());
+  }
   if (s_sw_mqtt != nullptr) {
     if (app_settings_mqtt_enabled()) {
       lv_obj_add_state(s_sw_mqtt, LV_STATE_CHECKED);
@@ -2006,6 +2010,9 @@ static void settings_save_wg_cb(lv_event_t *e) {
   if (s_ta_wg_enroll_url != nullptr) {
     app_settings_set_wg_enroll_server(lv_textarea_get_text(s_ta_wg_enroll_url));
   }
+  if (s_ta_wg_enroll_db != nullptr) {
+    app_settings_set_wg_enroll_db(lv_textarea_get_text(s_ta_wg_enroll_db));
+  }
   net_wireguard_apply();
   ui_toast_show(ToastKind::Success, "WireGuard guardado");
 }
@@ -2478,10 +2485,20 @@ static void create_settings_screen(void) {
   s_ta_wg_enroll_url = lv_textarea_create(srv_scroll);
   lv_textarea_set_one_line(s_ta_wg_enroll_url, true);
   lv_textarea_set_max_length(s_ta_wg_enroll_url, 127);
-  lv_textarea_set_placeholder_text(s_ta_wg_enroll_url, "http://192.168.x.x:5000");
+  lv_textarea_set_placeholder_text(s_ta_wg_enroll_url, "http://192.168.x.x:8083");
   lv_obj_set_width(s_ta_wg_enroll_url, LV_PCT(100));
   lv_obj_add_event_cb(s_ta_wg_enroll_url, settings_wg_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
   lv_obj_add_event_cb(s_ta_wg_enroll_url, settings_wg_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
+
+  lv_obj_t *ldb = lv_label_create(srv_scroll);
+  lv_label_set_text(ldb, "Base de dados Odoo (X-Odoo-Db):");
+  s_ta_wg_enroll_db = lv_textarea_create(srv_scroll);
+  lv_textarea_set_one_line(s_ta_wg_enroll_db, true);
+  lv_textarea_set_max_length(s_ta_wg_enroll_db, 63);
+  lv_textarea_set_placeholder_text(s_ta_wg_enroll_db, "ex: fitadigital_prod");
+  lv_obj_set_width(s_ta_wg_enroll_db, LV_PCT(100));
+  lv_obj_add_event_cb(s_ta_wg_enroll_db, settings_wg_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
+  lv_obj_add_event_cb(s_ta_wg_enroll_db, settings_wg_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
 
   lv_obj_t *bt_enroll = lv_btn_create(srv_scroll);
   lv_obj_set_width(bt_enroll, LV_PCT(100));

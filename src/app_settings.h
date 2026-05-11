@@ -98,6 +98,10 @@ void app_settings_set_wg_port(uint16_t port);
 String app_settings_wg_enroll_server(void);
 void app_settings_set_wg_enroll_server(const char *url);
 
+/** Nome do DB Odoo (header X-Odoo-Db) para multi-DB; vazio = nao envia header. */
+String app_settings_wg_enroll_db(void);
+void app_settings_set_wg_enroll_db(const char *db);
+
 /* ------------------------------------------------------------------ */
 /* MQTT                                                                  */
 /* ------------------------------------------------------------------ */
