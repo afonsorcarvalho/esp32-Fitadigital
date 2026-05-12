@@ -13,8 +13,18 @@
 #include <Arduino.h>
 #include <lvgl.h>
 #include <string.h>
+#include <esp_heap_caps.h>
 #include "ui_theme.h"
 #include "app_settings.h"
+#include "heap_monitor.h"
+
+extern "C" int ets_printf(const char *fmt, ...);
+
+/* HEAP_GUARD default threshold (7K) é alto demais durante enrollment: modal +
+ * task wg_prov 6K + QR canvas + HTTP buffers consomem ~10K transient. Baixamos
+ * para 4K (mínimo defensivo) durante o modal e restauramos ao fechar. */
+constexpr uint32_t kEnrollHeapThreshold = 4096U;
+constexpr uint32_t kDefaultHeapThreshold = 7168U;
 
 namespace {
 
@@ -46,6 +56,9 @@ void do_close(void) {
     }
     s_last_state   = WgProvState::IDLE;
     s_auto_closing = false;
+    heap_monitor_set_threshold(kDefaultHeapThreshold);
+    ets_printf("[WG_PROV_UI] modal closed, heap threshold restored to %u\n",
+               (unsigned)kDefaultHeapThreshold);
 }
 
 void close_cb(lv_event_t * /*e*/) { do_close(); }
@@ -84,10 +97,23 @@ static void build_spinner(const char *msg) {
 }
 
 static void build_qr_view(const WgProvStatus *st) {
+    ets_printf("[WG_PROV_UI] pre-qr url_len=%u free_int=%u largest_int=%u\n",
+               (unsigned)strlen(st->activation_url),
+               (unsigned)ESP.getFreeHeap(),
+               (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
     lv_obj_t *qr = lv_qrcode_create(s_content, 240,
                                       UI_COLOR_BLACK,
                                       UI_COLOR_WHITE);
+    if (qr == nullptr) {
+        ets_printf("[WG_PROV_UI] qrcode_create returned null\n");
+        lv_obj_t *lbl = lv_label_create(s_content);
+        lv_label_set_text(lbl, "Sem memoria para gerar QR");
+        lv_obj_set_style_text_color(lbl, UI_COLOR_ERROR, 0);
+        return;
+    }
     const lv_res_t r = lv_qrcode_update(qr, st->activation_url, strlen(st->activation_url));
+    ets_printf("[WG_PROV_UI] post-qr res=%d free_int=%u\n",
+               (int)r, (unsigned)ESP.getFreeHeap());
     if (r != LV_RES_OK) {
         ui_toast_show(ToastKind::Error, "URL longa de mais para QR");
     }
@@ -207,6 +233,10 @@ void ui_wg_enroll_open(const char *server_url) {
     }
     strncpy(s_server_url_copy, server_url, sizeof(s_server_url_copy) - 1);
     s_server_url_copy[sizeof(s_server_url_copy) - 1] = '\0';
+
+    heap_monitor_set_threshold(kEnrollHeapThreshold);
+    ets_printf("[WG_PROV_UI] modal open, heap threshold lowered to %u\n",
+               (unsigned)kEnrollHeapThreshold);
 
     const lv_coord_t scr_w = lv_disp_get_hor_res(nullptr);
     const lv_coord_t scr_h = lv_disp_get_ver_res(nullptr);

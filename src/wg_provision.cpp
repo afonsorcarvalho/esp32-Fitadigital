@@ -26,6 +26,8 @@
 #include <freertos/task.h>
 #include <esp_random.h>
 #include <esp_heap_caps.h>
+
+extern "C" int ets_printf(const char *fmt, ...);
 #include <mbedtls/base64.h>
 #include <mbedtls/ecp.h>
 #include <mbedtls/platform_util.h>
@@ -55,7 +57,8 @@ static void set_state(WgProvState st, const char *err = nullptr) {
         s_status.error_msg[sizeof(s_status.error_msg) - 1] = '\0';
     }
     xSemaphoreGive(s_mutex);
-    Serial.printf("[%s] state -> %d%s%s\n", TAG, (int)st, err ? " err=" : "", err ? err : "");
+    /* ets_printf bypasses Arduino UART buffering — survives ISR/heap pressure. */
+    ets_printf("[WG_PROV] state -> %d%s%s\n", (int)st, err ? " err=" : "", err ? err : "");
 }
 
 static bool cancelled() { return s_cancel; }
@@ -313,6 +316,9 @@ static void provision_task(void * /*arg*/) {
         set_state(WgProvState::ERROR, "Falha na geracao de chaves");
         goto done;
     }
+    /* Persistir a public key cedo: util para admin confirmar peer no server
+     * mesmo se enrollment falhar nos passos seguintes. */
+    app_settings_set_wg_own_public_key(s_pub_b64);
     if (cancelled()) goto done;
 
     /* ENROLLING */

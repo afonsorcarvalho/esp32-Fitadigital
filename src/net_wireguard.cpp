@@ -84,17 +84,27 @@ void net_wireguard_apply(void) {
   /**
    * API Tinkerforge/WireGuard-ESP32 (diferente de ciniml): subnet /32, gateway 0,
    * localPort 0, trafego predefinido nao forçado para WG (FTP continua no Wi-Fi).
+   *
+   * allowed_ip + allowed_mask define que subnet o lwip route table envia pelo peer
+   * WG. Derivamos /24 a partir do local IP (ex: 10.0.0.2 → 10.0.0.0/24) para
+   * cobrir o intervalo standard de servidores WG. Antes era 0.0.0.0/32 (nenhuma
+   * rota) — bloqueava qualquer ping/HTTP para a rede WG interna.
    */
   const IPAddress wg_mask(255, 255, 255, 255);
   const IPAddress wg_gw(0, 0, 0, 0);
-  if (!s_wg.begin(local, wg_mask, 0, wg_gw, s_wg_priv, s_wg_ep, s_wg_pub, port, IPAddress(0, 0, 0, 0),
-                  IPAddress(255, 255, 255, 255), false)) {
+  const IPAddress allowed_ip(local[0], local[1], local[2], 0);
+  const IPAddress allowed_mask(255, 255, 255, 0);
+  if (!s_wg.begin(local, wg_mask, 0, wg_gw, s_wg_priv, s_wg_ep, s_wg_pub, port,
+                  allowed_ip, allowed_mask, false)) {
     Serial.println("[WG] begin() falhou (ver hora NTP e chaves)");
     app_log_feature_write("ERROR", "WIREGUARD", "Falha ao iniciar tunel (begin).");
     return;
   }
   s_wg_active = true;
   Serial.println("[WG] tunel ativo");
-  app_log_feature_writef("INFO", "WIREGUARD", "Tunel ativo endpoint=%s port=%u",
-                         s_wg_ep, (unsigned)port);
+  app_log_feature_writef("INFO", "WIREGUARD",
+                         "Tunel ativo endpoint=%s port=%u allowed=%u.%u.%u.0/24",
+                         s_wg_ep, (unsigned)port,
+                         (unsigned)allowed_ip[0], (unsigned)allowed_ip[1],
+                         (unsigned)allowed_ip[2]);
 }

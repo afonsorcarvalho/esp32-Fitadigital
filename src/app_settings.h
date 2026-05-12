@@ -102,6 +102,11 @@ void app_settings_set_wg_enroll_server(const char *url);
 String app_settings_wg_enroll_db(void);
 void app_settings_set_wg_enroll_db(const char *db);
 
+/** Chave publica deste dispositivo (Curve25519 base64, gerada no enrollment).
+ *  Pode ser exposta com seguranca (admin precisa para autorizar como peer no server). */
+String app_settings_wg_own_public_key(void);
+void app_settings_set_wg_own_public_key(const char *key);
+
 /* ------------------------------------------------------------------ */
 /* MQTT                                                                  */
 /* ------------------------------------------------------------------ */

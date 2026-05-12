@@ -1002,6 +1002,14 @@ void app_settings_set_wg_enroll_db(const char *db) {
   put_str_max("wg_db", db, 64);
 }
 
+String app_settings_wg_own_public_key(void) {
+  return s_prefs.getString("wg_op", "");
+}
+
+void app_settings_set_wg_own_public_key(const char *key) {
+  put_str_max("wg_op", key, kWgKeyMax);
+}
+
 static uint32_t rs485_nearest_std_baud(uint32_t baud) {
   if (kRs485StdBaudCount == 0U) {
     return 115200U;

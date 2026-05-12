@@ -95,6 +95,8 @@ static lv_obj_t *s_ta_wg_enroll_db  = nullptr;
 static lv_obj_t *s_ta_wg_ip = nullptr;
 static lv_obj_t *s_ta_wg_priv = nullptr;
 static lv_obj_t *s_ta_wg_pub = nullptr;
+static lv_obj_t *s_ta_wg_own_pub = nullptr;   /* Pub key deste device (read-only). */
+static bool      s_wg_priv_revealed = false;  /* Toggle olho para priv masked. */
 static lv_obj_t *s_ta_wg_ep = nullptr;
 static lv_obj_t *s_ta_wg_port = nullptr;
 static lv_obj_t *s_wg_feedback_lbl = nullptr;
@@ -1387,6 +1389,9 @@ void ui_app_refresh_wg_fields(void) {
   if (s_ta_wg_pub != nullptr) {
     lv_textarea_set_text(s_ta_wg_pub, app_settings_wg_peer_public_key().c_str());
   }
+  if (s_ta_wg_own_pub != nullptr) {
+    lv_textarea_set_text(s_ta_wg_own_pub, app_settings_wg_own_public_key().c_str());
+  }
   if (s_ta_wg_ep != nullptr) {
     lv_textarea_set_text(s_ta_wg_ep, app_settings_wg_endpoint().c_str());
   }
@@ -1458,6 +1463,9 @@ static void settings_screen_enter(void) {
   }
   if (s_ta_wg_pub != nullptr) {
     lv_textarea_set_text(s_ta_wg_pub, app_settings_wg_peer_public_key().c_str());
+  }
+  if (s_ta_wg_own_pub != nullptr) {
+    lv_textarea_set_text(s_ta_wg_own_pub, app_settings_wg_own_public_key().c_str());
   }
   if (s_ta_wg_ep != nullptr) {
     lv_textarea_set_text(s_ta_wg_ep, app_settings_wg_endpoint().c_str());
@@ -1974,6 +1982,82 @@ static void settings_apply_utc_cb(lv_event_t *e) {
   update_bar_wifi_text();
 }
 
+static void settings_wg_pubkey_modal_close_cb(lv_event_t *e) {
+  lv_obj_t *bg = (lv_obj_t *)lv_event_get_user_data(e);
+  if (bg != nullptr) {
+    lv_obj_del(bg);
+  }
+}
+
+static void settings_wg_show_pubkey_qr_cb(lv_event_t * /*e*/) {
+  String pub = app_settings_wg_own_public_key();
+  if (pub.length() == 0) {
+    ui_toast_show(ToastKind::Warn, "Pub key ausente — faca enrollment primeiro");
+    return;
+  }
+  const lv_coord_t scr_w = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t scr_h = lv_disp_get_ver_res(nullptr);
+
+  lv_obj_t *bg = lv_obj_create(lv_layer_top());
+  lv_obj_set_size(bg, scr_w, scr_h);
+  lv_obj_align(bg, LV_ALIGN_TOP_LEFT, 0, 0);
+  lv_obj_set_style_bg_color(bg, UI_COLOR_BLACK, 0);
+  lv_obj_set_style_bg_opa(bg, LV_OPA_70, 0);
+  lv_obj_set_style_border_width(bg, 0, 0);
+  lv_obj_set_style_pad_all(bg, 0, 0);
+  lv_obj_set_style_radius(bg, 0, 0);
+  lv_obj_clear_flag(bg, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *modal = lv_obj_create(bg);
+  lv_obj_set_size(modal, 360, 440);
+  lv_obj_center(modal);
+  lv_obj_set_style_bg_color(modal, ui_color_surface(app_settings_dark_mode()), 0);
+  lv_obj_set_style_bg_opa(modal, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(modal, 12, 0);
+  lv_obj_set_style_pad_all(modal, 14, 0);
+  lv_obj_set_style_pad_row(modal, 10, 0);
+  lv_obj_set_layout(modal, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(modal, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(modal, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *title = lv_label_create(modal);
+  lv_label_set_text(title, "Chave publica do dispositivo");
+  lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+
+  lv_obj_t *qr = lv_qrcode_create(modal, 260, UI_COLOR_BLACK, UI_COLOR_WHITE);
+  if (qr != nullptr) {
+    (void)lv_qrcode_update(qr, pub.c_str(), pub.length());
+  }
+
+  lv_obj_t *key_lbl = lv_label_create(modal);
+  lv_label_set_long_mode(key_lbl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(key_lbl, LV_PCT(100));
+  lv_label_set_text(key_lbl, pub.c_str());
+  lv_obj_set_style_text_font(key_lbl, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_align(key_lbl, LV_TEXT_ALIGN_CENTER, 0);
+
+  lv_obj_t *btn_close = lv_btn_create(modal);
+  lv_obj_set_size(btn_close, 150, 42);
+  lv_obj_t *lb = lv_label_create(btn_close);
+  lv_label_set_text(lb, LV_SYMBOL_CLOSE " Fechar");
+  lv_obj_center(lb);
+  lv_obj_add_event_cb(btn_close, settings_wg_pubkey_modal_close_cb, LV_EVENT_CLICKED, bg);
+}
+
+static void settings_wg_toggle_priv_cb(lv_event_t *e) {
+  if (s_ta_wg_priv == nullptr) return;
+  s_wg_priv_revealed = !s_wg_priv_revealed;
+  lv_textarea_set_password_mode(s_ta_wg_priv, !s_wg_priv_revealed);
+  lv_obj_t *lbl = (lv_obj_t *)lv_event_get_user_data(e);
+  if (lbl != nullptr) {
+    lv_label_set_text(lbl,
+                      s_wg_priv_revealed
+                          ? (LV_SYMBOL_EYE_CLOSE " Esconder chave privada")
+                          : (LV_SYMBOL_EYE_OPEN " Revelar chave privada"));
+  }
+}
+
 static void settings_wg_enroll_cb(lv_event_t * /*e*/) {
   const char *url = (s_ta_wg_enroll_url != nullptr)
                         ? lv_textarea_get_text(s_ta_wg_enroll_url)
@@ -2436,15 +2520,43 @@ static void create_settings_screen(void) {
   lv_obj_add_event_cb(s_ta_wg_ip, settings_wg_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
   lv_obj_add_event_cb(s_ta_wg_ip, settings_wg_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
 
+  /* Chave PÚBLICA deste device — segura para mostrar; admin precisa para autorizar peer. */
+  lv_obj_t *lown_pub = lv_label_create(srv_scroll);
+  lv_label_set_text(lown_pub, "Chave publica deste dispositivo:");
+  s_ta_wg_own_pub = lv_textarea_create(srv_scroll);
+  lv_textarea_set_one_line(s_ta_wg_own_pub, true);
+  lv_textarea_set_max_length(s_ta_wg_own_pub, 127);
+  lv_textarea_set_text(s_ta_wg_own_pub, app_settings_wg_own_public_key().c_str());
+  lv_obj_set_width(s_ta_wg_own_pub, LV_PCT(100));
+  lv_obj_add_state(s_ta_wg_own_pub, LV_STATE_DISABLED); /* read-only */
+
+  lv_obj_t *bt_pub_qr = lv_btn_create(srv_scroll);
+  lv_obj_set_width(bt_pub_qr, LV_PCT(100));
+  lv_obj_set_style_bg_color(bt_pub_qr, UI_COLOR_PRIMARY, 0);
+  lv_obj_t *lb_pq = lv_label_create(bt_pub_qr);
+  lv_label_set_text(lb_pq, LV_SYMBOL_LIST " Mostrar QR da chave publica");
+  lv_obj_center(lb_pq);
+  lv_obj_add_event_cb(bt_pub_qr, settings_wg_show_pubkey_qr_cb, LV_EVENT_CLICKED, nullptr);
+
   lv_obj_t *lpk = lv_label_create(srv_scroll);
   lv_label_set_text(lpk, "Chave privada (cliente):");
   s_ta_wg_priv = lv_textarea_create(srv_scroll);
   lv_textarea_set_one_line(s_ta_wg_priv, true);
   lv_textarea_set_max_length(s_ta_wg_priv, 127);
   lv_textarea_set_text(s_ta_wg_priv, app_settings_wg_private_key().c_str());
+  lv_textarea_set_password_mode(s_ta_wg_priv, true); /* masked default — segredo */
+  s_wg_priv_revealed = false;
   lv_obj_set_width(s_ta_wg_priv, LV_PCT(100));
   lv_obj_add_event_cb(s_ta_wg_priv, settings_wg_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
   lv_obj_add_event_cb(s_ta_wg_priv, settings_wg_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
+
+  lv_obj_t *bt_priv_eye = lv_btn_create(srv_scroll);
+  lv_obj_set_width(bt_priv_eye, LV_PCT(100));
+  lv_obj_set_style_bg_color(bt_priv_eye, UI_COLOR_TEXT_MUTED, 0);
+  lv_obj_t *lb_eye = lv_label_create(bt_priv_eye);
+  lv_label_set_text(lb_eye, LV_SYMBOL_EYE_OPEN " Revelar chave privada");
+  lv_obj_center(lb_eye);
+  lv_obj_add_event_cb(bt_priv_eye, settings_wg_toggle_priv_cb, LV_EVENT_CLICKED, lb_eye);
 
   lv_obj_t *lpub = lv_label_create(srv_scroll);
   lv_label_set_text(lpub, "Chave publica do servidor:");

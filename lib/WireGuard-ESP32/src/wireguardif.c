@@ -237,8 +237,14 @@ static void wireguardif_process_response_message(struct wireguard_device *device
 		wireguard_start_session(peer, true);
 		wireguardif_send_keepalive(device, peer);
 
-		// Set the IF-UP flag on netif
-		netif_set_link_up(device->netif);
+		// FitaDigital patch: netif_set_link_up triggers dhcp_network_changed
+		// which asserts when the WG netif shares a dhcp client_data slot with
+		// the STA in an inconsistent state. WG netif does not use DHCP — set
+		// the link-up flag directly and notify external callbacks without the
+		// dhcp re-init path.
+		if ((device->netif->flags & NETIF_FLAG_LINK_UP) == 0) {
+			device->netif->flags |= NETIF_FLAG_LINK_UP;
+		}
 	} else {
 		// Packet bad
 		log_i(TAG "bad handshake from %08x:%d", addr->u_addr.ip4.addr, port);
@@ -324,8 +330,10 @@ static void wireguardif_process_data_message(struct wireguard_device *device, st
 						peer->send_handshake = true;
 					}
 
-					// Make sure that link is reported as up
-					netif_set_link_up(device->netif);
+					// FitaDigital patch: avoid dhcp_network_changed assert (see line 240).
+					if ((device->netif->flags & NETIF_FLAG_LINK_UP) == 0) {
+						device->netif->flags |= NETIF_FLAG_LINK_UP;
+					}
 
 					if (pbuf->tot_len > 0) {
 						//4a. Once the packet payload is decrypted, the interface has a plaintext packet. If this is not an IP packet, it is dropped.

@@ -18,6 +18,13 @@
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_system.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+
+extern "C" {
+#include "lwip/ip_addr.h"
+#include "ping/ping_sock.h"
+}
 
 #include "app_log.h"
 #include "app_settings.h"
@@ -178,7 +185,10 @@ static void handle_settings_get(AsyncWebServerRequest *request)
     doc["tzOffsetSec"] = app_settings_tz_offset_sec();
     doc["wireguard"]["enabled"] = app_settings_wireguard_enabled();
     doc["wireguard"]["localIp"] = app_settings_wg_local_ip();
-    doc["wireguard"]["privateKey"] = app_settings_wg_private_key();
+    /* privateKey omitido por seguranca: quem ler /api/settings via admin pode ainda
+     * usar via SD config; nao expomos via HTTP. hasPrivateKey indica se ja foi gerada. */
+    doc["wireguard"]["hasPrivateKey"] = (app_settings_wg_private_key().length() > 0);
+    doc["wireguard"]["ownPublicKey"] = app_settings_wg_own_public_key();
     doc["wireguard"]["peerPublicKey"] = app_settings_wg_peer_public_key();
     doc["wireguard"]["endpoint"] = app_settings_wg_endpoint();
     doc["wireguard"]["port"] = app_settings_wg_port();
@@ -330,6 +340,129 @@ static void handle_logs_delete(AsyncWebServerRequest *request)
     bool ok = false;
     sd_access_sync_front([&]() { ok = app_log_clear(); });
     request->send(ok ? 200 : 500, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false}");
+}
+
+/* ------------------------------------------------------------------ */
+/* Handler WireGuard ping                                                 */
+/* ------------------------------------------------------------------ */
+
+/** Estado partilhado entre o handler HTTP e os callbacks esp_ping. */
+struct WgPingCtx {
+    uint32_t sent;
+    uint32_t recv;
+    uint32_t total_latency_ms;
+    uint32_t min_latency_ms;
+    uint32_t max_latency_ms;
+    SemaphoreHandle_t done;
+};
+
+static void wg_ping_on_success(esp_ping_handle_t hdl, void *args)
+{
+    auto *ctx = static_cast<WgPingCtx *>(args);
+    uint32_t elapsed = 0;
+    (void)esp_ping_get_profile(hdl, ESP_PING_PROF_TIMEGAP, &elapsed, sizeof(elapsed));
+    ctx->recv++;
+    ctx->total_latency_ms += elapsed;
+    if (elapsed < ctx->min_latency_ms || ctx->min_latency_ms == 0U) ctx->min_latency_ms = elapsed;
+    if (elapsed > ctx->max_latency_ms) ctx->max_latency_ms = elapsed;
+}
+
+static void wg_ping_on_timeout(esp_ping_handle_t /*hdl*/, void *args)
+{
+    auto *ctx = static_cast<WgPingCtx *>(args);
+    ctx->sent++;
+}
+
+static void wg_ping_on_end(esp_ping_handle_t /*hdl*/, void *args)
+{
+    auto *ctx = static_cast<WgPingCtx *>(args);
+    xSemaphoreGive(ctx->done);
+}
+
+static void handle_wg_ping(AsyncWebServerRequest *request)
+{
+    String host = request->hasParam("host") ? request->getParam("host")->value() : String("");
+    uint32_t count = request->hasParam("count") ? (uint32_t)request->getParam("count")->value().toInt() : 4U;
+    if (host.length() == 0 || count == 0U || count > 10U) {
+        request->send(400, "application/json", "{\"ok\":false,\"error\":\"params: host required, count 1..10\"}");
+        return;
+    }
+
+    ip_addr_t target = {};
+    if (!ipaddr_aton(host.c_str(), &target)) {
+        request->send(400, "application/json", "{\"ok\":false,\"error\":\"invalid host (use IPv4 dot-decimal)\"}");
+        return;
+    }
+
+    WgPingCtx ctx = {};
+    ctx.done = xSemaphoreCreateBinary();
+    if (ctx.done == nullptr) {
+        request->send(500, "application/json", "{\"ok\":false,\"error\":\"sem semaforo\"}");
+        return;
+    }
+    /* sent é incrementado tanto em success como em timeout. on_success não corre
+     * sent++; fazemos isso aqui via callbacks coordenados — count - timeouts = recv. */
+    ctx.sent = 0;
+    ctx.recv = 0;
+
+    esp_ping_config_t cfg = ESP_PING_DEFAULT_CONFIG();
+    cfg.target_addr = target;
+    cfg.count = count;
+    cfg.interval_ms = 500U;
+    cfg.timeout_ms = 2000U;
+    cfg.task_stack_size = 3072U;
+    cfg.task_prio = 2U;
+
+    esp_ping_callbacks_t cbs = {};
+    cbs.on_ping_success = wg_ping_on_success;
+    cbs.on_ping_timeout = wg_ping_on_timeout;
+    cbs.on_ping_end = wg_ping_on_end;
+    cbs.cb_args = &ctx;
+
+    esp_ping_handle_t hdl = nullptr;
+    esp_err_t err = esp_ping_new_session(&cfg, &cbs, &hdl);
+    if (err != ESP_OK) {
+        vSemaphoreDelete(ctx.done);
+        char buf[96];
+        snprintf(buf, sizeof(buf), "{\"ok\":false,\"error\":\"esp_ping_new_session err=%d\"}", (int)err);
+        request->send(500, "application/json", buf);
+        return;
+    }
+    err = esp_ping_start(hdl);
+    if (err != ESP_OK) {
+        (void)esp_ping_delete_session(hdl);
+        vSemaphoreDelete(ctx.done);
+        char buf[96];
+        snprintf(buf, sizeof(buf), "{\"ok\":false,\"error\":\"esp_ping_start err=%d\"}", (int)err);
+        request->send(500, "application/json", buf);
+        return;
+    }
+
+    /* Espera todos os pings completarem. count * (timeout+interval) é o máximo. */
+    const uint32_t max_wait_ms = count * (cfg.timeout_ms + cfg.interval_ms) + 1000U;
+    if (xSemaphoreTake(ctx.done, pdMS_TO_TICKS(max_wait_ms)) != pdTRUE) {
+        (void)esp_ping_stop(hdl);
+    }
+    (void)esp_ping_delete_session(hdl);
+    vSemaphoreDelete(ctx.done);
+
+    /* sent = count pedidos enviados; recv = sucessos; loss = sent - recv. */
+    const uint32_t loss = count - ctx.recv;
+    const uint32_t avg  = ctx.recv > 0 ? ctx.total_latency_ms / ctx.recv : 0;
+
+    JsonDocument doc;
+    doc["ok"]         = (ctx.recv > 0);
+    doc["host"]       = host;
+    doc["sent"]       = count;
+    doc["received"]   = ctx.recv;
+    doc["loss"]       = loss;
+    doc["loss_pct"]   = (count > 0) ? (loss * 100U) / count : 0U;
+    doc["avg_ms"]     = avg;
+    doc["min_ms"]     = ctx.min_latency_ms;
+    doc["max_ms"]     = ctx.max_latency_ms;
+    String out;
+    serializeJson(doc, out);
+    request->send(200, "application/json", out);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1059,6 +1192,7 @@ static void handle_system_export(AsyncWebServerRequest *request)
         doc["tzOffsetSec"] = app_settings_tz_offset_sec();
         doc["wireguard"]["enabled"] = app_settings_wireguard_enabled();
         doc["wireguard"]["localIp"] = app_settings_wg_local_ip();
+        doc["wireguard"]["ownPublicKey"] = app_settings_wg_own_public_key();
         doc["wireguard"]["peerPublicKey"] = app_settings_wg_peer_public_key();
         doc["wireguard"]["endpoint"] = app_settings_wg_endpoint();
         doc["wireguard"]["port"] = app_settings_wg_port();
@@ -1332,6 +1466,12 @@ void web_portal_init(void)
     s_srv->on("/api/logs/tail", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!web_auth_check(request)) return;
         handle_logs_tail(request);
+    });
+
+    /* --- /api/wg/ping --- */
+    s_srv->on("/api/wg/ping", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!web_auth_check(request)) return;
+        handle_wg_ping(request);
     });
 
     s_srv->on("/api/logs", HTTP_DELETE, [](AsyncWebServerRequest *request) {
