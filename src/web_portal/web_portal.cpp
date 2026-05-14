@@ -410,6 +410,10 @@ static void handle_wg_ping(AsyncWebServerRequest *request)
     cfg.count = count;
     cfg.interval_ms = 500U;
     cfg.timeout_ms = 2000U;
+    /* v1.79: revertido o bump v1.78 (8192 starvava RAM interna). A cadeia
+     * vfprintf do esp_ping ja' e' suprimida globalmente via
+     * esp_log_level_set("ping_sock", ESP_LOG_NONE) em net_monitor.cpp, logo
+     * 3072 chega. Endpoint /api/wg/ping continua desactivado (ver ~linha 1471). */
     cfg.task_stack_size = 3072U;
     cfg.task_prio = 2U;
 

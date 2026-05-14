@@ -16,6 +16,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <atomic>
+#include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -93,12 +94,21 @@ bool session_recreate_locked(const String &target) {
     return false;
   }
 
+  /* v1.79: suprime logging interno do componente esp_ping ("ping_sock").
+   * crash-analyzer 2026-05-14 mostrou: esp_ping_send loga 1x/interval →
+   * ESP_LOG → newlib vfprintf (~17 frames) → estoura a stack da task `ping`.
+   * v1.78 tentou stack 2048→8192 mas +6KB RAM interna starvou o heap
+   * (AsyncWebServer nao arrancou, int heap min 3456B). Fix correto: matar
+   * a cadeia vfprintf na origem — sem log, 2048B chega e custo RAM = zero.
+   * Idempotente; chamar aqui cobre tambem o esp_ping de web_portal. */
+  esp_log_level_set("ping_sock", ESP_LOG_NONE);
+
   esp_ping_config_t cfg = ESP_PING_DEFAULT_CONFIG();
   cfg.count = 0; /* loop infinito: evita recriar sessao a cada sondagem. */
   cfg.interval_ms = kPingIntervalMs;
   cfg.timeout_ms = kPingTimeoutMs;
   cfg.target_addr = addr;
-  cfg.task_stack_size = 2048U;
+  cfg.task_stack_size = 2048U; /* default; cadeia vfprintf suprimida acima */
   cfg.task_prio = 2U;
 
   esp_ping_callbacks_t cbs = {};
