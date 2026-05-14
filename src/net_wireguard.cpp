@@ -29,7 +29,7 @@ static char s_wg_priv[128];
 static char s_wg_pub[128];
 static char s_wg_ep[128];
 
-/* Re-apply keepalive (v1.69→v1.73) — biblioteca cliente entra em rekey storm
+/* Re-apply keepalive (v1.69→v1.74) — biblioteca cliente entra em rekey storm
  * pos-180s: envia INITIATIONs continuos com state corrompido, server rejeita
  * todas como "Invalid handshake initiation" (MAC1/static-decrypt fail).
  *
@@ -37,16 +37,20 @@ static char s_wg_ep[128];
  * v1.71: detecao via in_filter_fn — FALHA (WG keepalive bypass filter).
  * v1.72: escalation esp_restart() apos 2 fails consec.
  * v1.73: REMOVIDA escalation esp_restart() (constraint: dispositivo registrador
- *        ciclos esterilizacao RS485, reboot = perda mensagem catastrofica
- *        clinicamente). Adicionado PREEMPTIVE re-apply a cada 100s — bypass
- *        completo lib broken rekey path (que so dispara a t=180s
- *        REJECT_AFTER_TIME). end()+begin() reseta state lib fresh; nova INIT
- *        valida server; loop limpo. Reativo permanece como safety net p/
- *        eventos de rede (WiFi blip, server restart). NUNCA esp_restart().
+ *        ciclos esterilizacao RS485, reboot = perda mensagem catastrofica).
+ *        Adicionado PREEMPTIVE re-apply a cada 100s — bypass lib broken rekey
+ *        (so' dispara a t=180s). end()+begin() reseta state lib fresh.
+ * v1.74: TENTATIVA fix deadlock task removendo resets em wg_apply_locked.
+ *        FALHOU produca:o: reboot loop ~3min (boot_count +3 em 15min).
+ *        Causa raiz nao isolada — provavelmente rapid reactive fire
+ *        sobrecarrega SD ou lib. Revertido em v1.75.
+ * v1.75: REVERT v1.74 → comportamento v1.73 (zombie aceitavel vs crashing).
+ *        Investigacao proper diferida proxima sessao. RS485 captura
+ *        intacta, WG zombie pos-#1 e' tradeoff aceito.
  *
- * Diagnostico Fase 0 sessao 2026-05-14 (pcap server-side vps51163, kernel
- * dmesg wireguard +p): server rejeita TODA INIT pos-1o-handshake. Causa raiz
- * lib smartalock/wireguard-lwip upstream. Match issue #29. end()+begin()
+ * Diagnostico Fase 0 sessao 2026-05-14: pcap server vps51163, kernel dmesg
+ * wireguard +p. Server rejeita TODA INIT pos-1o-handshake. Causa raiz lib
+ * smartalock/wireguard-lwip upstream. Match issue #29. end()+begin()
  * ressuscita ciclo handshake-OK ate proxima janela rekey broken. */
 static TaskHandle_t s_keepalive_task = nullptr;
 static SemaphoreHandle_t s_apply_mtx = nullptr;
@@ -190,6 +194,12 @@ static void wg_apply_locked(void) {
   s_last_apply_ms = millis(); /* v1.73: timer preemptive re-apply, sempre actualizado */
   s_wg.end();
   s_wg_active = false;
+  /* v1.75: REVERTIDO v1.74. Manter resets s_ever_up + s_last_up_ms.
+   * v1.74 tentou eliminar resets para permitir reactive recovery quando
+   * preemptive nao traz peer up. Resultado: reboot loop ~3min (boot_count
+   * +3 em 15min). Causa raiz nao isolada — possivel rapid reactive fire
+   * sobrecarregar SD/lib. Preferir stable + zombie ao crashing.
+   * Investigacao deferida. */
   s_ever_up = false;
   s_last_up_ms = millis();
   s_ever_rx = false;
