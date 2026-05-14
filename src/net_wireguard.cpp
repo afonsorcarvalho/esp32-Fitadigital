@@ -1,6 +1,13 @@
 /**
  * @file net_wireguard.cpp
- * @brief WireGuard: buffers estaticos para chaves (nao usar String::c_str() em begin).
+ * @brief WireGuard via biblioteca ciniml/WireGuard-ESP32 (README do repositorio).
+ *
+ * Watchdog/probe pings foram removidos em v1.67 — consumiam ~5K heap interno
+ * permanente e dispavam HEAP_GUARD em <30s pos-boot. Para manter NAT mapping
+ * vivo, configurar PersistentKeepalive=25 no peer config DO SERVER (lado wg0.conf).
+ * Lib client tem keep_alive=25 (patch FitaDigital em WireGuard.cpp) mas isso so
+ * funciona com keypair valid; PersistentKeepalive server-side garante traffic
+ * bilateral mesmo durante stale state.
  */
 #include "net_wireguard.h"
 #include "app_log.h"
@@ -8,6 +15,11 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WireGuard-ESP32.h>
+#include <esp_system.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
+#include <lwip/pbuf.h>
 #include <string.h>
 
 static WireGuard s_wg;
@@ -17,17 +29,171 @@ static char s_wg_priv[128];
 static char s_wg_pub[128];
 static char s_wg_ep[128];
 
+/* Re-apply keepalive (v1.69→v1.73) — biblioteca cliente entra em rekey storm
+ * pos-180s: envia INITIATIONs continuos com state corrompido, server rejeita
+ * todas como "Invalid handshake initiation" (MAC1/static-decrypt fail).
+ *
+ * v1.69: detecao via is_peer_up() — reativa apos peer down 100s.
+ * v1.71: detecao via in_filter_fn — FALHA (WG keepalive bypass filter).
+ * v1.72: escalation esp_restart() apos 2 fails consec.
+ * v1.73: REMOVIDA escalation esp_restart() (constraint: dispositivo registrador
+ *        ciclos esterilizacao RS485, reboot = perda mensagem catastrofica
+ *        clinicamente). Adicionado PREEMPTIVE re-apply a cada 100s — bypass
+ *        completo lib broken rekey path (que so dispara a t=180s
+ *        REJECT_AFTER_TIME). end()+begin() reseta state lib fresh; nova INIT
+ *        valida server; loop limpo. Reativo permanece como safety net p/
+ *        eventos de rede (WiFi blip, server restart). NUNCA esp_restart().
+ *
+ * Diagnostico Fase 0 sessao 2026-05-14 (pcap server-side vps51163, kernel
+ * dmesg wireguard +p): server rejeita TODA INIT pos-1o-handshake. Causa raiz
+ * lib smartalock/wireguard-lwip upstream. Match issue #29. end()+begin()
+ * ressuscita ciclo handshake-OK ate proxima janela rekey broken. */
+static TaskHandle_t s_keepalive_task = nullptr;
+static SemaphoreHandle_t s_apply_mtx = nullptr;
+static volatile uint32_t s_last_up_ms = 0;
+static volatile uint32_t s_last_apply_ms = 0;
+static volatile bool s_ever_up = false;
+static volatile uint32_t s_reapply_count = 0;
+static volatile uint32_t s_preemptive_count = 0;
+static volatile uint32_t s_consec_fail = 0;
+static volatile uint32_t s_last_rx_ms = 0;
+static volatile bool s_ever_rx = false;
+
+static void wg_apply_locked(void);
+
+/* in_filter_fn sentinel — atualiza last_rx_ms mas NAO eh usado para detection
+ * (ver comment v1.72 acima). Util para diagnostico via /api/system/status
+ * futuro: se ever_rx ficar true alguma vez, sabemos que data packets chegaram. */
+static int wg_in_filter(struct pbuf *p) {
+  (void)p;
+  s_last_rx_ms = millis();
+  if (!s_ever_rx) s_ever_rx = true;
+  return 0;
+}
+
+static void wg_keepalive_task(void *arg) {
+  const TickType_t tick = pdMS_TO_TICKS(20000U);
+  const uint32_t down_threshold_ms = 100000U;
+  const uint32_t preemptive_reapply_ms = 100000U; /* re-apply antes lib broken rekey (t>=180s) */
+  const uint32_t observe_post_apply_ms = 30000U;  /* min gap entre re-applies p/ evitar storm */
+  for (;;) {
+    vTaskDelay(tick);
+    if (!s_wg_active) continue;
+    if (WiFi.status() != WL_CONNECTED) continue;
+    uint32_t now = millis();
+    uint32_t since_apply = now - s_last_apply_ms;
+    bool peer_up = s_wg.is_peer_up();
+    if (peer_up) {
+      s_last_up_ms = now;
+      if (!s_ever_up) {
+        s_ever_up = true;
+        Serial.println("[WG-KA] peer up (first handshake)");
+        app_log_feature_write("INFO", "WIREGUARD", "Peer up (first handshake).");
+      }
+      if (s_consec_fail > 0U) {
+        Serial.printf("[WG-KA] recovery OK apos %u fails\n", (unsigned)s_consec_fail);
+        app_log_feature_writef("INFO", "WIREGUARD",
+                               "Recovery OK apos %u re-apply consecutivos.",
+                               (unsigned)s_consec_fail);
+        s_consec_fail = 0;
+      }
+      /* Preemptive re-apply: peer up mas state lib aproxima janela rekey broken.
+       * Forca end()+begin() ANTES dos 180s para evitar storm INITs invalidos. */
+      if (since_apply >= preemptive_reapply_ms) {
+        s_preemptive_count++;
+        Serial.printf("[WG-KA] preemptive re-apply (apos %us) #%u\n",
+                      (unsigned)(since_apply / 1000U), (unsigned)s_preemptive_count);
+        app_log_feature_writef("INFO", "WIREGUARD",
+                               "Re-apply preemptivo apos %us #%u.",
+                               (unsigned)(since_apply / 1000U), (unsigned)s_preemptive_count);
+        if (s_apply_mtx != nullptr) {
+          xSemaphoreTake(s_apply_mtx, portMAX_DELAY);
+        }
+        wg_apply_locked();
+        if (s_apply_mtx != nullptr) {
+          xSemaphoreGive(s_apply_mtx);
+        }
+      }
+      continue;
+    }
+    /* peer NOT up */
+    if (!s_ever_up) continue;
+    uint32_t age = now - s_last_up_ms;
+    if (age < down_threshold_ms) continue;
+    if (since_apply < observe_post_apply_ms) continue; /* aguarda observe window apos re-apply */
+    /* Re-apply nao recuperou em tempo razoavel — telemetria + retry (NUNCA reboot). */
+    if (since_apply >= preemptive_reapply_ms + 30000U) {
+      s_consec_fail++;
+      Serial.printf("[WG-KA] re-apply nao recuperou (%us pos-apply, %u consec fails) — retry\n",
+                    (unsigned)(since_apply / 1000U), (unsigned)s_consec_fail);
+      app_log_feature_writef("ERROR", "WIREGUARD",
+                             "Re-apply nao recuperou (%us pos-apply, %u consec fails).",
+                             (unsigned)(since_apply / 1000U), (unsigned)s_consec_fail);
+    }
+    s_reapply_count++;
+    Serial.printf("[WG-KA] peer down %us — re-apply reativo #%u\n",
+                  (unsigned)(age / 1000U), (unsigned)s_reapply_count);
+    app_log_feature_writef("WARN", "WIREGUARD",
+                           "Peer down ha %us — re-apply reativo #%u.",
+                           (unsigned)(age / 1000U), (unsigned)s_reapply_count);
+    if (s_apply_mtx != nullptr) {
+      xSemaphoreTake(s_apply_mtx, portMAX_DELAY);
+    }
+    wg_apply_locked();
+    if (s_apply_mtx != nullptr) {
+      xSemaphoreGive(s_apply_mtx);
+    }
+  }
+}
+
+static void wg_keepalive_start_once(void) {
+  if (s_apply_mtx == nullptr) {
+    s_apply_mtx = xSemaphoreCreateMutex();
+  }
+  if (s_keepalive_task == nullptr) {
+    BaseType_t ok = xTaskCreatePinnedToCore(wg_keepalive_task, "wg_keepalive",
+                                            3072, nullptr, 1, &s_keepalive_task, 1);
+    if (ok != pdPASS) {
+      s_keepalive_task = nullptr;
+      app_log_feature_write("ERROR", "WIREGUARD",
+                            "Falha a criar task wg_keepalive.");
+    }
+  }
+}
+
 void net_wireguard_init(void) {
   s_wg.end();
   if (s_wg_active) {
     s_wg_active = false;
     app_log_feature_write("INFO", "WIREGUARD", "Tunel parado.");
   }
+  wg_keepalive_start_once();
 }
 
+/* API pause/resume mantida como no-op para compatibilidade com wg_provision.cpp
+ * (chama estas funcoes para libertar heap pre-xTaskCreate). Sem watchdog activo,
+ * nao ha nada a pausar — heap interno fica disponivel naturalmente. */
+void net_wireguard_pause_watchdog(void) { /* no-op */ }
+void net_wireguard_resume_watchdog(void) { /* no-op */ }
+
 void net_wireguard_apply(void) {
+  if (s_apply_mtx != nullptr) {
+    xSemaphoreTake(s_apply_mtx, portMAX_DELAY);
+  }
+  wg_apply_locked();
+  if (s_apply_mtx != nullptr) {
+    xSemaphoreGive(s_apply_mtx);
+  }
+}
+
+static void wg_apply_locked(void) {
+  s_last_apply_ms = millis(); /* v1.73: timer preemptive re-apply, sempre actualizado */
   s_wg.end();
   s_wg_active = false;
+  s_ever_up = false;
+  s_last_up_ms = millis();
+  s_ever_rx = false;
+  s_last_rx_ms = millis();
   if (!app_settings_wireguard_enabled()) {
     app_log_feature_write("INFO", "WIREGUARD", "Feature desativada nas configuracoes.");
     return;
@@ -82,20 +248,22 @@ void net_wireguard_apply(void) {
 
   const uint16_t port = app_settings_wg_port();
   /**
-   * API Tinkerforge/WireGuard-ESP32 (diferente de ciniml): subnet /32, gateway 0,
-   * localPort 0, trafego predefinido nao forçado para WG (FTP continua no Wi-Fi).
-   *
    * allowed_ip + allowed_mask define que subnet o lwip route table envia pelo peer
    * WG. Derivamos /24 a partir do local IP (ex: 10.0.0.2 → 10.0.0.0/24) para
    * cobrir o intervalo standard de servidores WG. Antes era 0.0.0.0/32 (nenhuma
    * rota) — bloqueava qualquer ping/HTTP para a rede WG interna.
+   *
+   * localPort=0 (ephemeral) — lib bind a porta aleatoria. localPort=51820 fixo
+   * foi tentado (v1.64) sem beneficio observavel; voltou a 0 (default lib) para
+   * reduzir risco de conflito futuro.
    */
   const IPAddress wg_mask(255, 255, 255, 255);
   const IPAddress wg_gw(0, 0, 0, 0);
   const IPAddress allowed_ip(local[0], local[1], local[2], 0);
   const IPAddress allowed_mask(255, 255, 255, 0);
+  /* in_filter_fn = wg_in_filter para detecao real de traffic vivo (v1.71). */
   if (!s_wg.begin(local, wg_mask, 0, wg_gw, s_wg_priv, s_wg_ep, s_wg_pub, port,
-                  allowed_ip, allowed_mask, false)) {
+                  allowed_ip, allowed_mask, false, nullptr, &wg_in_filter)) {
     Serial.println("[WG] begin() falhou (ver hora NTP e chaves)");
     app_log_feature_write("ERROR", "WIREGUARD", "Falha ao iniciar tunel (begin).");
     return;

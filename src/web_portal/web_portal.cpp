@@ -1468,11 +1468,14 @@ void web_portal_init(void)
         handle_logs_tail(request);
     });
 
-    /* --- /api/wg/ping --- */
-    s_srv->on("/api/wg/ping", HTTP_GET, [](AsyncWebServerRequest *request) {
-        if (!web_auth_check(request)) return;
-        handle_wg_ping(request);
-    });
+    /* --- /api/wg/ping --- DESATIVADO em v1.72
+     * esp_ping_new_session aloca recursos no heap interno (~3K stack task) e
+     * em condicoes de heap apertado (sob 15K free) deixa cair abaixo do
+     * HEAP_GUARD threshold ou causa crash silencioso no path WG (semaforo +
+     * AsyncTCP thread deadlock). Reproduzido nesta sessao: boot_count++
+     * sem heap_guard_count++ → crash nao-HEAP_GUARD em handle_wg_ping.
+     * Re-ativar so' apos refactor para lwip raw_pcb ping (sem esp_ping). */
+    /* s_srv->on("/api/wg/ping", HTTP_GET, ...);  // disabled — see comment */
 
     s_srv->on("/api/logs", HTTP_DELETE, [](AsyncWebServerRequest *request) {
         if (!web_auth_check(request)) return;

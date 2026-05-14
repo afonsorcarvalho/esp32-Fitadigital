@@ -63,5 +63,9 @@ public:
 	void end();
 	bool is_initialized() const { return this->_is_initialized; }
 
+	// FitaDigital patch: query peer keypair validity. Wraps wireguardif_peer_is_up()
+	// in esp_netif_tcpip_exec for thread safety. Returns true if curr_keypair.valid.
+	bool is_peer_up();
+
 	static bool derive_public_key(uint8_t *public_key, const uint8_t *private_key);
 };

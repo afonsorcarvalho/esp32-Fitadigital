@@ -171,6 +171,7 @@ void setup() {
   Serial.begin(115200);
   /* Equipamento em rede eletrica continua: prioridade a desempenho; PM/tickless no sdkconfig; Wi-Fi sem PS em net_services. */
   Serial.printf("[SYS] CPU %u MHz\n", (unsigned)getCpuFrequencyMhz());
+  Serial.printf("[BOOT] FitaDigital firmware v%s\n", FITADIGITAL_VERSION);
   Serial.println(String(title) + " start");
   app_settings_init();
   (void)boot_journal_init();

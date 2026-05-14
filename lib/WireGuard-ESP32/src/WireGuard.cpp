@@ -168,6 +168,11 @@ bool WireGuard::begin(const IPAddress& localIP,
 	peer.allowed_ip = IPADDR4_INIT(static_cast<uint32_t>(allowedIP));
 	peer.allowed_mask = IPADDR4_INIT(static_cast<uint32_t>(allowedMask));;
 	peer.endport_port = remotePeerPort;
+	// FitaDigital patch: PersistentKeepalive 25s (WireGuard standard) — mantem
+	// NAT mapping do router local activo e re-handshake periodico antes do
+	// REJECT_AFTER_TIME=180s. Default da lib (KEEPALIVE_TIMEOUT=10s) era ok
+	// teoricamente mas peer ficava idle ~9min em testes (NAT timeout no router).
+	peer.keep_alive = 25;
 
 	// Setup the WireGuard device structure
 	struct wireguardif_init_data wg;
@@ -208,24 +213,40 @@ struct end_parameters {
 	uint8_t *wireguard_peer_index;
 };
 
-static esp_err_t end_in_lwip_ctx(void *ctx) {
+// FitaDigital patch (v1.69.1): two-phase end() per ciniml/WireGuard-ESP32-Arduino
+// issue #51. Original single-step teardown had two race conditions:
+//   (a) wireguardif_tmr() timer callback could fire after netif_remove(), accessing
+//       freed memory → core panic.
+//   (b) netif_remove() called while lwIP still had in-flight packets routed to wg
+//       interface → crash in tcpip_thread.
+// Fix sequence (issue #51 reference):
+//   phase1: restore default netif, disconnect peer, netif_set_down + link_down
+//   drain : 100 ms outside lwIP ctx so in-flight packets complete and timer fires
+//   phase2: wireguardif_shutdown (stops timer via sys_untimeout), remove peer,
+//           netif_remove
+// vTaskDelay must NOT run inside esp_netif_tcpip_exec (would block tcpip_thread).
+static esp_err_t end_phase1_in_lwip_ctx(void *ctx) {
 	end_parameters *param = static_cast<end_parameters *>(ctx);
 
 	if (*param->previous_default_netif != nullptr) {
-		// Restore the default interface.
 		netif_set_default(*param->previous_default_netif);
 		*param->previous_default_netif = nullptr;
 	}
 
-	// Disconnect the WG interface.
 	wireguardif_disconnect(param->wg_netif, *param->wireguard_peer_index);
-	// Remove peer from the WG interface
+	netif_set_down(param->wg_netif);
+	netif_set_link_down(param->wg_netif);
+
+	return ESP_OK;
+}
+
+static esp_err_t end_phase2_in_lwip_ctx(void *ctx) {
+	end_parameters *param = static_cast<end_parameters *>(ctx);
+
 	wireguardif_remove_peer(param->wg_netif, *param->wireguard_peer_index);
 	*param->wireguard_peer_index = WIREGUARDIF_INVALID_INDEX;
 
-	// Shutdown the wireguard interface.
 	wireguardif_shutdown(param->wg_netif);
-	// Remove the WG interface;
 	netif_remove(param->wg_netif);
 
 	return ESP_OK;
@@ -240,9 +261,33 @@ void WireGuard::end() {
 		&this->wireguard_peer_index
 	};
 
-	esp_netif_tcpip_exec(end_in_lwip_ctx, &params);
+	esp_netif_tcpip_exec(end_phase1_in_lwip_ctx, &params);
+	vTaskDelay(pdMS_TO_TICKS(100));
+	esp_netif_tcpip_exec(end_phase2_in_lwip_ctx, &params);
 
 	this->_is_initialized = false;
+}
+
+// FitaDigital patch: thread-safe is_peer_up() wrapping wireguardif_peer_is_up().
+struct peer_up_parameters {
+	struct netif *wg_netif;
+	uint8_t peer_index;
+	bool *result;
+};
+
+static esp_err_t peer_up_in_lwip_ctx(void *ctx) {
+	peer_up_parameters *p = static_cast<peer_up_parameters *>(ctx);
+	*(p->result) = (wireguardif_peer_is_up(p->wg_netif, p->peer_index, nullptr, nullptr) == ERR_OK);
+	return ESP_OK;
+}
+
+bool WireGuard::is_peer_up() {
+	if (!this->_is_initialized) return false;
+	if (this->wireguard_peer_index == WIREGUARDIF_INVALID_INDEX) return false;
+	bool result = false;
+	peer_up_parameters params = { &this->wg_netif, this->wireguard_peer_index, &result };
+	esp_netif_tcpip_exec(peer_up_in_lwip_ctx, &params);
+	return result;
 }
 
 WireGuard::WireGuard() {

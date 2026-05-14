@@ -386,6 +386,8 @@ done:
     s_task   = nullptr;
     s_cancel = false;
     Serial.printf("[%s] task done, final state=%d\n", TAG, (int)s_status.state);
+    /* Retoma watchdog para manter NAT mapping live novamente. */
+    net_wireguard_resume_watchdog();
     vTaskDelete(nullptr);
 }
 
@@ -408,6 +410,10 @@ void wg_provision_start(const char *server_url) {
     s_status.state = WgProvState::IDLE;
     strncpy(s_server_url, server_url ? server_url : "", sizeof(s_server_url) - 1);
 
+    /* Liberta heap interno (~10K do watchdog + probe ping) para xTaskCreate 6K
+     * caber mesmo sob fragmentacao. wg_provision_task chama resume no fim. */
+    net_wireguard_pause_watchdog();
+
     /* 6 KB: only ECP keypair gen lives on the stack (no entropy/DRBG/ECDH). */
     const size_t free_int  = ESP.getFreeHeap();
     const size_t max_block = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
@@ -420,6 +426,8 @@ void wg_provision_start(const char *server_url) {
         Serial.printf("[%s] xTaskCreate failed rc=%d free_int=%u largest=%u\n",
                       TAG, (int)rc, (unsigned)free_int, (unsigned)max_block);
         set_state(WgProvState::ERROR, "Sem memoria para iniciar provisionamento");
+        /* Task never run → resume watchdog manualmente para nao ficar pausado. */
+        net_wireguard_resume_watchdog();
     }
 }
 

@@ -18,7 +18,7 @@ namespace {
 
 constexpr uint32_t kReportIntervalMs   = 5000U;   /* Fix 1: 30s → 5s (detecao rapida de dips) */
 constexpr uint32_t kRebootThresholdMin = 4096U;   /* mínimo defensivo (4 KB) */
-constexpr uint32_t kRebootThresholdDef = 7168U;   /* Fix 1 v2: 6 KB → 7 KB (9 KB causou reboot loop em v1.38; baseline pos-MQTT ~14 KB) */
+constexpr uint32_t kRebootThresholdDef = 5120U;   /* v1.68: 7K→5K. v1.67 sob WG observou dip transient int_free=7104 cada ~40s (min real=4068), trip 7K reboot loop bloqueia rekey 120s. 5K dá 3K margem sobre min observado. */
 constexpr uint32_t kTaskStackBytes     = 3072U;
 constexpr UBaseType_t kTaskPrio        = 1U;
 constexpr BaseType_t kTaskCore         = 1;       /* core 1 — fora do core dos drivers SPI/SD */
