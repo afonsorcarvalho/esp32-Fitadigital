@@ -117,8 +117,15 @@ static void wg_keepalive_start_once(void) {
     s_apply_mtx = xSemaphoreCreateMutex();
   }
   if (s_keepalive_task == nullptr) {
+    /* v1.77: stack 3072→8192. crash-analyzer sessao 2026-05-14 diagnosticou
+     * stack canary trip em wg_keepalive — a task corre sincronamente
+     * wg_apply_locked() → s_wg.begin() (WG netif bring-up profundo) →
+     * app_log_feature_writef (~984 B buffers char empilhados: msg[256] +
+     * line[320] + line_notify[384] + ts[24] + strftime). Com ISR nesting
+     * 3072 B estoura. Esta era a causa raiz dos reboots v1.74/v1.76 (e
+     * v1.73 so' "estavel" porque task zombie nunca atingia o deep path). */
     BaseType_t ok = xTaskCreatePinnedToCore(wg_keepalive_task, "wg_keepalive",
-                                            3072, nullptr, 1, &s_keepalive_task, 1);
+                                            8192, nullptr, 1, &s_keepalive_task, 1);
     if (ok != pdPASS) {
       s_keepalive_task = nullptr;
       app_log_feature_write("ERROR", "WIREGUARD",
