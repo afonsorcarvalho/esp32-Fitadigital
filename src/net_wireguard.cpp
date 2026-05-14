@@ -29,24 +29,24 @@ static char s_wg_priv[128];
 static char s_wg_pub[128];
 static char s_wg_ep[128];
 
-/* Re-apply keepalive (v1.69→v1.74) — biblioteca cliente entra em rekey storm
+/* Re-apply keepalive (v1.69→v1.76) — biblioteca cliente entra em rekey storm
  * pos-180s: envia INITIATIONs continuos com state corrompido, server rejeita
  * todas como "Invalid handshake initiation" (MAC1/static-decrypt fail).
  *
  * v1.69: detecao via is_peer_up() — reativa apos peer down 100s.
  * v1.71: detecao via in_filter_fn — FALHA (WG keepalive bypass filter).
  * v1.72: escalation esp_restart() apos 2 fails consec.
- * v1.73: REMOVIDA escalation esp_restart() (constraint: dispositivo registrador
- *        ciclos esterilizacao RS485, reboot = perda mensagem catastrofica).
- *        Adicionado PREEMPTIVE re-apply a cada 100s — bypass lib broken rekey
- *        (so' dispara a t=180s). end()+begin() reseta state lib fresh.
- * v1.74: TENTATIVA fix deadlock task removendo resets em wg_apply_locked.
- *        FALHOU produca:o: reboot loop ~3min (boot_count +3 em 15min).
- *        Causa raiz nao isolada — provavelmente rapid reactive fire
- *        sobrecarrega SD ou lib. Revertido em v1.75.
- * v1.75: REVERT v1.74 → comportamento v1.73 (zombie aceitavel vs crashing).
- *        Investigacao proper diferida proxima sessao. RS485 captura
- *        intacta, WG zombie pos-#1 e' tradeoff aceito.
+ * v1.73: REMOVIDA escalation esp_restart() + PREEMPTIVE 100s. Gate
+ *        `!s_ever_up continue` causou zombie pos-#1 (task idle quando
+ *        peer nao recupera).
+ * v1.74: tentou remover resets s_ever_up → reboot loop ~3min. Revertido.
+ * v1.75: revert v1.74. Comportamento v1.73 (zombie estavel).
+ * v1.76: SIMPLIFICACAO RADICAL. Substituida logica complexa (preemptive +
+ *        reactive + observe + consec_fail) por TIMER CEGO 90s. Task chama
+ *        wg_apply_locked() unconditionally cada 90s, INDEPENDENTE de
+ *        peer_up state. Bypass completo zombie: re-apply nunca para.
+ *        is_peer_up() so' usado para telemetria (log primeiro handshake).
+ *        Rate 90s ainda mais conservador que v1.73 preemptive 100s.
  *
  * Diagnostico Fase 0 sessao 2026-05-14: pcap server vps51163, kernel dmesg
  * wireguard +p. Server rejeita TODA INIT pos-1o-handshake. Causa raiz lib
@@ -58,8 +58,6 @@ static volatile uint32_t s_last_up_ms = 0;
 static volatile uint32_t s_last_apply_ms = 0;
 static volatile bool s_ever_up = false;
 static volatile uint32_t s_reapply_count = 0;
-static volatile uint32_t s_preemptive_count = 0;
-static volatile uint32_t s_consec_fail = 0;
 static volatile uint32_t s_last_rx_ms = 0;
 static volatile bool s_ever_rx = false;
 
@@ -75,71 +73,35 @@ static int wg_in_filter(struct pbuf *p) {
   return 0;
 }
 
+/* v1.76 task simplificada: timer cego 90s. Substitui logica preemptive +
+ * reactive + observe + consec_fail por re-apply incondicional periodico.
+ * is_peer_up() so' p/ telemetria (log primeiro handshake). */
 static void wg_keepalive_task(void *arg) {
   const TickType_t tick = pdMS_TO_TICKS(20000U);
-  const uint32_t down_threshold_ms = 100000U;
-  const uint32_t preemptive_reapply_ms = 100000U; /* re-apply antes lib broken rekey (t>=180s) */
-  const uint32_t observe_post_apply_ms = 30000U;  /* min gap entre re-applies p/ evitar storm */
+  const uint32_t force_reapply_ms = 90000U; /* re-apply blind cada 90s */
   for (;;) {
     vTaskDelay(tick);
     if (!s_wg_active) continue;
     if (WiFi.status() != WL_CONNECTED) continue;
-    uint32_t now = millis();
-    uint32_t since_apply = now - s_last_apply_ms;
-    bool peer_up = s_wg.is_peer_up();
-    if (peer_up) {
-      s_last_up_ms = now;
+    /* Telemetria peer_up — so' p/ log primeiro handshake. NAO gate o re-apply. */
+    if (s_wg.is_peer_up()) {
+      s_last_up_ms = millis();
       if (!s_ever_up) {
         s_ever_up = true;
         Serial.println("[WG-KA] peer up (first handshake)");
         app_log_feature_write("INFO", "WIREGUARD", "Peer up (first handshake).");
       }
-      if (s_consec_fail > 0U) {
-        Serial.printf("[WG-KA] recovery OK apos %u fails\n", (unsigned)s_consec_fail);
-        app_log_feature_writef("INFO", "WIREGUARD",
-                               "Recovery OK apos %u re-apply consecutivos.",
-                               (unsigned)s_consec_fail);
-        s_consec_fail = 0;
-      }
-      /* Preemptive re-apply: peer up mas state lib aproxima janela rekey broken.
-       * Forca end()+begin() ANTES dos 180s para evitar storm INITs invalidos. */
-      if (since_apply >= preemptive_reapply_ms) {
-        s_preemptive_count++;
-        Serial.printf("[WG-KA] preemptive re-apply (apos %us) #%u\n",
-                      (unsigned)(since_apply / 1000U), (unsigned)s_preemptive_count);
-        app_log_feature_writef("INFO", "WIREGUARD",
-                               "Re-apply preemptivo apos %us #%u.",
-                               (unsigned)(since_apply / 1000U), (unsigned)s_preemptive_count);
-        if (s_apply_mtx != nullptr) {
-          xSemaphoreTake(s_apply_mtx, portMAX_DELAY);
-        }
-        wg_apply_locked();
-        if (s_apply_mtx != nullptr) {
-          xSemaphoreGive(s_apply_mtx);
-        }
-      }
-      continue;
     }
-    /* peer NOT up */
-    if (!s_ever_up) continue;
-    uint32_t age = now - s_last_up_ms;
-    if (age < down_threshold_ms) continue;
-    if (since_apply < observe_post_apply_ms) continue; /* aguarda observe window apos re-apply */
-    /* Re-apply nao recuperou em tempo razoavel — telemetria + retry (NUNCA reboot). */
-    if (since_apply >= preemptive_reapply_ms + 30000U) {
-      s_consec_fail++;
-      Serial.printf("[WG-KA] re-apply nao recuperou (%us pos-apply, %u consec fails) — retry\n",
-                    (unsigned)(since_apply / 1000U), (unsigned)s_consec_fail);
-      app_log_feature_writef("ERROR", "WIREGUARD",
-                             "Re-apply nao recuperou (%us pos-apply, %u consec fails).",
-                             (unsigned)(since_apply / 1000U), (unsigned)s_consec_fail);
-    }
+    /* Re-apply incondicional cada N segundos. Bypass zombie state.
+     * Cada apply: ~200ms (end+begin). Rate 90s = ~0.2% CPU. */
+    uint32_t since_apply = millis() - s_last_apply_ms;
+    if (since_apply < force_reapply_ms) continue;
     s_reapply_count++;
-    Serial.printf("[WG-KA] peer down %us — re-apply reativo #%u\n",
-                  (unsigned)(age / 1000U), (unsigned)s_reapply_count);
-    app_log_feature_writef("WARN", "WIREGUARD",
-                           "Peer down ha %us — re-apply reativo #%u.",
-                           (unsigned)(age / 1000U), (unsigned)s_reapply_count);
+    Serial.printf("[WG-KA] periodic re-apply (apos %us) #%u\n",
+                  (unsigned)(since_apply / 1000U), (unsigned)s_reapply_count);
+    app_log_feature_writef("INFO", "WIREGUARD",
+                           "Re-apply periodico apos %us #%u.",
+                           (unsigned)(since_apply / 1000U), (unsigned)s_reapply_count);
     if (s_apply_mtx != nullptr) {
       xSemaphoreTake(s_apply_mtx, portMAX_DELAY);
     }
