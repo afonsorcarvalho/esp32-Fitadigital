@@ -124,8 +124,14 @@ static void publish_telemetry(void) {
 
     char topic[160];
     build_topic(topic, sizeof(topic), "/status");
-    /* QoS 1, retain false — telemetria e' ponto-no-tempo, nao precisa de retain. */
-    s_client.publish(topic, 1, false, payload);
+    /* QoS 0 (v1.81): telemetria e' ponto-no-tempo, nao precisa de retransmit
+     * guarantee. QoS 1 vaza heap interno — soak v1.80 mediu drift linear
+     * -412 B/60s (= 1 publish). Causa: espMqttClient retem o pacote QoS1 no
+     * _outbox ate' PUBACK; Packet::removable() so' liberta packetId==0 (QoS0)
+     * em _advanceOutbox. Em v1.80 o PUBACK nao estava a drenar o outbox ->
+     * 1 Node (~412 B: JSON ~300 B + topic + framing) acumulado por publish.
+     * QoS 0 -> packetId 0 -> removable -> libertado logo apos TCP send. */
+    s_client.publish(topic, 0, false, payload);
     s_last_telemetry_ms = millis();
     ESP_LOGD(TAG, "telemetria publicada (%u bytes)", (unsigned)n);
 }
@@ -134,8 +140,9 @@ static void publish_telemetry(void) {
 static void publish_online_retain(void) {
     char topic[160];
     build_topic(topic, sizeof(topic), "/status");
-    /* Payload minimo: apenas online=true, retain=true — sobrepoe o LWT. */
-    s_client.publish(topic, 1, true, "{\"online\":true}");
+    /* QoS 0 retain=true (v1.81): retain independente de QoS. QoS 1 aqui
+     * vazava 1 Node por reconexao (mesma causa do _outbox em publish_telemetry). */
+    s_client.publish(topic, 0, true, "{\"online\":true}");
 }
 
 /* ------------------------------------------------------------------ */
@@ -371,7 +378,9 @@ bool net_mqtt_publish(const char *topic_suffix, const char *payload, bool retain
     }
     char topic[160];
     build_topic(topic, sizeof(topic), topic_suffix);
-    return s_client.publish(topic, 1, retain, payload) != 0;
+    /* QoS 0 (v1.81): mesma causa de leak do _outbox QoS1 (ver publish_telemetry).
+     * Publish generico (usado por mqtt_kw p/ /keyword) — evento ponto-no-tempo. */
+    return s_client.publish(topic, 0, retain, payload) != 0;
 }
 
 void net_mqtt_set_suspended(bool suspended) {

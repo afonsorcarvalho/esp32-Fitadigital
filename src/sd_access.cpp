@@ -121,8 +121,18 @@ static constexpr UBaseType_t kSdTaskPrio = 1U;
  *   Serial.printf -> vfs_uart write consome stack extra mesmo quando chamado
  *   de sd_io_task directamente (nao apenas do path FatFs profundo), confirmado
  *   por EXCVADDR=0xb33ffffc apos 25 min de uptime com stack 32 KB.
+ *
+ * Reduzido de 32768 para 20480 em 2026-05-14 (v1.80) -- recuperacao de heap
+ *   interno. Diagnostico: device v1.79 sob runtime ~66 min com int_free ~9 KB
+ *   (min 4672, no limiar do HEAP_GUARD 5 KB) -> lwip sem pbufs -> WG handshake
+ *   ERR_MEM (-1) e MQTT TCP reason=7. O verdadeiro motor dos overflows acima ja
+ *   foi eliminado (remocao de log_w/log_e dos hot paths FatFs + Fix 4 ets_printf);
+ *   a stack de 32 KB tornou-se folga morta. Telemetria `[sd_io] stack_hwm` mede
+ *   pico real ~5.5 KB. 20 KB = 3.7x margem sobre o pico observado e evita o
+ *   numero 16 KB que crashou historicamente (mas com o VFS path ainda presente).
+ *   Reclama ~12 KB de RAM interna -> int_free steady-state ~21 KB.
  */
-static constexpr uint32_t kSdTaskStackBytes = 32768U;
+static constexpr uint32_t kSdTaskStackBytes = 20480U;
 static constexpr uint32_t kQueueDepth = 24U;
 static constexpr BaseType_t kSdTaskCore = (BaseType_t)ARDUINO_RUNNING_CORE;
 

@@ -1,9 +1,11 @@
 # TODO — FitaDigital (ESP32-S3-Touch-LCD-4.3B)
 
 ## Em curso
+- **Soak longo v1.81** — monitor serial COM3 a correr (`logs/serial-v181.log`). Validar 8h+ overnight: heap flat + zero-reboot + WG handshakes. Leak já confirmado morto em janela de 10 min (flat 21968 B); soak longo é confirmação de produção. NOTA: session-resume orfaniza o processo `pio device monitor` — se COM3 ocupar no próximo flash, matar zombies (`Get-CimInstance Win32_Process | ? CommandLine -match 'device monitor'`).
 
 ## Pendente
-- **WireGuard soak v1.76** — validar 8h+ overnight: zero-reboot + heap flat (heap_min caiu ~10KB em 6min monitor, confirmar não é drift). Stop server capture `~/wg-diag/` (tcpdump + wgshow loop a correr desde Fase 0).
+- **WireGuard root cause lib** (low priority — workaround v1.76 suficiente) — bug noise-handshake state corruption pos-1o-handshake em `smartalock/wireguard-lwip` upstream. Forensic byte-diff INIT #1 vs #2 informa se vale fix lib. `/api/wg/ping` reformular (esp_ping crash → lwip raw_pcb ou remover).
+- **fdigi.log parou de escrever** — última entrada 2026-04-19, zero conteúdo de Maio apesar de mtime recente. App file logger parou. Investigar: logger desactivado? path mudou? heap-starved no momento da escrita? (descoberto sessão 2026-05-14, baixa prioridade — boot.log escreve OK)
 - **WireGuard root cause lib** (low priority — workaround v1.76 suficiente) — bug noise-handshake state corruption pos-1o-handshake em `smartalock/wireguard-lwip` upstream. Forensic byte-diff INIT #1 vs #2 informa se vale fix lib. `/api/wg/ping` reformular (esp_ping crash → lwip raw_pcb ou remover).
 - **MQTT — Fase 3: cliente real** — adicionar `bertmelis/espMqttClient` lib_deps, implementar task `mqtt_svc` (core 0, prio 1, 4KB stack), LWT, backoff exponencial, telemetria JSON periódica.
 - **MQTT — Fase 4: keyword detector** — implementar task `mqtt_kw` (core 1, prio 1, 3KB stack), tick 5s, leitura offset SD, match `strcasestr`, publish `/keyword`.
@@ -11,6 +13,12 @@
 - Organizar `SoftwareQualification_*.docx` (3 versoes untracked na raiz): mover para pasta dedicada ou adicionar ao `.gitignore`.
 
 ## Feito
+- 2026-05-14 — **Heap exhaustion + leak hunt v1.79→v1.81 — 2 root causes corrigidas**: device v1.79 degradado após ~66 min uptime — `int_free ~9 KB`, `min 4672` (no limiar HEAP_GUARD 5 KB), WG handshake `ERR_MEM (-1)` (lwip sem pbufs), MQTT TCP `reason=7`. Zero reboots (constraint holds) mas WG+MQTT mortos.
+  - **Root cause 1 — sd_io stack oversized (v1.80)**: task `sd_io` com stack 32768 B, pico real medido ~5.5 KB (telemetria `stack_hwm`). Os overflows que motivaram os 32 KB já tinham sido eliminados (remoção de log_w/log_e dos hot paths FatFs + Fix 4 ets_printf). 32 KB = ~26 KB folga morta. Fix: `kSdTaskStackBytes` 32768→20480 (`sd_access.cpp`). Reclama ~12 KB RAM interna. Resultado v1.80: `int_free` 9K→20K, `min` 4672→8692, WG handshake destravou (`- 0` ERR_OK, `good handshake` intermitente).
+  - **Root cause 2 — MQTT QoS1 publish leak (v1.81)**: soak v1.80 expôs drift linear **-412 B/60s** (= 1 telemetry publish). Causa: `espMqttClient` retém pacote QoS1 no `_outbox` até PUBACK; `Packet::removable()` só liberta `packetId==0` (QoS0) em `_advanceOutbox`. Em v1.80 o PUBACK não estava a drenar o outbox → 1 Node (~412 B: JSON ~300 B + topic + framing) acumulado por publish. Confirmação: v1.79 (MQTT a falhar, nunca publica) tinha heap **dead-flat** 8.3 min; v1.80 (MQTT conecta+publica) vaza. esp_ping (60s) corre em ambos → descartado. Fix: QoS 1→0 nas 3 publish calls de `net_mqtt.cpp` (`publish_telemetry`, `publish_online_retain`, `net_mqtt_publish`) — telemetria é fire-and-forget, `retain` independente de QoS.
+  - **Validação v1.81**: soak 10 min — SD heap-diag série dead-flat em **21968 B** (v1.80 teria perdido ~4 KB), `int_min` **14652 B** (3× o guard 5120), 4 good handshakes WG, **zero reboots**, boot fresh limpo. Leak eliminado. Soak longo 8h+ pendente p/ confirmação produção.
+  - Lição: stack sizing por medição (`uxTaskGetStackHighWaterMark`), não por margem-de-medo herdada de crashes já corrigidos. QoS1 sem PUBACK fiável = leak silencioso — usar QoS0 para telemetria.
+  - Archives: `FitaDigital_v1.80.bin`, `FitaDigital_v1.81.bin`.
 - 2026-05-14 — **WireGuard arco v1.73→v1.76 — FIX FINAL v1.76 timer cego**: Diagnóstico Fase 0 (pcap server vps51163 + kernel `wireguard +p`) confirmou bug lib `smartalock/wireguard-lwip` upstream — server rejeita TODA INIT pos-1o-handshake como `Invalid handshake initiation`. Solução: bypass app-layer. Arco:
   - **v1.73**: removido `esp_restart()` escalation (constraint registrador esterilização) + preemptive re-apply 100s. MAS gated `peer_up=true` → zombie pós-#1 (server handshake fixou 2h41min, RX 276 B).
   - **v1.74**: tentou remover gates `s_ever_up`/`s_last_up_ms` → reboot loop ~3min (boot_count +3 em 15min). Revertido.
