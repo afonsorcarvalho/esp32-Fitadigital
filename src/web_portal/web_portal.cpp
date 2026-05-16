@@ -20,6 +20,8 @@
 #include <esp_system.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <freertos/task.h>
+#include <esp_wifi.h>
 
 extern "C" {
 #include "lwip/ip_addr.h"
@@ -848,6 +850,65 @@ static void handle_ota_upload_data(AsyncWebServerRequest *request, const String 
 }
 
 /* ------------------------------------------------------------------ */
+/* WiFi stress test — v1.83                                               */
+/* ------------------------------------------------------------------ */
+
+/* v1.83 WiFi stress test — task one-shot. Disable autoReconnect, force
+ * esp_wifi_disconnect, sleep down_s segundos para wifi_keepalive_tick (v1.82)
+ * disparar SOFT (>=30s) ou HARD (>=300s). Re-arma autoReconnect no fim.
+ * NAO chama WiFi.begin() — deixa self-healing recover naturalmente. */
+static void wifi_stress_task(void *arg)
+{
+    uint32_t down_s = *(uint32_t *)arg;
+    free(arg);
+    app_log_feature_writef("WARN", "WIFI",
+        "Stress disconnect down_s=%u (auto-reconnect off)",
+        (unsigned)down_s);
+    WiFi.setAutoReconnect(false);
+    (void)esp_wifi_disconnect();
+    vTaskDelay(pdMS_TO_TICKS(down_s * 1000UL));
+    WiFi.setAutoReconnect(true);
+    app_log_feature_writef("INFO", "WIFI",
+        "Stress window done (down_s=%u) — self-healing tomara conta",
+        (unsigned)down_s);
+    vTaskDelete(NULL);
+}
+
+static void handle_wifi_stress_post(AsyncWebServerRequest *request)
+{
+    if (!request->hasParam("down_s")) {
+        request->send(400, "application/json",
+            "{\"error\":\"missing down_s param\"}");
+        return;
+    }
+    long down_s = request->getParam("down_s")->value().toInt();
+    if (down_s < 5 || down_s > 600) {
+        request->send(400, "application/json",
+            "{\"error\":\"down_s out of range (5..600)\"}");
+        return;
+    }
+    uint32_t *arg = (uint32_t *)malloc(sizeof(uint32_t));
+    if (arg == NULL) {
+        request->send(500, "application/json",
+            "{\"error\":\"alloc failed\"}");
+        return;
+    }
+    *arg = (uint32_t)down_s;
+    BaseType_t ok = xTaskCreatePinnedToCore(wifi_stress_task,
+        "wifi_stress", 4096, arg, 1, NULL, 1);
+    if (ok != pdPASS) {
+        free(arg);
+        request->send(500, "application/json",
+            "{\"error\":\"task spawn failed\"}");
+        return;
+    }
+    char buf[96];
+    snprintf(buf, sizeof(buf),
+        "{\"scheduled_down_s\":%ld,\"task_started\":true}", down_s);
+    request->send(200, "application/json", buf);
+}
+
+/* ------------------------------------------------------------------ */
 /* Health (sem auth)                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -1331,6 +1392,12 @@ void web_portal_init(void)
     /* --- /api/health (sem auth) --- */
     s_srv->on("/api/health", HTTP_GET, [](AsyncWebServerRequest *request) {
         handle_health_get(request);
+    });
+
+    /* --- /api/wifi/stress (auth) — v1.83 stress test self-healing --- */
+    s_srv->on("/api/wifi/stress", HTTP_POST, [](AsyncWebServerRequest *request) {
+        if (!web_auth_check(request)) return;
+        handle_wifi_stress_post(request);
     });
 
     /* --- /api/settings (legacy, retrocompativel) --- */
