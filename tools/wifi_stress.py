@@ -29,7 +29,7 @@ import sys
 import time
 
 import requests
-from requests.auth import HTTPBasicAuth
+from requests.auth import HTTPDigestAuth
 
 
 DEFAULT_IP = "192.168.0.197"
@@ -52,7 +52,7 @@ def get_health(ip: str, timeout: float = 5.0) -> dict | None:
     return None
 
 
-def post_stress(ip: str, down_s: int, auth: HTTPBasicAuth) -> dict | None:
+def post_stress(ip: str, down_s: int, auth: HTTPDigestAuth) -> dict | None:
     """POST stress endpoint. Returns response JSON or None on failure."""
     try:
         r = requests.post(
@@ -71,7 +71,7 @@ def post_stress(ip: str, down_s: int, auth: HTTPBasicAuth) -> dict | None:
 
 
 def run_cycle(cycle_idx: int, label: str, down_s: int, ip: str,
-              auth: HTTPBasicAuth, max_recover_s: int) -> dict:
+              auth: HTTPDigestAuth, max_recover_s: int) -> dict:
     """Execute one stress cycle and return result dict."""
     print(f"\n=== cycle {cycle_idx} {label} down_s={down_s} ===", flush=True)
 
@@ -167,7 +167,7 @@ def main() -> int:
         ts = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
         args.out = f"logs/wifi_stress_{ts}.csv"
 
-    auth = HTTPBasicAuth(args.user, args.pin)
+    auth = HTTPDigestAuth(args.user, args.pin)
 
     print(f"[run] target={args.ip} cycles={args.cycles} gap={args.gap_s}s "
           f"max_recover={args.max_recover_s}s out={args.out}", flush=True)
