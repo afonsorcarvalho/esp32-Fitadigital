@@ -1,6 +1,7 @@
 # TODO — FitaDigital (ESP32-S3-Touch-LCD-4.3B)
 
 ## Em curso
+- **WiFi stress test API v1.83** — endpoint `POST /api/wifi/stress?down_s=N` + `tools/wifi_stress.py` orchestrator (6 ciclos: 3 SOFT 35s + 3 HARD 305s). Valida self-healing layered v1.82 (`wifi_keepalive_tick` SOFT/HARD). Spec: `docs/superpowers/specs/2026-05-15-wifi-stress-test-api-design.md`. Plan: `docs/superpowers/plans/2026-05-15-wifi-stress-test-api.md`.
 - **Soak longo v1.81** — monitor serial COM3 a correr (`logs/serial-v181.log`). Validar 8h+ overnight: heap flat + zero-reboot + WG handshakes. Leak já confirmado morto em janela de 10 min (flat 21968 B); soak longo é confirmação de produção. NOTA: session-resume orfaniza o processo `pio device monitor` — se COM3 ocupar no próximo flash, matar zombies (`Get-CimInstance Win32_Process | ? CommandLine -match 'device monitor'`).
 
 ## Pendente
