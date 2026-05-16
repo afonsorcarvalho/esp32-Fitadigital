@@ -26,6 +26,7 @@
 #include "board_i2c0_bus_lock.h"
 #include "waveshare_sd_cs.h"
 #include "boot_journal.h"
+#include "panic_logger.h"
 #include "SD.h"
 #include "app_log.h"
 #include "net_monitor.h"
@@ -176,6 +177,7 @@ void setup() {
   app_settings_init();
   (void)boot_journal_init();
   (void)boot_journal_reset();
+  panic_logger_init();  /* v1.84: log breadcrumb se reset por TWDT/panic */
   /* SPIFFS montado por boot_journal_init — inicializar buffer RS485 agora. */
   rs485_buffer_init();
 
