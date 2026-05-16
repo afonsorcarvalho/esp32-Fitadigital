@@ -13,6 +13,8 @@
 #include "app_log.h"
 #include "app_settings.h"
 #include "net_services.h"
+#include "panic_logger.h"
+#include <esp_task_wdt.h>
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WireGuard-ESP32.h>
@@ -134,11 +136,18 @@ static bool wifi_keepalive_tick(uint32_t now_ms) {
                            "Hard reset stack apos %u s (#%u).",
                            (unsigned)(down_ms / 1000U),
                            (unsigned)s_wifi_hard_count);
+    panic_breadcrumb_set("wifi_ka:hard:stop");
+    esp_task_wdt_reset();
     (void)esp_wifi_stop();
     vTaskDelay(pdMS_TO_TICKS(200));
+    panic_breadcrumb_set("wifi_ka:hard:start");
+    esp_task_wdt_reset();
     (void)esp_wifi_start();
     vTaskDelay(pdMS_TO_TICKS(200));
+    panic_breadcrumb_set("wifi_ka:hard:begin_saved");
+    esp_task_wdt_reset();
     net_wifi_begin_saved();
+    panic_breadcrumb_clear();
     return false;
   }
 
@@ -151,7 +160,10 @@ static bool wifi_keepalive_tick(uint32_t now_ms) {
                            "Soft reconnect apos %u s (#%u).",
                            (unsigned)(down_ms / 1000U),
                            (unsigned)s_wifi_soft_count);
+    panic_breadcrumb_set("wifi_ka:soft:begin_saved");
+    esp_task_wdt_reset();
     net_wifi_begin_saved();
+    panic_breadcrumb_clear();
     return false;
   }
 
@@ -257,7 +269,11 @@ void net_wireguard_apply(void) {
 }
 
 static void wg_apply_locked(void) {
+  panic_breadcrumb_set("wg_apply:start");
+  esp_task_wdt_reset();
   s_last_apply_ms = millis(); /* v1.73: timer preemptive re-apply, sempre actualizado */
+  panic_breadcrumb_set("wg_apply:end");
+  esp_task_wdt_reset();
   s_wg.end();
   s_wg_active = false;
   /* v1.75: REVERTIDO v1.74. Manter resets s_ever_up + s_last_up_ms.
@@ -272,10 +288,12 @@ static void wg_apply_locked(void) {
   s_last_rx_ms = millis();
   if (!app_settings_wireguard_enabled()) {
     app_log_feature_write("INFO", "WIREGUARD", "Feature desativada nas configuracoes.");
+    panic_breadcrumb_clear();
     return;
   }
   if (WiFi.status() != WL_CONNECTED) {
     app_log_feature_write("WARN", "WIREGUARD", "Inicio adiado: Wi-Fi desconectado.");
+    panic_breadcrumb_clear();
     return;
   }
   String ip = app_settings_wg_local_ip();
@@ -283,6 +301,7 @@ static void wg_apply_locked(void) {
   if (!local.fromString(ip.c_str())) {
     Serial.println("[WG] IP local invalido");
     app_log_feature_writef("ERROR", "WIREGUARD", "IP local invalido: '%s'", ip.c_str());
+    panic_breadcrumb_clear();
     return;
   }
   String priv = app_settings_wg_private_key();
@@ -291,6 +310,7 @@ static void wg_apply_locked(void) {
   if (priv.length() == 0 || pub.length() == 0 || ep.length() == 0) {
     Serial.println("[WG] Chaves ou endpoint em falta");
     app_log_feature_write("ERROR", "WIREGUARD", "Chaves/endpoint em falta.");
+    panic_breadcrumb_clear();
     return;
   }
   strncpy(s_wg_priv, priv.c_str(), sizeof(s_wg_priv) - 1U);
@@ -307,6 +327,7 @@ static void wg_apply_locked(void) {
     Serial.println("[WG] Endpoint nao e IP literal — DNS desactivado p/ evitar crash.");
     app_log_feature_writef("ERROR", "WIREGUARD",
                            "Endpoint '%s' nao e IP literal. Configure IPv4 explicito.", ep.c_str());
+    panic_breadcrumb_clear();
     return;
   }
   strncpy(s_wg_ep, ep.c_str(), sizeof(s_wg_ep) - 1U);
@@ -319,6 +340,7 @@ static void wg_apply_locked(void) {
     Serial.println("[WG] Endpoint resolveu a 0.0.0.0 — provision incompleta. Inicio adiado.");
     app_log_feature_writef("ERROR", "WIREGUARD",
                            "Endpoint '%s' resolveu a 0.0.0.0 (provision incompleta).", ep.c_str());
+    panic_breadcrumb_clear();
     return;
   }
 
@@ -338,10 +360,13 @@ static void wg_apply_locked(void) {
   const IPAddress allowed_ip(local[0], local[1], local[2], 0);
   const IPAddress allowed_mask(255, 255, 255, 0);
   /* in_filter_fn = wg_in_filter para detecao real de traffic vivo (v1.71). */
+  panic_breadcrumb_set("wg_apply:begin");
+  esp_task_wdt_reset();
   if (!s_wg.begin(local, wg_mask, 0, wg_gw, s_wg_priv, s_wg_ep, s_wg_pub, port,
                   allowed_ip, allowed_mask, false, nullptr, &wg_in_filter)) {
     Serial.println("[WG] begin() falhou (ver hora NTP e chaves)");
     app_log_feature_write("ERROR", "WIREGUARD", "Falha ao iniciar tunel (begin).");
+    panic_breadcrumb_clear();
     return;
   }
   s_wg_active = true;
@@ -351,4 +376,5 @@ static void wg_apply_locked(void) {
                          s_wg_ep, (unsigned)port,
                          (unsigned)allowed_ip[0], (unsigned)allowed_ip[1],
                          (unsigned)allowed_ip[2]);
+  panic_breadcrumb_clear();
 }

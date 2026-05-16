@@ -7,6 +7,7 @@
  */
 #include "web_portal.h"
 #include "web_portal_html.h"
+#include "panic_logger.h"
 
 #include <ArduinoJson.h>
 #include <ESPAsyncWebServer.h>
@@ -864,13 +865,17 @@ static void wifi_stress_task(void *arg)
     app_log_feature_writef("WARN", "WIFI",
         "Stress disconnect down_s=%u (auto-reconnect off)",
         (unsigned)down_s);
+    panic_breadcrumb_set("stress:disconnect");
     WiFi.setAutoReconnect(false);
     (void)esp_wifi_disconnect();
+    panic_breadcrumb_set("stress:sleep");
     vTaskDelay(pdMS_TO_TICKS(down_s * 1000UL));
+    panic_breadcrumb_set("stress:rearm");
     WiFi.setAutoReconnect(true);
     app_log_feature_writef("INFO", "WIFI",
         "Stress window done (down_s=%u) — self-healing tomara conta",
         (unsigned)down_s);
+    panic_breadcrumb_clear();
     vTaskDelete(NULL);
 }
 
