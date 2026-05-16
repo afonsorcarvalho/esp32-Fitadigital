@@ -856,24 +856,29 @@ static void handle_ota_upload_data(AsyncWebServerRequest *request, const String 
 
 /* v1.83 WiFi stress test — task one-shot. Disable autoReconnect, force
  * esp_wifi_disconnect, sleep down_s segundos para wifi_keepalive_tick (v1.82)
- * disparar SOFT (>=30s) ou HARD (>=300s). Re-arma autoReconnect no fim.
- * NAO chama WiFi.begin() — deixa self-healing recover naturalmente. */
+ * disparar SOFT (>=30s) ou HARD (>=300s). NAO re-arma autoReconnect ao
+ * sair — v1.86 fix: race entre setAutoReconnect(true) e wifi_keepalive_tick
+ * recovery simultaneo causava TWDT (IDLE0 starved 5s+ por avalanche eventos
+ * lwip tcpip task core 0; breadcrumb 'stress:rearm' captured prev_reset=
+ * TASK_WDT(6) em v1.85). wifi_keepalive_tick recupera WiFi sozinho via
+ * SOFT/HARD path; autoReconnect Arduino fica off ate proximo boot — papel
+ * primario de recovery e v1.82 keepalive, autoReconnect era backup. */
 static void wifi_stress_task(void *arg)
 {
     uint32_t down_s = *(uint32_t *)arg;
     free(arg);
     app_log_feature_writef("WARN", "WIFI",
-        "Stress disconnect down_s=%u (auto-reconnect off)",
+        "Stress disconnect down_s=%u (auto-reconnect off, keepalive tomara conta)",
         (unsigned)down_s);
     panic_breadcrumb_set("stress:disconnect");
     WiFi.setAutoReconnect(false);
     (void)esp_wifi_disconnect();
     panic_breadcrumb_set("stress:sleep");
     vTaskDelay(pdMS_TO_TICKS(down_s * 1000UL));
-    panic_breadcrumb_set("stress:rearm");
-    WiFi.setAutoReconnect(true);
+    /* v1.86: NAO chamar WiFi.setAutoReconnect(true) aqui — corrida com
+     * wifi_keepalive_tick recovery em curso no core 1 causa TWDT no core 0. */
     app_log_feature_writef("INFO", "WIFI",
-        "Stress window done (down_s=%u) — self-healing tomara conta",
+        "Stress window done (down_s=%u) — self-healing handle recovery",
         (unsigned)down_s);
     panic_breadcrumb_clear();
     vTaskDelete(NULL);
