@@ -14,7 +14,6 @@
 #include "app_settings.h"
 #include "net_services.h"
 #include "panic_logger.h"
-#include <esp_task_wdt.h>
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WireGuard-ESP32.h>
@@ -137,15 +136,12 @@ static bool wifi_keepalive_tick(uint32_t now_ms) {
                            (unsigned)(down_ms / 1000U),
                            (unsigned)s_wifi_hard_count);
     panic_breadcrumb_set("wifi_ka:hard:stop");
-    esp_task_wdt_reset();
     (void)esp_wifi_stop();
     vTaskDelay(pdMS_TO_TICKS(200));
     panic_breadcrumb_set("wifi_ka:hard:start");
-    esp_task_wdt_reset();
     (void)esp_wifi_start();
     vTaskDelay(pdMS_TO_TICKS(200));
     panic_breadcrumb_set("wifi_ka:hard:begin_saved");
-    esp_task_wdt_reset();
     net_wifi_begin_saved();
     panic_breadcrumb_clear();
     return false;
@@ -161,7 +157,6 @@ static bool wifi_keepalive_tick(uint32_t now_ms) {
                            (unsigned)(down_ms / 1000U),
                            (unsigned)s_wifi_soft_count);
     panic_breadcrumb_set("wifi_ka:soft:begin_saved");
-    esp_task_wdt_reset();
     net_wifi_begin_saved();
     panic_breadcrumb_clear();
     return false;
@@ -270,10 +265,8 @@ void net_wireguard_apply(void) {
 
 static void wg_apply_locked(void) {
   panic_breadcrumb_set("wg_apply:start");
-  esp_task_wdt_reset();
   s_last_apply_ms = millis(); /* v1.73: timer preemptive re-apply, sempre actualizado */
   panic_breadcrumb_set("wg_apply:end");
-  esp_task_wdt_reset();
   s_wg.end();
   s_wg_active = false;
   /* v1.75: REVERTIDO v1.74. Manter resets s_ever_up + s_last_up_ms.
@@ -361,7 +354,6 @@ static void wg_apply_locked(void) {
   const IPAddress allowed_mask(255, 255, 255, 0);
   /* in_filter_fn = wg_in_filter para detecao real de traffic vivo (v1.71). */
   panic_breadcrumb_set("wg_apply:begin");
-  esp_task_wdt_reset();
   if (!s_wg.begin(local, wg_mask, 0, wg_gw, s_wg_priv, s_wg_ep, s_wg_pub, port,
                   allowed_ip, allowed_mask, false, nullptr, &wg_in_filter)) {
     Serial.println("[WG] begin() falhou (ver hora NTP e chaves)");

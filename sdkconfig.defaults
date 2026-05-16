@@ -16,6 +16,3 @@ CONFIG_LWIP_NUM_NETIF_CLIENT_DATA=6
 # Nota: Wi-Fi usa binarios pre-compilados; politica "sem PS" no radio e' aplicada em net_services.cpp
 # (esp_wifi_set_ps, esp_wifi_force_wakeup_acquire) — ver comentarios nesse ficheiro.
 CONFIG_PM_ENABLE=n
-
-# Task Watchdog: timeout 5s -> 15s. Self-healing layered (esp_wifi_stop+start+begin_saved) sob heap pressure pode demorar >5s; bump evita reboot durante recovery. Combinado com esp_task_wdt_reset() feeds nos paths suspeitos (panic_logger + net_wireguard).
-CONFIG_ESP_TASK_WDT_TIMEOUT_S=15
