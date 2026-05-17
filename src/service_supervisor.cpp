@@ -111,11 +111,12 @@ void supervisor_timer_cb(TimerHandle_t t) {
         post_restart(idx, "stack_critical");
         return;
     }
-    if (e->prev_hwm > 0U && e->prev_hwm > hwm && (e->prev_hwm - hwm) > kStackShrinkWords) {
-        post_restart(idx, "stack_leak_rapid");
-        e->prev_hwm = hwm;  /* update to avoid re-trigger */
-        return;
-    }
+    /* v1.88: removed stack_leak_rapid heuristic. uxTaskGetStackHighWaterMark
+     * is monotonic-decreasing (tracks min observed), so any deep call stack
+     * triggers a diff check. False positive observed v1.87 (WG hwm dropped
+     * 7536->7232 = 1.2KB, triggered restart). Real leak detection requires
+     * malloc-tag tracking which IDF doesn't support. Rely on stack_critical
+     * absolute threshold (<64 words = ~256B left) instead. */
     e->prev_hwm = hwm;
 
     if (e->reg.quiet_max_ms > 0U) {
