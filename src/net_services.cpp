@@ -321,18 +321,12 @@ void net_services_loop(void) {
     app_log_feature_writef("INFO", "WIFI", "Conectado. IP=%s RSSI=%d",
                            WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
 
-    static bool s_wifi_registered = false;
-    if (!s_wifi_registered) {
-      s_wifi_registered = true;
-      service_register_t reg = {};
-      reg.name = "wifi";
-      reg.task = xTaskGetCurrentTaskHandle();  /* net_svc task */
-      reg.restart_cb = wifi_supervisor_restart;
-      reg.health_cb = wifi_supervisor_health;
-      reg.quiet_max_ms = 30000U;
-      reg.heap_leak_threshold = 0U;
-      (void)service_supervisor_register(&reg);
-    }
+    /* v1.89: NAO registar WiFi no service_supervisor. WiFi tem
+     * wifi_keepalive_tick (v1.82) — adicionar supervisor cria race quando
+     * restart_cb roda mesmo esp_wifi_stop/start que keepalive HARD path,
+     * resultando PANIC observado v1.88 (breadcrumb 'restart:wifi:no_heartbeat'
+     * → corrupcao stack WiFi). Helpers wifi_supervisor_restart/health ficam
+     * dead code. */
 
     net_time_on_wifi_connected();
 

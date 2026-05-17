@@ -92,7 +92,8 @@ static volatile uint32_t s_wifi_hard_count    = 0;
 
 /* Devolve true se WiFi up neste tick; false se down (caller skip WG re-apply). */
 static bool wifi_keepalive_tick(uint32_t now_ms) {
-  service_supervisor_heartbeat("wifi");
+  /* v1.89: removed service_supervisor_heartbeat("wifi") — WiFi nao esta
+   * registado no supervisor (ver wg_keepalive_start_once nota v1.89). */
   if (WiFi.status() == WL_CONNECTED) {
     if (s_wifi_down_since_ms != 0) {
       const uint32_t down_ms = now_ms - s_wifi_down_since_ms;
@@ -185,7 +186,7 @@ static void wg_keepalive_task(void *arg) {
   const uint32_t force_reapply_ms = 90000U; /* re-apply blind cada 90s */
   for (;;) {
     vTaskDelay(tick);
-    service_supervisor_heartbeat("wg");
+    /* v1.89: removed service_supervisor_heartbeat("wg") — WG nao registado. */
     /* v1.82: WiFi self-healing antes do WG. Sem WiFi nao faz sentido WG;
      * tambem evita s_wg.begin() ler netif_default invalido. */
     if (!wifi_keepalive_tick(millis())) continue;
@@ -252,19 +253,12 @@ static void wg_keepalive_start_once(void) {
       app_log_feature_write("ERROR", "WIREGUARD",
                             "Falha a criar task wg_keepalive.");
     }
-    if (s_keepalive_task != nullptr) {
-      service_register_t reg = {};
-      reg.name = "wg";
-      reg.task = s_keepalive_task;
-      reg.restart_cb = wg_supervisor_restart;
-      /* health_cb omitted: s_ever_up resets to false every 90s re-apply, so
-       * returning it would fire health_fail every supervisor 10s tick post-apply.
-       * Rely on quiet_max_ms + task-state monitoring only. */
-      reg.health_cb = nullptr;
-      reg.quiet_max_ms = 100000U;  /* 100s — blind re-apply 90s + slack */
-      reg.heap_leak_threshold = 0U;
-      (void)service_supervisor_register(&reg);
-    }
+    /* v1.89: NAO registar WG no service_supervisor. WG ja tem keepalive_tick
+     * proprio (wg_keepalive_task com re-apply blind 90s, v1.76). Supervisor
+     * em cima duplica recovery e cria race quando supervisor restart_cb roda
+     * mesmo esp_wifi_stop/start que keepalive_tick HARD path → PANIC observado
+     * v1.88. wg_supervisor_restart fica como dead code (pode ser util futuro
+     * se removermos keepalive_tick). */
   }
 }
 
