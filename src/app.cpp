@@ -46,6 +46,7 @@
 #include "net_mqtt.h"
 #include "net_mqtt_keywords.h"
 #include "screenshot.h"
+#include "service_supervisor.h"
 
 /** SPI dedicado ao TF (pinos em `board_pins.h`, documentação Waveshare). */
 static SPIClass s_sd_spi;
@@ -284,6 +285,9 @@ void setup() {
                 "portal HTTP (config, logs, ficheiros SD) na porta 80");
 
   net_monitor_init();
+
+  service_supervisor_init();
+  boot_log_plain("INFO", "service_supervisor inicializado");
 
   boot_log_plain("INFO", "Boot concluido. A carregar interface principal...");
   boot_screen_set_footer("A carregar interface principal...");

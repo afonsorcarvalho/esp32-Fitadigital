@@ -8,6 +8,7 @@
 #include "web_portal.h"
 #include "web_portal_html.h"
 #include "panic_logger.h"
+#include "service_supervisor.h"
 
 #include <ArduinoJson.h>
 #include <ESPAsyncWebServer.h>
@@ -1129,6 +1130,47 @@ static void handle_system_status(AsyncWebServerRequest *request)
     request->send(200, "application/json", out);
 }
 
+/* --- /api/system/services (GET) — v1.87 supervisor telemetry --- */
+
+static void handle_system_services_get(AsyncWebServerRequest *request)
+{
+    service_status_t arr[8];
+    size_t n = service_supervisor_get_all_status(arr, 8);
+
+    /* Build JSON manually — keep it small + dependency-free. */
+    char buf[1024];
+    int off = 0;
+    off += snprintf(buf + off, sizeof(buf) - off,
+        "{\"uptime_s\":%lu,\"heap\":{\"internal_free\":%u,\"internal_min\":%u,\"psram_free\":%u},\"services\":[",
+        (unsigned long)(millis() / 1000UL),
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+        (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+
+    for (size_t i = 0; i < n && off < (int)sizeof(buf) - 200; i++) {
+        const service_status_t *s = &arr[i];
+        const char *reason = s->last_restart_reason ? s->last_restart_reason : "null";
+        const bool quoted_reason = (s->last_restart_reason != nullptr);
+        off += snprintf(buf + off, sizeof(buf) - off,
+            "%s{\"name\":\"%s\",\"stack_hwm\":%u,\"stack_hwm_min\":%u,"
+            "\"heap_owned_baseline\":%u,\"restart_count\":%u,\"last_restart_ms\":%u,"
+            "\"last_restart_reason\":%s%s%s}",
+            (i == 0) ? "" : ",",
+            s->name ? s->name : "?",
+            (unsigned)s->stack_hwm, (unsigned)s->stack_hwm_min,
+            (unsigned)s->heap_owned_baseline,
+            (unsigned)s->restart_count, (unsigned)s->last_restart_ms,
+            quoted_reason ? "\"" : "", reason, quoted_reason ? "\"" : "");
+    }
+
+    off += snprintf(buf + off, sizeof(buf) - off,
+        "],\"supervisor\":{\"escalations\":%u,\"active_services\":%u}}",
+        (unsigned)service_supervisor_get_escalations(),
+        (unsigned)n);
+
+    request->send(200, "application/json", buf);
+}
+
 /* --- /api/fs/delete (POST ?path=/abs/path) --- */
 
 static void handle_fs_delete(AsyncWebServerRequest *request)
@@ -1541,6 +1583,12 @@ void web_portal_init(void)
     s_srv->on("/api/system/import", HTTP_POST, [](AsyncWebServerRequest *request) {
         if (!web_auth_check(request)) return;
         handle_system_import(request);
+    });
+
+    /* --- /api/system/services (auth) — v1.87 supervisor telemetry --- */
+    s_srv->on("/api/system/services", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!web_auth_check(request)) return;
+        handle_system_services_get(request);
     });
 
     /* --- /api/logs --- */
