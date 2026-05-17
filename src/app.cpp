@@ -26,6 +26,7 @@
 #include "board_i2c0_bus_lock.h"
 #include "waveshare_sd_cs.h"
 #include "boot_journal.h"
+#include "build_features.h"
 #include "panic_logger.h"
 #include "SD.h"
 #include "app_log.h"
@@ -327,17 +328,29 @@ void setup() {
   /* Ceder tempo à tarefa LVGL para o primeiro frame (evita lv_refr_now com mutex + RGB). */
   delay(10);
 
+#if FITA_ENABLE_WEB_PORTAL
   web_portal_init();
   /**
    * `net_svc` consome heap interno (stack). Se ele iniciar antes do portal, pode impedir o AsyncTCP
    * de criar a task interna (erro: "AsyncTCP begin(): failed to start task"). Por isso o portal
    * é inicializado primeiro.
    */
-  net_services_start_background_task();
+#else
+  Serial.println("[BUILD] WEB_PORTAL disabled");
+#endif
+  net_services_start_background_task();  /* sempre — controla WiFi+FTP runtime; FTP gated por FITA_ENABLE_FTP em net_services */
+#if FITA_ENABLE_MQTT
   net_mqtt_init();
   net_mqtt_keywords_start();
+#else
+  Serial.println("[BUILD] MQTT disabled");
+#endif
+#if FITA_ENABLE_SCREENSHOT
   /* Screenshot: shadow buffer 768 KB PSRAM + flush hook LVGL — capture on-demand via web portal */
   screenshot_init();
+#else
+  Serial.println("[BUILD] SCREENSHOT disabled");
+#endif
 
   /* Telemetria de heap + watchdog: 30s, reboot graceful se int_free < 6 KB. */
   heap_monitor_start();

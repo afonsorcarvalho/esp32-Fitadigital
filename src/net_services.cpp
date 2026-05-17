@@ -9,6 +9,7 @@
 #include "net_services.h"
 
 #include "app_log.h"
+#include "build_features.h"
 #include "app_settings.h"
 #include "service_supervisor.h"
 
@@ -265,7 +266,9 @@ void net_services_sd_worker_tick(void) {
     return;
   }
 
+#if FITA_ENABLE_FTP
   ftp_try_start();
+#endif
 
   if (!s_ftp_running) {
     return;
@@ -305,9 +308,13 @@ void net_services_loop(void) {
 
   if (!s_modules_inited) {
 
+#if FITA_ENABLE_NTP
     net_time_init();
+#endif
 
+#if FITA_ENABLE_WG
     net_wireguard_init();
+#endif
 
     s_modules_inited = true;
 
@@ -328,15 +335,21 @@ void net_services_loop(void) {
      * → corrupcao stack WiFi). Helpers wifi_supervisor_restart/health ficam
      * dead code. */
 
+#if FITA_ENABLE_NTP
     net_time_on_wifi_connected();
+#endif
 
+#if FITA_ENABLE_WG
     net_wireguard_apply();
+#endif
 
   }
 
   if (!wifi_ok && s_wifi_was_ok) {
     app_log_feature_write("WARN", "WIFI", "Desconectado.");
+#if FITA_ENABLE_WG
     net_wireguard_init();
+#endif
 
     s_ftp_stop_wifi_down_since_ms = millis();
 
