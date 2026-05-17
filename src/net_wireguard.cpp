@@ -14,6 +14,7 @@
 #include "app_settings.h"
 #include "net_services.h"
 #include "panic_logger.h"
+#include "service_supervisor.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WireGuard-ESP32.h>
@@ -91,6 +92,7 @@ static volatile uint32_t s_wifi_hard_count    = 0;
 
 /* Devolve true se WiFi up neste tick; false se down (caller skip WG re-apply). */
 static bool wifi_keepalive_tick(uint32_t now_ms) {
+  service_supervisor_heartbeat("wifi");
   if (WiFi.status() == WL_CONNECTED) {
     if (s_wifi_down_since_ms != 0) {
       const uint32_t down_ms = now_ms - s_wifi_down_since_ms;
@@ -183,6 +185,7 @@ static void wg_keepalive_task(void *arg) {
   const uint32_t force_reapply_ms = 90000U; /* re-apply blind cada 90s */
   for (;;) {
     vTaskDelay(tick);
+    service_supervisor_heartbeat("wg");
     /* v1.82: WiFi self-healing antes do WG. Sem WiFi nao faz sentido WG;
      * tambem evita s_wg.begin() ler netif_default invalido. */
     if (!wifi_keepalive_tick(millis())) continue;
@@ -216,6 +219,20 @@ static void wg_keepalive_task(void *arg) {
   }
 }
 
+static int wg_supervisor_restart(void) {
+  if (s_apply_mtx != nullptr) {
+    xSemaphoreTake(s_apply_mtx, portMAX_DELAY);
+  }
+  s_wg.end();
+  s_wg_active = false;
+  if (s_apply_mtx != nullptr) {
+    xSemaphoreGive(s_apply_mtx);
+  }
+  vTaskDelay(pdMS_TO_TICKS(100));
+  net_wireguard_apply();  /* takes mutex internally */
+  return 0;
+}
+
 static void wg_keepalive_start_once(void) {
   if (s_apply_mtx == nullptr) {
     s_apply_mtx = xSemaphoreCreateMutex();
@@ -234,6 +251,19 @@ static void wg_keepalive_start_once(void) {
       s_keepalive_task = nullptr;
       app_log_feature_write("ERROR", "WIREGUARD",
                             "Falha a criar task wg_keepalive.");
+    }
+    if (s_keepalive_task != nullptr) {
+      service_register_t reg = {};
+      reg.name = "wg";
+      reg.task = s_keepalive_task;
+      reg.restart_cb = wg_supervisor_restart;
+      /* health_cb omitted: s_ever_up resets to false every 90s re-apply, so
+       * returning it would fire health_fail every supervisor 10s tick post-apply.
+       * Rely on quiet_max_ms + task-state monitoring only. */
+      reg.health_cb = nullptr;
+      reg.quiet_max_ms = 100000U;  /* 100s — blind re-apply 90s + slack */
+      reg.heap_leak_threshold = 0U;
+      (void)service_supervisor_register(&reg);
     }
   }
 }
