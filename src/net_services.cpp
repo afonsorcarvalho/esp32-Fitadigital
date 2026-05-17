@@ -10,6 +10,7 @@
 
 #include "app_log.h"
 #include "app_settings.h"
+#include "service_supervisor.h"
 
 #include "net_time.h"
 
@@ -69,6 +70,21 @@ static constexpr uint32_t kFtpStopWifiDownHysteresisMs = 30000U;
 
 static void net_wifi_register_events(void);
 
+static int wifi_supervisor_restart(void) {
+  WiFi.disconnect();  /* does NOT erase saved credentials */
+  vTaskDelay(pdMS_TO_TICKS(100));
+  (void)esp_wifi_stop();
+  vTaskDelay(pdMS_TO_TICKS(200));
+  (void)esp_wifi_start();
+  vTaskDelay(pdMS_TO_TICKS(200));
+  net_wifi_begin_saved();
+  return 0;
+}
+
+static bool wifi_supervisor_health(void) {
+  return WiFi.status() == WL_CONNECTED;
+}
+
 void net_wifi_begin(const char *ssid, const char *pass) {
 
   /* Eventos antes de begin: a primeira ligacao STA pode ocorrer antes de net_services_start_background_task(). */
@@ -118,6 +134,23 @@ void net_wifi_begin_saved(void) {
 }
 
 
+
+static void ftp_stop(void);  /* forward decl — defined later in file */
+
+static int ftp_supervisor_restart(void) {
+  /* Tear down and re-bind FTP server. All FTP state touches SD, so marshal
+   * into sd_io context via sd_access_sync. */
+  sd_access_sync([] {
+    ftp_stop();  /* calls s_ftp.end() + sets s_ftp_running = false */
+    vTaskDelay(pdMS_TO_TICKS(200));
+    if (s_ftp_user_buf[0] != '\0') {
+      s_ftp.begin(s_ftp_user_buf, s_ftp_pass_buf, "FitaDigital SD FTP");
+      s_ftp_running = true;
+      app_log_feature_write("INFO", "SUPERVISOR", "FTP re-bound");
+    }
+  });
+  return 0;
+}
 
 static void ftp_try_start(void) {
   const uint32_t now_ms = millis();
@@ -183,6 +216,21 @@ static void ftp_try_start(void) {
                          WiFi.localIP().toString().c_str(), s_ftp_user_buf);
 
   Serial.printf("[FTP] ftp://%s/  utilizador: %s\n", WiFi.localIP().toString().c_str(), s_ftp_user_buf);
+
+  static bool s_ftp_registered = false;
+  if (!s_ftp_registered) {
+    s_ftp_registered = true;
+    service_register_t reg = {};
+    reg.name = "ftp";
+    /* ftp_try_start runs in sd_io task context; monitor that task's hwm as
+     * proxy for FTP/SD health (avoids s_net_task_handle null race at boot). */
+    reg.task = xTaskGetCurrentTaskHandle();
+    reg.restart_cb = ftp_supervisor_restart;
+    reg.health_cb = nullptr;
+    reg.quiet_max_ms = 0U;    /* idle valid */
+    reg.heap_leak_threshold = 0U;
+    (void)service_supervisor_register(&reg);
+  }
 }
 
 
@@ -272,6 +320,19 @@ void net_services_loop(void) {
   if (wifi_ok && !s_wifi_was_ok) {
     app_log_feature_writef("INFO", "WIFI", "Conectado. IP=%s RSSI=%d",
                            WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
+
+    static bool s_wifi_registered = false;
+    if (!s_wifi_registered) {
+      s_wifi_registered = true;
+      service_register_t reg = {};
+      reg.name = "wifi";
+      reg.task = xTaskGetCurrentTaskHandle();  /* net_svc task */
+      reg.restart_cb = wifi_supervisor_restart;
+      reg.health_cb = wifi_supervisor_health;
+      reg.quiet_max_ms = 30000U;
+      reg.heap_leak_threshold = 0U;
+      (void)service_supervisor_register(&reg);
+    }
 
     net_time_on_wifi_connected();
 
