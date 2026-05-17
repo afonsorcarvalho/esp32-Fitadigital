@@ -1208,3 +1208,30 @@ void app_settings_heap_guard_count_increment(void) {
   const uint32_t v = s_prefs.getUInt("hgc", 0U);
   s_prefs.putUInt("hgc", v + 1U);
 }
+
+uint32_t app_settings_supervisor_escalations_get(void) {
+  return s_prefs.getUInt("sve", 0U);
+}
+
+void app_settings_supervisor_escalations_increment(void) {
+  const uint32_t v = s_prefs.getUInt("sve", 0U);
+  s_prefs.putUInt("sve", v + 1U);
+}
+
+static void supervisor_restart_key(const char *name, char *out, size_t out_sz) {
+  /* "swrr_" (5) + 4 chars name truncated + NUL = 10 chars (limite NVS 15 chars). */
+  snprintf(out, out_sz, "swrr_%.4s", name ? name : "?");
+}
+
+uint32_t app_settings_supervisor_restart_get(const char *name) {
+  char key[16];
+  supervisor_restart_key(name, key, sizeof(key));
+  return s_prefs.getUInt(key, 0U);
+}
+
+void app_settings_supervisor_restart_increment(const char *name) {
+  char key[16];
+  supervisor_restart_key(name, key, sizeof(key));
+  const uint32_t v = s_prefs.getUInt(key, 0U);
+  s_prefs.putUInt(key, v + 1U);
+}

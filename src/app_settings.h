@@ -160,6 +160,19 @@ void     app_settings_boot_count_increment(void);
 uint32_t app_settings_heap_guard_count_get(void);
 void     app_settings_heap_guard_count_increment(void);
 
+/* v1.87 service supervisor counters (NVS-persistent). */
+uint32_t app_settings_supervisor_escalations_get(void);
+void     app_settings_supervisor_escalations_increment(void);
+
+/* Per-service restart counter. `name` é a string registada com
+ * service_supervisor_register; usa-se truncada para chave NVS de 8 chars:
+ *   wifi  -> "swrr_wifi"
+ *   wg    -> "swrr_wg"
+ *   ftp   -> "swrr_ftp"
+ *   rs485 -> "swrr_rs48"  (truncated por limite 15 chars Preferences). */
+uint32_t app_settings_supervisor_restart_get(const char *name);
+void     app_settings_supervisor_restart_increment(const char *name);
+
 /* ------------------------------------------------------------------ */
 
 /**
