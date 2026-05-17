@@ -4,6 +4,7 @@
  */
 #include "cycles_rs485.h"
 #include "rs485_buffer.h"
+#include "service_supervisor.h"
 #include "ui/ui_screensaver.h"
 
 /** Sinaliza a UI para reabrir o .txt do dia (definido em file_browser.cpp). */
@@ -348,6 +349,31 @@ void cycles_rs485_init(void) {
     }
   }
 #endif
+
+  if (s_reader_task != nullptr) {
+    /* Register only once: supervisor holds first task handle; if deinit+init
+     * occurs (baud change), old handle becomes eDeleted and supervisor will
+     * trigger restart_cb which re-creates the task. Acceptable for v1.87. */
+    static bool s_rs485_registered = false;
+    if (!s_rs485_registered) {
+      s_rs485_registered = true;
+      service_register_t reg = {};
+      reg.name = "rs485";
+      reg.task = s_reader_task;
+      reg.restart_cb = cycles_rs485_restart;
+      reg.health_cb = nullptr;
+      reg.quiet_max_ms = 0U;          /* idle hours valid (autoclave parado) */
+      reg.heap_leak_threshold = 0U;   /* use default */
+      (void)service_supervisor_register(&reg);
+    }
+  }
+}
+
+int cycles_rs485_restart(void) {
+  cycles_rs485_deinit();
+  vTaskDelay(pdMS_TO_TICKS(100));
+  cycles_rs485_init();
+  return (s_reader_task != nullptr) ? 0 : -1;
 }
 
 uint32_t cycles_rs485_today_line_count(void) {

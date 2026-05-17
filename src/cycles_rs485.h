@@ -57,6 +57,9 @@ void cycles_rs485_set_line_to_ui_follow(bool enabled);
 /** Inicia Serial1 e tarefa de leitura (so chamar com SD montado e sd_io a correr). */
 void cycles_rs485_init(void);
 
+/** v1.87: restart callback for service_supervisor. Returns 0 on success. */
+int cycles_rs485_restart(void);
+
 /**
  * Encerra Serial1 e remove as tarefas RS485 (para reaplicar baud/trama apos alterar NVS).
  * Seguro chamar mesmo se `cycles_rs485_init` ainda nao tiver corrido com sucesso.
