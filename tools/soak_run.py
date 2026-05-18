@@ -6,6 +6,7 @@ Uso:
   python soak_run.py --label stage1 --duration 1200
   python soak_run.py --label stage3 --duration 1200 --ftp-probe --probe-interval 60
   python soak_run.py --label stage4 --duration 1200 --health-probe --probe-interval 30
+  python soak_run.py --label stress --duration 28800 --health-probe --ftp-probe --warmup 30
 
 Output:
   logs/soak-<label>.log         (raw serial capture)
@@ -14,8 +15,13 @@ Output:
 
 Exit code:
   0 = PASS (zero crash, zero reboot, heap drift < 4KB)
-  1 = FAIL (crash/reboot/heap drift critical)
+  1 = FAIL (crash/reboot/heap drift critical, OR probe fail count > 0)
   2 = config error
+
+Nota --warmup (default 30s): aguarda antes do 1o probe HTTP/FTP para evitar
+false-fail no startup race (device ainda em boot WiFi+HTTP, retorna
+WinError 10061 connection refused). Capture serial nao espera — comeca
+imediatamente para captar boot completo.
 """
 import argparse
 import datetime as dt
@@ -119,7 +125,16 @@ def probe_wg_status(ip: str, user: str, pwd: str, results: list):
         results.append((ts, False, str(e)[:80]))
 
 
-def probe_loop(probe_fn, kwargs: dict, interval_s: int, stop_evt: threading.Event, results: list):
+def probe_loop(probe_fn, kwargs: dict, interval_s: int, stop_evt: threading.Event,
+               results: list, warmup_s: int = 0):
+    """warmup_s: aguardar antes do 1o probe (skip startup race onde device ainda
+    nao terminou WiFi+HTTP boot — typical 10-15s no FitaDigital v2.x).
+    Verdict FAIL falso por WinError 10061 connection refused = sintoma classico."""
+    if warmup_s > 0:
+        for _ in range(warmup_s * 10):
+            if stop_evt.is_set():
+                return
+            time.sleep(0.1)
     while not stop_evt.is_set():
         probe_fn(**kwargs, results=results)
         # Wait interval but allow early exit
@@ -206,6 +221,8 @@ def main():
     ap.add_argument("--wg-probe", action="store_true", help="v1.91+: probe /api/wg/status each --wg-interval")
     ap.add_argument("--wg-interval", type=int, default=30, help="WG status probe interval (s)")
     ap.add_argument("--probe-interval", type=int, default=60)
+    ap.add_argument("--warmup", type=int, default=30,
+                    help="segundos a aguardar antes do 1o probe (skip startup race WinError 10061)")
     args = ap.parse_args()
 
     os.makedirs("logs", exist_ok=True)
@@ -233,7 +250,7 @@ def main():
         t = threading.Thread(
             target=probe_loop,
             args=(probe_ftp, {"ip": args.ip, "user": args.ftp_user, "pwd": args.ftp_pwd},
-                  args.probe_interval, stop_evt, ftp_results),
+                  args.probe_interval, stop_evt, ftp_results, args.warmup),
             daemon=True,
         )
         t.start()
@@ -243,7 +260,7 @@ def main():
         t = threading.Thread(
             target=probe_loop,
             args=(probe_health, {"ip": args.ip, "user": args.user, "pwd": args.pwd},
-                  args.probe_interval, stop_evt, health_results),
+                  args.probe_interval, stop_evt, health_results, args.warmup),
             daemon=True,
         )
         t.start()
@@ -253,7 +270,7 @@ def main():
         t = threading.Thread(
             target=probe_loop,
             args=(probe_wg_status, {"ip": args.ip, "user": args.user, "pwd": args.pwd},
-                  args.wg_interval, stop_evt, wg_results),
+                  args.wg_interval, stop_evt, wg_results, args.warmup),
             daemon=True,
         )
         t.start()
