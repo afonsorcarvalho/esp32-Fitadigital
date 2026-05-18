@@ -17,6 +17,10 @@
 #include <sys/time.h>
 #include <time.h>
 
+extern "C" {
+#include "esp_sntp.h"
+}
+
 static uint32_t s_last_resync_ms = 0;
 static bool s_have_resync_anchor = false;
 static bool s_sd_time_fix_done = false;
@@ -373,13 +377,26 @@ void net_time_loop(void) {
   }
   s_last_resync_ms = now;
   /**
-   * SNTP continua a correr com os mesmos servidores e offset configurados em
-   * net_time_on_wifi_connected(). Reiniciar o SNTP (configTime → sntp_stop + sntp_init)
-   * aloca/libera buffers de SRAM interna — combinado com o log_write que se segue,
-   * pode ultrapassar o heap interno disponivel e crashar em lock_init_generic (abort).
-   * Apenas atualizar o RTC e' suficiente: a hora do sistema ja esta a ser ajustada pelo SNTP.
-   */
-  rtc_push_system_time_if_valid("ntp-resync-1h");
+   * v2.0.1: forcar SNTP a re-processar resposta usando sntp_set_sync_status(RESET)
+   * em vez de sntp_stop+sntp_init. O ciclo de tear-down+init aloca/libera SRAM
+   * (heap risk em lock_init_generic, ver historico). RESET so' invalida flag
+   * COMPLETED -> daemon corre fresh fetch na proxima janela (typically 15s).
+   *
+   * Aguardar curto (5s) por COMPLETED antes de gravar RTC. Se SNTP nao responder,
+   * NAO grava RTC (impede propagar stale) e loga WARN honesto. */
+  sntp_set_sync_status(SNTP_SYNC_STATUS_RESET);
+  constexpr uint32_t kResyncWaitMs = 5000U;
+  const uint32_t wait_deadline = millis() + kResyncWaitMs;
+  while ((int32_t)(millis() - wait_deadline) < 0) {
+    if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) break;
+    vTaskDelay(pdMS_TO_TICKS(200));
+  }
+  if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
+    rtc_push_system_time_if_valid("ntp-resync-1h-real");
+  } else {
+    app_log_feature_write("WARN", "NTP",
+                          "Resync 1h sem resposta SNTP — RTC mantido (nao propaga stale).");
+  }
   /**
    * Telemetria horaria: heap livre + timeouts I2C0 acumulados. Permite detetar
    * no fdigi.log fugas de heap (tendencia descendente) ou contencao grave no
@@ -397,6 +414,15 @@ void net_time_loop(void) {
                          (unsigned long)delta);
 }
 
+/* v2.0.1 fix NTP false-positive:
+ * getLocalTime() devolve true assim que tm_year > 116 (>=2016). Bootstrap RTC
+ * carrega system clock para data plausivel pre-NTP -> getLocalTime engana
+ * ("Sincronizado") sem 1 pacote SNTP, rtc_push_system_time_if_valid grava
+ * stale de volta no RTC, reforco permanente. Validado em producao: fdigi.log
+ * gravava timestamps Abril em sessao Maio.
+ *
+ * Fix: usar sntp_get_sync_status() == COMPLETED como prova que daemon recebeu
+ * resposta servidor real. RTC stale plausivel nao engana este check. */
 bool net_time_sync_now_blocking(char *msg, size_t msg_len) {
   if (msg != nullptr && msg_len > 0) {
     msg[0] = '\0';
@@ -407,19 +433,27 @@ bool net_time_sync_now_blocking(char *msg, size_t msg_len) {
     }
     return false;
   }
-  net_time_apply_settings();
-  struct tm ti;
-  if (!getLocalTime(&ti, 3000)) {
-    if (msg && msg_len) {
-      snprintf(msg, msg_len, "NTP sem resposta.");
+  /* Forca status RESET para que daemon SNTP processe nova resposta como
+   * "COMPLETED" fresh (e nao reuso de status antigo). */
+  sntp_set_sync_status(SNTP_SYNC_STATUS_RESET);
+  net_time_apply_settings();  /* configTime -> sntp_init se necessario */
+
+  constexpr uint32_t kTimeoutMs = 10000U;
+  const uint32_t deadline = millis() + kTimeoutMs;
+  while ((int32_t)(millis() - deadline) < 0) {
+    if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
+      if (msg && msg_len) {
+        snprintf(msg, msg_len, "Sincronizado (SNTP COMPLETED).");
+      }
+      rtc_push_system_time_if_valid("ntp-sync-now-real");
+      return true;
     }
-    return false;
+    vTaskDelay(pdMS_TO_TICKS(200));
   }
   if (msg && msg_len) {
-    snprintf(msg, msg_len, "Sincronizado.");
+    snprintf(msg, msg_len, "NTP timeout %us (sem pacote real).", (unsigned)(kTimeoutMs / 1000U));
   }
-  rtc_push_system_time_if_valid("ntp-sync-now");
-  return true;
+  return false;
 }
 
 static bool is_leap(int y) {
