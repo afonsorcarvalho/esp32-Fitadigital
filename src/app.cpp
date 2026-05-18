@@ -35,6 +35,7 @@
 #include "net_services.h"
 #include "sd_access.h"
 #include "cycles_rs485.h"
+#include "cycle_detector.h"
 #include "rs485_buffer.h"
 #include "net_time.h"
 #include "ui_feedback.h"
@@ -237,6 +238,11 @@ void setup() {
 
   if (sd_ok) {
     cycles_rs485_init();
+    /* v2.1.0: cycle detector state machine. Patterns default:
+     *   start "OPERACAO" (ajustar via futuro NVS/UI conforme equipamento)
+     *   end   "FIM CICLO" (substring; "FIM", "RESULTADO" tambem matcham parcial)
+     *   idle_timeout 900s = 15min (auto-fecha ciclo orfao). */
+    cycle_detector_init("OPERACAO", "FIM CICLO", 900U);
   }
 
   bool wifi_connected = false;

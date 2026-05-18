@@ -33,6 +33,7 @@ extern "C" {
 #include "app_log.h"
 #include "app_settings.h"
 #include "net_mqtt.h"
+#include "cycle_detector.h"
 #include "net_services.h"
 #include "net_wireguard.h"
 #include "ota_manager.h"
@@ -1172,6 +1173,45 @@ static void handle_system_services_get(AsyncWebServerRequest *request)
     request->send(200, "application/json", buf);
 }
 
+/* --- /api/cycles/status (GET) — v2.1.0 cycle detector state --- */
+
+static void handle_cycles_status_get(AsyncWebServerRequest *request)
+{
+    char buf[768];
+    size_t n = cycle_detector_status_json(buf, sizeof(buf));
+    if (n == 0U) {
+        request->send(500, "application/json", "{\"error\":\"buffer\"}");
+        return;
+    }
+    request->send(200, "application/json", buf);
+}
+
+/* --- /api/cycles/list (GET ?year=AAAA&month=MM) — v2.1.0 NDJSON readback --- */
+
+static void handle_cycles_list_get(AsyncWebServerRequest *request)
+{
+    int year = 0, month = 0;
+    if (request->hasParam("year")) year = request->getParam("year")->value().toInt();
+    if (request->hasParam("month")) month = request->getParam("month")->value().toInt();
+    if (year < 2020 || year > 2099 || month < 1 || month > 12) {
+        request->send(400, "application/json", "{\"error\":\"year+month required (2020-2099, 1-12)\"}");
+        return;
+    }
+    char path[48];
+    snprintf(path, sizeof path, "/CICLOS/%04d/%02d/cycles.ndjson", year, month);
+    if (!sd_access_is_mounted()) {
+        request->send(503, "application/json", "{\"error\":\"sd not mounted\"}");
+        return;
+    }
+    /* Stream raw NDJSON as text/plain (cliente faz parse linha-a-linha).
+     * Mais simples + leve que serializar JSON array (rewrite all em RAM). */
+    if (!SD.exists(path)) {
+        request->send(200, "application/x-ndjson", "");
+        return;
+    }
+    request->send(SD, path, "application/x-ndjson");
+}
+
 /* --- /api/wg/status (GET) — v1.91 WG silent-death telemetry --- */
 
 static void handle_wg_status_get(AsyncWebServerRequest *request)
@@ -1609,6 +1649,18 @@ void web_portal_init(void)
     s_srv->on("/api/logs/tail", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!web_auth_check(request)) return;
         handle_logs_tail(request);
+    });
+
+    /* --- /api/cycles/status (auth) — v2.1.0 cycle detector state --- */
+    s_srv->on("/api/cycles/status", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!web_auth_check(request)) return;
+        handle_cycles_status_get(request);
+    });
+
+    /* --- /api/cycles/list?year=YYYY&month=MM (auth) — NDJSON readback --- */
+    s_srv->on("/api/cycles/list", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!web_auth_check(request)) return;
+        handle_cycles_list_get(request);
     });
 
     /* --- /api/wg/status (auth) — v1.91 silent-death telemetry --- */

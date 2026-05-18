@@ -3,6 +3,7 @@
  * @brief Implementacao de cycles_rs485.h — ver comentarios no header.
  */
 #include "cycles_rs485.h"
+#include "cycle_detector.h"
 #include "rs485_buffer.h"
 #include "service_supervisor.h"
 #include "ui/ui_screensaver.h"
@@ -248,6 +249,9 @@ static void reader_commit_line(char *line, size_t *n_ptr) {
 #endif
     const size_t len = n;
     sd_access_sync([line, len]() { append_line_sync(line, len); });
+    /* v2.1.0: alimenta state machine de ciclos. Em paralelo com SD commit,
+     * sem bloquear. emit_cycle_close (se transicao) faz proprio sd_access_sync. */
+    cycle_detector_process_line(line, len, time(nullptr));
   }
   *n_ptr = 0;
 }
@@ -255,8 +259,15 @@ static void reader_commit_line(char *line, size_t *n_ptr) {
 static void reader_task(void * /*arg*/) {
   char line[kLineCap + 1U];
   size_t n = 0;
+  uint32_t last_cycle_tick_ms = 0;  /* v2.1.0 idle timeout check periodico */
 
   for (;;) {
+    /* v2.1.0: tick a cada 5s p/ idle timeout do cycle_detector. */
+    const uint32_t now_ms = millis();
+    if (now_ms - last_cycle_tick_ms >= 5000U) {
+      cycle_detector_tick(time(nullptr));
+      last_cycle_tick_ms = now_ms;
+    }
     while (Serial1.available() > 0) {
       const int c = Serial1.read();
       if (c < 0) {
