@@ -19,8 +19,15 @@ import time
 import serial
 
 
-def random_line(length: int) -> str:
+def random_line(length: int, keyword: str = "") -> str:
+    """Random alphanumeric line; if keyword set, inject keyword at start (truncate filler)."""
     chars = string.ascii_letters + string.digits + " "
+    if keyword:
+        prefix = keyword + " "
+        if len(prefix) >= length:
+            return prefix[:length]
+        filler_len = length - len(prefix)
+        return prefix + "".join(random.choice(chars) for _ in range(filler_len))
     return "".join(random.choice(chars) for _ in range(length))
 
 
@@ -35,6 +42,8 @@ def main() -> int:
     ap.add_argument("--length", type=int, default=35,
                     help="caracteres por linha (sem terminador)")
     ap.add_argument("--max-hours", type=float, default=48.0)
+    ap.add_argument("--keyword", default="",
+                    help="palavra-chave injectada no inicio de cada linha (ex: OPERACAO)")
     ap.add_argument("--log", default=None,
                     help="ficheiro para registar cada linha enviada (recomendado)")
     args = ap.parse_args()
@@ -74,7 +83,7 @@ def main() -> int:
             burst += 1
             ts = datetime.datetime.now().isoformat(timespec="seconds")
             for i in range(args.lines):
-                line = random_line(args.length)
+                line = random_line(args.length, args.keyword)
                 payload = (line + "\n").encode("ascii")
                 sp.write(payload)
                 sp.flush()
