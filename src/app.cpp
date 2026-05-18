@@ -31,6 +31,7 @@
 #include "SD.h"
 #include "app_log.h"
 #include "net_monitor.h"
+#include "net_wg_probe.h"
 #include "net_services.h"
 #include "sd_access.h"
 #include "cycles_rs485.h"
@@ -286,6 +287,7 @@ void setup() {
                 "portal HTTP (config, logs, ficheiros SD) na porta 80");
 
   net_monitor_init();
+  net_wg_probe_init();
 
   service_supervisor_init();
   boot_log_plain("INFO", "service_supervisor inicializado");

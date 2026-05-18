@@ -14,8 +14,12 @@
  * service_supervisor, heap_monitor, LVGL UI, RS485 capture, WiFi STA.
  */
 
+/* v1.95: WG default OFF. Lib smartalock/wireguard-lwip upstream bug + outbound
+ * routing fragil + ESP arquitectura 3.X (Arduino-ESP32) instavel. Retomar em
+ * versao futura noutro contexto. Ver TODO.md. Branch v2 (worktree) parte deste
+ * estado limpo. */
 #ifndef FITA_ENABLE_WG
-#define FITA_ENABLE_WG 1
+#define FITA_ENABLE_WG 0
 #endif
 #ifndef FITA_ENABLE_FTP
 #define FITA_ENABLE_FTP 1

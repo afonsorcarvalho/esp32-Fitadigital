@@ -12,6 +12,20 @@
  * Note: mbedTLS MPI is big-endian internally → bytes are reversed on export.
  */
 #include "wg_provision.h"
+#include "build_features.h"
+
+#if !FITA_ENABLE_WG
+/* v1.95 Hibrido: WG disabled -> enrollment disabled. Stubs. */
+#include <string.h>
+void wg_provision_start(const char * /*server_url*/) {}
+void wg_provision_cancel(void) {}
+void wg_provision_get_status(WgProvStatus *out) {
+  if (out == nullptr) return;
+  memset(out, 0, sizeof(*out));
+  out->state = WgProvState::IDLE;
+}
+#else  /* FITA_ENABLE_WG */
+
 #include "app_log.h"
 #include "app_settings.h"
 #include "net_wireguard.h"
@@ -445,3 +459,5 @@ void wg_provision_get_status(WgProvStatus *out) {
     *out = s_status;
     xSemaphoreGive(s_mutex);
 }
+
+#endif  /* FITA_ENABLE_WG */

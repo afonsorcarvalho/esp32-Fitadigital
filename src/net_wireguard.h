@@ -4,6 +4,8 @@
  */
 #pragma once
 
+#include <cstddef>
+
 void net_wireguard_init(void);
 
 /**
@@ -19,3 +21,13 @@ void net_wireguard_pause_watchdog(void);
 
 /** Retoma watchdog (recria probe session se WG enabled + Wi-Fi up). */
 void net_wireguard_resume_watchdog(void);
+
+/**
+ * Snapshot estado WG p/ telemetria HTTP (/api/wg/status).
+ * Escreve JSON em `out` (max `out_sz` bytes). Devolve bytes escritos
+ * (sem terminator). 0 = erro buffer.
+ *
+ * Campos: active, peer_up, ever_up, ever_rx, last_up_ms_ago, last_rx_ms_ago,
+ * last_apply_ms_ago, reapply_count, wifi_soft_count, wifi_hard_count, uptime_ms.
+ */
+size_t net_wireguard_status_json(char *out, size_t out_sz);

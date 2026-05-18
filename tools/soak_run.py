@@ -99,6 +99,26 @@ def probe_health(ip: str, user: str, pwd: str, results: list):
         results.append((ts, False, str(e)[:80]))
 
 
+def probe_wg_status(ip: str, user: str, pwd: str, results: list):
+    """HTTP /api/wg/status probe with Digest auth (v1.91+ silent-death telemetry)."""
+    ts = time.monotonic()
+    url = f"http://{ip}/api/wg/status"
+    try:
+        mgr = HTTPPasswordMgrWithDefaultRealm()
+        mgr.add_password(None, url, user, pwd)
+        opener = build_opener(HTTPDigestAuthHandler(mgr))
+        req = urllib.request.Request(url)
+        r = opener.open(req, timeout=5)
+        body = r.read().decode("utf-8")
+        try:
+            parsed = json.loads(body)
+        except Exception:
+            parsed = None
+        results.append((ts, True, parsed if parsed is not None else body))
+    except Exception as e:
+        results.append((ts, False, str(e)[:80]))
+
+
 def probe_loop(probe_fn, kwargs: dict, interval_s: int, stop_evt: threading.Event, results: list):
     while not stop_evt.is_set():
         probe_fn(**kwargs, results=results)
@@ -183,6 +203,8 @@ def main():
     ap.add_argument("--ftp-pwd", default="esp32")
     ap.add_argument("--ftp-probe", action="store_true", help="Stage 3: probe FTP each N seconds")
     ap.add_argument("--health-probe", action="store_true", help="Stage 4: probe /api/health each N seconds")
+    ap.add_argument("--wg-probe", action="store_true", help="v1.91+: probe /api/wg/status each --wg-interval")
+    ap.add_argument("--wg-interval", type=int, default=30, help="WG status probe interval (s)")
     ap.add_argument("--probe-interval", type=int, default=60)
     args = ap.parse_args()
 
@@ -196,6 +218,7 @@ def main():
     stop_evt = threading.Event()
     ftp_results = []
     health_results = []
+    wg_results = []
 
     threads = []
     t_serial = threading.Thread(
@@ -225,6 +248,16 @@ def main():
         )
         t.start()
         threads.append(("health_probe", t))
+
+    if args.wg_probe:
+        t = threading.Thread(
+            target=probe_loop,
+            args=(probe_wg_status, {"ip": args.ip, "user": args.user, "pwd": args.pwd},
+                  args.wg_interval, stop_evt, wg_results),
+            daemon=True,
+        )
+        t.start()
+        threads.append(("wg_probe", t))
 
     t0 = time.monotonic()
     try:
@@ -258,6 +291,97 @@ def main():
             "ok": h_ok,
             "fail": len(health_results) - h_ok,
             "results": [{"t": round(t, 1), "ok": ok, "msg": m[:80]} for t, ok, m in health_results],
+        }
+    if args.wg_probe:
+        wg_ok = sum(1 for _, ok, _ in wg_results if ok)
+        # Silent-death analysis: peer_up transitions, last_up_ms_ago growth, RX activity
+        peer_up_samples = []
+        peer_down_samples = []
+        max_last_up_ago = 0
+        ever_rx_count = 0
+        reapply_first = None
+        reapply_last = None
+        wifi_hard_max = 0
+        wifi_soft_max = 0
+        compact = []
+        for ts, ok, payload in wg_results:
+            if not ok or not isinstance(payload, dict):
+                compact.append({"t": round(ts, 1), "ok": False, "msg": str(payload)[:80]})
+                continue
+            up = bool(payload.get("peer_up"))
+            last_up_ago = int(payload.get("last_up_ms_ago", 0))
+            last_apply_ago = int(payload.get("last_apply_ms_ago", 0))
+            reapply = int(payload.get("reapply_count", 0))
+            ever_rx = bool(payload.get("ever_rx"))
+            wifi_soft = int(payload.get("wifi_soft_count", 0))
+            wifi_hard = int(payload.get("wifi_hard_count", 0))
+            if up:
+                peer_up_samples.append(ts)
+            else:
+                peer_down_samples.append(ts)
+            if last_up_ago > max_last_up_ago:
+                max_last_up_ago = last_up_ago
+            if ever_rx:
+                ever_rx_count += 1
+            if reapply_first is None:
+                reapply_first = reapply
+            reapply_last = reapply
+            if wifi_hard > wifi_hard_max:
+                wifi_hard_max = wifi_hard
+            if wifi_soft > wifi_soft_max:
+                wifi_soft_max = wifi_soft
+            compact.append({
+                "t": round(ts, 1),
+                "ok": True,
+                "peer_up": up,
+                "last_up_ms_ago": last_up_ago,
+                "last_apply_ms_ago": last_apply_ago,
+                "reapply": reapply,
+                "ever_rx": ever_rx,
+            })
+        # Silent-death detection: peer_up=false for >= 3 consecutive samples
+        # AND last_up_ms_ago > 180000 (REJECT_AFTER_TIME)
+        silent_death_streaks = []
+        cur_streak = 0
+        cur_start = None
+        for s in compact:
+            if s.get("ok") and not s.get("peer_up"):
+                if cur_streak == 0:
+                    cur_start = s.get("t")
+                cur_streak += 1
+                if cur_streak >= 3:
+                    pass
+            else:
+                if cur_streak >= 3:
+                    silent_death_streaks.append({
+                        "start_t": cur_start,
+                        "end_t": s.get("t"),
+                        "samples_down": cur_streak,
+                    })
+                cur_streak = 0
+                cur_start = None
+        if cur_streak >= 3:
+            silent_death_streaks.append({
+                "start_t": cur_start,
+                "end_t": compact[-1].get("t") if compact else None,
+                "samples_down": cur_streak,
+                "still_down_at_end": True,
+            })
+        result["wg_probe"] = {
+            "total": len(wg_results),
+            "ok": wg_ok,
+            "fail": len(wg_results) - wg_ok,
+            "peer_up_samples": len(peer_up_samples),
+            "peer_down_samples": len(peer_down_samples),
+            "max_last_up_ms_ago": max_last_up_ago,
+            "ever_rx_samples": ever_rx_count,
+            "reapply_first": reapply_first,
+            "reapply_last": reapply_last,
+            "reapply_delta": (reapply_last - reapply_first) if (reapply_first is not None and reapply_last is not None) else 0,
+            "wifi_soft_count_max": wifi_soft_max,
+            "wifi_hard_count_max": wifi_hard_max,
+            "silent_death_streaks": silent_death_streaks,
+            "results": compact,
         }
 
     # PASS/FAIL verdict

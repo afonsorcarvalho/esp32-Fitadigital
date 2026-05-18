@@ -34,6 +34,7 @@ extern "C" {
 #include "app_settings.h"
 #include "net_mqtt.h"
 #include "net_services.h"
+#include "net_wireguard.h"
 #include "ota_manager.h"
 #include "screenshot.h"
 #include "sd_access.h"
@@ -1171,6 +1172,19 @@ static void handle_system_services_get(AsyncWebServerRequest *request)
     request->send(200, "application/json", buf);
 }
 
+/* --- /api/wg/status (GET) — v1.91 WG silent-death telemetry --- */
+
+static void handle_wg_status_get(AsyncWebServerRequest *request)
+{
+    char buf[512];
+    size_t n = net_wireguard_status_json(buf, sizeof(buf));
+    if (n == 0U) {
+        request->send(500, "application/json", "{\"error\":\"buffer\"}");
+        return;
+    }
+    request->send(200, "application/json", buf);
+}
+
 /* --- /api/fs/delete (POST ?path=/abs/path) --- */
 
 static void handle_fs_delete(AsyncWebServerRequest *request)
@@ -1595,6 +1609,12 @@ void web_portal_init(void)
     s_srv->on("/api/logs/tail", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!web_auth_check(request)) return;
         handle_logs_tail(request);
+    });
+
+    /* --- /api/wg/status (auth) — v1.91 silent-death telemetry --- */
+    s_srv->on("/api/wg/status", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!web_auth_check(request)) return;
+        handle_wg_status_get(request);
     });
 
     /* --- /api/wg/ping --- DESATIVADO em v1.72

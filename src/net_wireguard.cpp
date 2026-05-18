@@ -10,6 +10,25 @@
  * bilateral mesmo durante stale state.
  */
 #include "net_wireguard.h"
+#include "build_features.h"
+
+#if !FITA_ENABLE_WG
+/* v1.95 Hibrido: WireGuard desactivado (FITA_ENABLE_WG=0).
+ * Lib smartalock/wireguard-lwip upstream bug + arquitetura Arduino-ESP32 3.X
+ * instavel. Codigo preservado em disco para retomar futuramente. Stubs
+ * mantem ligacao com callers (net_services, ui_app, web_portal). */
+#include <stdio.h>
+void net_wireguard_init(void) {}
+void net_wireguard_apply(void) {}
+void net_wireguard_pause_watchdog(void) {}
+void net_wireguard_resume_watchdog(void) {}
+size_t net_wireguard_status_json(char *out, size_t out_sz) {
+  if (out == nullptr || out_sz < 32U) return 0;
+  const int n = snprintf(out, out_sz, "{\"active\":false,\"disabled\":true}");
+  return (n > 0 && (size_t)n < out_sz) ? (size_t)n : 0U;
+}
+#else  /* FITA_ENABLE_WG */
+
 #include "app_log.h"
 #include "app_settings.h"
 #include "net_services.h"
@@ -277,6 +296,30 @@ void net_wireguard_init(void) {
 void net_wireguard_pause_watchdog(void) { /* no-op */ }
 void net_wireguard_resume_watchdog(void) { /* no-op */ }
 
+size_t net_wireguard_status_json(char *out, size_t out_sz) {
+  if (out == nullptr || out_sz < 64U) return 0;
+  const uint32_t now = millis();
+  const bool peer_up = s_wg_active && s_wg.is_peer_up();
+  const uint32_t last_up_ago = (s_last_up_ms == 0U) ? 0U : (now - s_last_up_ms);
+  const uint32_t last_rx_ago = (s_last_rx_ms == 0U) ? 0U : (now - s_last_rx_ms);
+  const uint32_t last_apply_ago = (s_last_apply_ms == 0U) ? 0U : (now - s_last_apply_ms);
+  const int n = snprintf(out, out_sz,
+      "{\"active\":%s,\"peer_up\":%s,\"ever_up\":%s,\"ever_rx\":%s,"
+      "\"last_up_ms_ago\":%u,\"last_rx_ms_ago\":%u,\"last_apply_ms_ago\":%u,"
+      "\"reapply_count\":%u,\"wifi_soft_count\":%u,\"wifi_hard_count\":%u,"
+      "\"uptime_ms\":%u}",
+      s_wg_active ? "true" : "false",
+      peer_up ? "true" : "false",
+      s_ever_up ? "true" : "false",
+      s_ever_rx ? "true" : "false",
+      (unsigned)last_up_ago, (unsigned)last_rx_ago, (unsigned)last_apply_ago,
+      (unsigned)s_reapply_count,
+      (unsigned)s_wifi_soft_count, (unsigned)s_wifi_hard_count,
+      (unsigned)now);
+  if (n <= 0 || (size_t)n >= out_sz) return 0;
+  return (size_t)n;
+}
+
 void net_wireguard_apply(void) {
   if (s_apply_mtx != nullptr) {
     xSemaphoreTake(s_apply_mtx, portMAX_DELAY);
@@ -363,16 +406,25 @@ static void wg_apply_locked(void) {
 
   const uint16_t port = app_settings_wg_port();
   /**
-   * allowed_ip + allowed_mask define que subnet o lwip route table envia pelo peer
-   * WG. Derivamos /24 a partir do local IP (ex: 10.0.0.2 → 10.0.0.0/24) para
-   * cobrir o intervalo standard de servidores WG. Antes era 0.0.0.0/32 (nenhuma
-   * rota) — bloqueava qualquer ping/HTTP para a rede WG interna.
+   * v1.92 FIX outbound TX morto: wg_mask 255.255.255.255 → 255.255.255.0.
+   * Mask /32 limitava netif WG ao proprio host (10.0.0.2 only). lwip routing
+   * para destinos 10.0.0.x (ex: 10.0.0.3 PC, 10.0.0.1 server) nao match wg
+   * netif subnet → falha p/ WiFi netif default → drop. Inbound funcionava
+   * porque wireguardif decapsula antes da decisao de routing (recebe UDP
+   * raw, despoja header WG, faz ip_input direto). Outbound depende de lwip
+   * escolher netif certa: precisa subnet WG cobrir destino.
+   *
+   * /24 via netif (wg_mask 255.255.255.0) + /24 via wireguardif filter
+   * (allowed_mask 255.255.255.0) = stack consistente. Sessao 2026-05-17.
+   *
+   * allowed_ip + allowed_mask define que peer WG aceita/envia (filter interno
+   * wireguardif). Derivamos /24 a partir do local IP (ex: 10.0.0.2 → 10.0.0.0/24).
    *
    * localPort=0 (ephemeral) — lib bind a porta aleatoria. localPort=51820 fixo
    * foi tentado (v1.64) sem beneficio observavel; voltou a 0 (default lib) para
    * reduzir risco de conflito futuro.
    */
-  const IPAddress wg_mask(255, 255, 255, 255);
+  const IPAddress wg_mask(255, 255, 255, 0);
   const IPAddress wg_gw(0, 0, 0, 0);
   const IPAddress allowed_ip(local[0], local[1], local[2], 0);
   const IPAddress allowed_mask(255, 255, 255, 0);
@@ -394,3 +446,5 @@ static void wg_apply_locked(void) {
                          (unsigned)allowed_ip[2]);
   panic_breadcrumb_clear();
 }
+
+#endif  /* FITA_ENABLE_WG */
