@@ -970,6 +970,22 @@ static void handle_rs485_body(AsyncWebServerRequest *request, uint8_t *data, siz
     request->send(200, "application/json", "{\"ok\":true}");
 }
 
+/* --- /api/cycles/config (v2.2.0) --- */
+
+static void handle_cycle_settings_get(AsyncWebServerRequest *request)
+{
+    JsonDocument doc;
+    const String s = app_settings_cycle_start_pattern();
+    const String e = app_settings_cycle_end_pattern();
+    doc["startPattern"] = s;
+    doc["endPattern"] = e;
+    doc["idleTimeoutS"] = app_settings_cycle_idle_timeout_s();
+    doc["enabled"] = (s.length() > 0);
+    String out;
+    serializeJson(doc, out);
+    request->send(200, "application/json", out);
+}
+
 /* --- /api/settings/mqtt --- */
 
 static void handle_mqtt_get(AsyncWebServerRequest *request)
@@ -1656,6 +1672,12 @@ void web_portal_init(void)
             if (!web_auth_check(request)) return;
             handle_rs485_body(request, data, len, index, total);
         });
+
+    /* --- /api/cycles/config (v2.2.0) --- */
+    s_srv->on("/api/cycles/config", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!web_auth_check(request)) return;
+        handle_cycle_settings_get(request);
+    });
 
     /* --- /api/settings/mqtt --- */
     s_srv->on("/api/settings/mqtt", HTTP_GET, [](AsyncWebServerRequest *request) {

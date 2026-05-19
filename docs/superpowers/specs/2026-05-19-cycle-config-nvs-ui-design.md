@@ -41,7 +41,7 @@ lavadoras, esterilizadores). Cada deploy deve poder ajustar sem rebuild firmware
 │  UI tab "Ciclo" (web_portal_html.h)                    │
 │  3 inputs + save button + status badge (enabled)       │
 └────────────────────────┬───────────────────────────────┘
-                         │ POST /api/settings/cycle
+                         │ POST /api/cycles/config
                          ▼
 ┌────────────────────────────────────────────────────────┐
 │  handle_cycle_settings_body (web_portal.cpp)           │
@@ -140,7 +140,7 @@ if (sd_ok) {
 
 ### 4. HTTP endpoint (`src/web_portal/web_portal.cpp`)
 
-**GET `/api/settings/cycle`:**
+**GET `/api/cycles/config`:**
 ```json
 {
   "startPattern": "OPERACAO",
@@ -151,7 +151,7 @@ if (sd_ok) {
 ```
 `enabled` derivado de `start_pattern != ""` (read-only no GET, conveniência UI).
 
-**POST `/api/settings/cycle`:**
+**POST `/api/cycles/config`:**
 ```json
 {"startPattern": "INICIO", "endPattern": "TERMINO", "idleTimeoutS": 600}
 ```
@@ -172,8 +172,8 @@ Server-side handler:
 
 **Route registration** (junto com outras `/api/settings/*`):
 ```cpp
-s_srv->on("/api/settings/cycle", HTTP_GET, handle_cycle_settings_get);
-s_srv->on("/api/settings/cycle", HTTP_POST, ..., handle_cycle_settings_body, ...);
+s_srv->on("/api/cycles/config", HTTP_GET, handle_cycle_settings_get);
+s_srv->on("/api/cycles/config", HTTP_POST, ..., handle_cycle_settings_body, ...);
 ```
 
 ### 5. UI — tab nova "Ciclo" (`src/web_portal/web_portal_html.h`)
@@ -200,7 +200,7 @@ s_srv->on("/api/settings/cycle", HTTP_POST, ..., handle_cycle_settings_body, ...
 ```
 
 **JS handler:**
-- onload: `fetch('/api/settings/cycle')` → popular inputs + mostrar enabled badge
+- onload: `fetch('/api/cycles/config')` → popular inputs + mostrar enabled badge
 - onclick save: POST com 3 valores, mostrar applied result + auto-refresh status
 
 ### Data flow
@@ -230,8 +230,8 @@ s_srv->on("/api/settings/cycle", HTTP_POST, ..., handle_cycle_settings_body, ...
 4. **Truncate pattern**: setter com 60-char string → getter retorna 47 chars.
 
 **Integration (post-flash):**
-1. GET `/api/settings/cycle` → JSON com defaults.
-2. POST `/api/settings/cycle` com `{"startPattern":"START","endPattern":"END","idleTimeoutS":60}` → 200 + applied.
+1. GET `/api/cycles/config` → JSON com defaults.
+2. POST `/api/cycles/config` com `{"startPattern":"START","endPattern":"END","idleTimeoutS":60}` → 200 + applied.
 3. GET `/api/cycles/status` → patterns atualizados.
 4. RS485 envia "START blah" → state ACTIVE; "END" → DONE NDJSON.
 5. Reboot → patterns persistem.
@@ -262,7 +262,7 @@ s_srv->on("/api/settings/cycle", HTTP_POST, ..., handle_cycle_settings_body, ...
 ## Validation criteria
 
 - [ ] Build success (RAM/Flash dentro budget)
-- [ ] GET/POST `/api/settings/cycle` happy path
+- [ ] GET/POST `/api/cycles/config` happy path
 - [ ] NVS persistence cross-reboot
 - [ ] Live reconfigure: ACTIVE → INTERRUPTED transition + NDJSON
 - [ ] Empty start → enabled=false

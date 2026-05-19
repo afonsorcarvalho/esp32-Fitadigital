@@ -4,7 +4,7 @@
 
 **Goal:** Tornar `cycle_detector` (start_pattern, end_pattern, idle_timeout_s) configurável via portal web + persistir em NVS, com live re-init e graceful INTERRUPTED quando ACTIVE.
 
-**Architecture:** Extender `app_settings` com 3 chaves NVS (`cyc_st`, `cyc_en`, `cyc_to`). Adicionar API `cycle_detector_reconfigure()` que emite INTERRUPTED+NDJSON antes de re-init. Boot lê NVS em vez de hardcoded. Novo endpoint `/api/settings/cycle` GET/POST. Nova tab "Ciclo" no portal HTML/JS. Validation: patterns 0-47 chars, idle 0-86400, start vazio desactiva.
+**Architecture:** Extender `app_settings` com 3 chaves NVS (`cyc_st`, `cyc_en`, `cyc_to`). Adicionar API `cycle_detector_reconfigure()` que emite INTERRUPTED+NDJSON antes de re-init. Boot lê NVS em vez de hardcoded. Novo endpoint `/api/cycles/config` GET/POST. Nova tab "Ciclo" no portal HTML/JS. Validation: patterns 0-47 chars, idle 0-86400, start vazio desactiva.
 
 **Tech Stack:** ESP32-S3 + Arduino framework + ESPAsyncWebServer + ArduinoJson + Preferences (NVS). Build via PlatformIO COM3. Integration tests via Python `requests` + `HTTPDigestAuth`.
 
@@ -230,7 +230,7 @@ git commit -m "feat(boot): cycle_detector lê config NVS via app_settings"
 
 ---
 
-### Task 4: HTTP GET /api/settings/cycle handler
+### Task 4: HTTP GET /api/cycles/config handler
 
 **Files:**
 - Modify: `src/web_portal/web_portal.cpp` (junto com outros `handle_*_get`, recomendado após `handle_rs485_get` perto da linha 939)
@@ -240,7 +240,7 @@ git commit -m "feat(boot): cycle_detector lê config NVS via app_settings"
 Inserir após a função `handle_rs485_body` (perto da linha 971), antes do comentário `/* --- /api/settings/mqtt --- */`:
 
 ```cpp
-/* --- /api/settings/cycle (v2.2.0) --- */
+/* --- /api/cycles/config (v2.2.0) --- */
 
 static void handle_cycle_settings_get(AsyncWebServerRequest *request)
 {
@@ -262,8 +262,8 @@ static void handle_cycle_settings_get(AsyncWebServerRequest *request)
 Localizar bloco de routes `/api/settings/...` (perto linha 1643 `s_srv->on("/api/settings/rs485"`). Inserir após bloco RS485, antes do `/api/settings/mqtt`:
 
 ```cpp
-    /* --- /api/settings/cycle (v2.2.0) --- */
-    s_srv->on("/api/settings/cycle", HTTP_GET, [](AsyncWebServerRequest *request) {
+    /* --- /api/cycles/config (v2.2.0) --- */
+    s_srv->on("/api/cycles/config", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!require_basic_auth(request)) return;
         handle_cycle_settings_get(request);
     });
@@ -286,7 +286,7 @@ Aguardar device boot (até `/api/cycles/status` responder 200).
 
 Run:
 ```bash
-curl -s --digest -u admin:0000 --max-time 5 http://192.168.0.197/api/settings/cycle
+curl -s --digest -u admin:0000 --max-time 5 http://192.168.0.197/api/cycles/config
 ```
 Expected output (JSON):
 ```json
@@ -297,12 +297,12 @@ Expected output (JSON):
 
 ```bash
 git add src/web_portal/web_portal.cpp
-git commit -m "feat(api): /api/settings/cycle GET handler retorna NVS state"
+git commit -m "feat(api): /api/cycles/config GET handler retorna NVS state"
 ```
 
 ---
 
-### Task 5: HTTP POST /api/settings/cycle handler
+### Task 5: HTTP POST /api/cycles/config handler
 
 **Files:**
 - Modify: `src/web_portal/web_portal.cpp` (adicionar handler body + route)
@@ -380,7 +380,7 @@ No bloco de routes, logo após o `HTTP_GET` da cycle adicionado em Task 4:
 
 ```cpp
     s_srv->on(
-        "/api/settings/cycle", HTTP_POST,
+        "/api/cycles/config", HTTP_POST,
         [](AsyncWebServerRequest *request) {
             if (!require_basic_auth(request)) return;
         },
@@ -409,7 +409,7 @@ POST com config customizada:
 ```bash
 curl -s --digest -u admin:0000 --max-time 8 -X POST -H "Content-Type: application/json" \
   -d '{"startPattern":"INICIO","endPattern":"TERMINO","idleTimeoutS":60}' \
-  http://192.168.0.197/api/settings/cycle
+  http://192.168.0.197/api/cycles/config
 ```
 Expected:
 ```json
@@ -426,14 +426,14 @@ Repor defaults:
 ```bash
 curl -s --digest -u admin:0000 -X POST -H "Content-Type: application/json" \
   -d '{"startPattern":"OPERACAO","endPattern":"FIM CICLO","idleTimeoutS":900}' \
-  http://192.168.0.197/api/settings/cycle
+  http://192.168.0.197/api/cycles/config
 ```
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add src/web_portal/web_portal.cpp
-git commit -m "feat(api): /api/settings/cycle POST handler com live reconfigure"
+git commit -m "feat(api): /api/cycles/config POST handler com live reconfigure"
 ```
 
 ---
@@ -485,7 +485,7 @@ Encontrar bloco `<script>` no fim do HTML (ou onde rs485 fetch/save handler vive
 ```javascript
 async function loadCycleConfig() {
   try {
-    const r = await fetch('/api/settings/cycle', {credentials: 'include'});
+    const r = await fetch('/api/cycles/config', {credentials: 'include'});
     if (!r.ok) throw new Error('http ' + r.status);
     const j = await r.json();
     document.getElementById('cycStart').value = j.startPattern || '';
@@ -505,7 +505,7 @@ document.getElementById('cycSave').addEventListener('click', async () => {
     idleTimeoutS: parseInt(document.getElementById('cycIdle').value, 10) || 0,
   };
   try {
-    const r = await fetch('/api/settings/cycle', {
+    const r = await fetch('/api/cycles/config', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       credentials: 'include',
@@ -566,7 +566,7 @@ Criar `tools/test_cycle_config.py`:
 
 ```python
 #!/usr/bin/env python3
-"""Integration test /api/settings/cycle GET/POST + live apply.
+"""Integration test /api/cycles/config GET/POST + live apply.
 
 Pre-cond: device em 192.168.0.197, admin Digest "0000".
 Pos: defaults repostos (OPERACAO/FIM CICLO/900).
@@ -582,7 +582,7 @@ from requests.auth import HTTPDigestAuth
 
 HOST = "http://192.168.0.197"
 AUTH = HTTPDigestAuth("admin", "0000")
-CFG_URL = HOST + "/api/settings/cycle"
+CFG_URL = HOST + "/api/cycles/config"
 STA_URL = HOST + "/api/cycles/status"
 TIMEOUT = 8
 
@@ -681,7 +681,7 @@ Expected: `ALL TESTS PASSED` no fim, todos os asserts OK.
 
 ```bash
 git add tools/test_cycle_config.py
-git commit -m "test(cycles): script integration tests /api/settings/cycle"
+git commit -m "test(cycles): script integration tests /api/cycles/config"
 ```
 
 ---
@@ -718,7 +718,7 @@ Expected: `firmware_versions/FitaDigital_v2.20.bin` criado, flash SUCCESS.
 Aguardar boot. Confirmar:
 
 ```bash
-curl -s --digest -u admin:0000 --max-time 5 http://192.168.0.197/api/settings/cycle
+curl -s --digest -u admin:0000 --max-time 5 http://192.168.0.197/api/cycles/config
 ```
 Expected JSON com defaults (OPERACAO / FIM CICLO / 900) — NVS preserva entre reboots/OTA.
 
@@ -726,7 +726,7 @@ POST custom + reboot via API + check pos-reboot:
 ```bash
 curl -s --digest -u admin:0000 -X POST -H "Content-Type: application/json" \
   -d '{"startPattern":"PERSIST_TEST","endPattern":"FIM CICLO","idleTimeoutS":120}' \
-  http://192.168.0.197/api/settings/cycle
+  http://192.168.0.197/api/cycles/config
 
 curl -s --digest -u admin:0000 -X POST http://192.168.0.197/api/system/reboot
 ```
@@ -734,7 +734,7 @@ curl -s --digest -u admin:0000 -X POST http://192.168.0.197/api/system/reboot
 Aguardar reboot (~15s):
 
 ```bash
-until curl -s --digest -u admin:0000 --max-time 3 http://192.168.0.197/api/settings/cycle -o /tmp/c.json -w "%{http_code}\n" 2>/dev/null | grep -q 200; do sleep 2; done
+until curl -s --digest -u admin:0000 --max-time 3 http://192.168.0.197/api/cycles/config -o /tmp/c.json -w "%{http_code}\n" 2>/dev/null | grep -q 200; do sleep 2; done
 cat /tmp/c.json
 ```
 Expected: `startPattern:"PERSIST_TEST"`, `idleTimeoutS:120` — config persistiu NVS.
@@ -743,7 +743,7 @@ Repor defaults:
 ```bash
 curl -s --digest -u admin:0000 -X POST -H "Content-Type: application/json" \
   -d '{"startPattern":"OPERACAO","endPattern":"FIM CICLO","idleTimeoutS":900}' \
-  http://192.168.0.197/api/settings/cycle
+  http://192.168.0.197/api/cycles/config
 ```
 
 - [ ] **Step 4: Commit bump**
@@ -776,7 +776,7 @@ POST novo pattern via API:
 ```bash
 curl -s --digest -u admin:0000 -X POST -H "Content-Type: application/json" \
   -d '{"startPattern":"INICIO_CICLO","endPattern":"FIM_CICLO","idleTimeoutS":900}' \
-  http://192.168.0.197/api/settings/cycle
+  http://192.168.0.197/api/cycles/config
 ```
 
 Smoke com novos patterns:
@@ -794,7 +794,7 @@ Reset defaults + replug COM8:
 ```bash
 curl -s --digest -u admin:0000 -X POST -H "Content-Type: application/json" \
   -d '{"startPattern":"OPERACAO","endPattern":"FIM CICLO","idleTimeoutS":900}' \
-  http://192.168.0.197/api/settings/cycle
+  http://192.168.0.197/api/cycles/config
 ```
 
 Arrancar COM3 capture + soak:
@@ -839,8 +839,8 @@ git push origin v2.2.0
 - `app_settings` getters/setters → Task 1
 - `cycle_detector_reconfigure` → Task 2
 - Boot wiring → Task 3
-- GET /api/settings/cycle → Task 4
-- POST /api/settings/cycle → Task 5
+- GET /api/cycles/config → Task 4
+- POST /api/cycles/config → Task 5
 - UI tab "Ciclo" → Task 6
 - Integration tests + persistence → Tasks 7 & 8
 - Smoke + soak validation criteria → Task 9
