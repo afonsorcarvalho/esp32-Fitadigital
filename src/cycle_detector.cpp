@@ -338,3 +338,21 @@ size_t cycle_detector_status_json(char *out, size_t cap) {
   if (n <= 0 || (size_t)n >= cap) return 0;
   return (size_t)n;
 }
+
+void cycle_detector_reconfigure(const char *start_pattern,
+                                const char *end_pattern,
+                                uint32_t idle_timeout_s) {
+  Current snap;
+  bool emit_interrupted = false;
+  {
+    Lock lk;
+    if (s_cur.state == State::ACTIVE) {
+      snap = s_cur;
+      emit_interrupted = true;
+    }
+  }  /* lock released antes de emit_cycle_close (faz sd_access_sync) */
+  if (emit_interrupted) {
+    emit_cycle_close(snap, CYCLE_STATUS_INTERRUPTED);
+  }
+  cycle_detector_init(start_pattern, end_pattern, idle_timeout_s);
+}

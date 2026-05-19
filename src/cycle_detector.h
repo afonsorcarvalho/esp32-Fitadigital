@@ -48,6 +48,19 @@ void cycle_detector_init(const char *start_pattern,
                          uint32_t idle_timeout_s);
 
 /**
+ * Re-aplica configuracao em runtime. Se state==ACTIVE, fecha ciclo como
+ * CYCLE_STATUS_INTERRUPTED + escreve NDJSON antes de re-init.
+ * Atualiza watchdog RTC baseline. Thread-safe.
+ *
+ * @param start_pattern  novo start; NULL/"" desactiva detector
+ * @param end_pattern    novo end; NULL/"" -> so' fecha por timeout
+ * @param idle_timeout_s novo timeout (0 = sem timeout)
+ */
+void cycle_detector_reconfigure(const char *start_pattern,
+                                const char *end_pattern,
+                                uint32_t idle_timeout_s);
+
+/**
  * Processa 1 linha do RS485. Chamado de reader_commit_line em cycles_rs485.cpp,
  * apos commit SD. Atualiza state machine + acumula metadata. Em transicao para
  * DONE/INTERRUPTED escreve NDJSON.
