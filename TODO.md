@@ -1,23 +1,52 @@
 # TODO — FitaDigital v2.x.x
 
-Main HEAD `3441208` (v2.1.0). Worktree v2 merged + apagado.
+Main HEAD `<pending>` (v2.1.2). Worktree v2 merged + apagado.
 Scope: WiFi + HTTP + RS485 + NTP + FTP server. Sem WG, sem MQTT, sem SCREENSHOT.
 
-## *** v2.1.0 SHIPPED *** (push origin 2026-05-18)
+## *** v2.1.2 SHIPPED *** (push origin 2026-05-19)
 
-Tag `v2.0.0` production-ready. v2.0.1 NTP fix, v2.1.0 cycle_detector.
-Archive: `firmware_versions/FitaDigital_v2.00.bin` (2.4 MB).
+Tag `v2.0.0` production. v2.0.1 NTP. v2.1.0 cycle_detector. v2.1.1 /list crash fix.
+v2.1.2 SMP yield crash fix + single-flight mutex + watchdog RTC baseline.
+Archive: `firmware_versions/FitaDigital_v2.12.bin` (2.4 MB).
+
+### Soak 20min v2.1.2 PASS (2026-05-19 01:39-01:59)
+- 21 cycles enviados, list_200 **105/105 (100%)**, errors=0
+- avg_t **0.71s** (vs 2.23s v2.11), max_t **1.18s** (vs 8.06s)
+- active_seen 21/21, idle_seen 21/21 (state machine 100%)
+- NDJSON growth linear +192B/cycle, sem plateau
+- prev_reset=UNKNOWN(0) — ZERO reboots, ZERO panics
+
+### Root cause backtrace v2.1.1 (decodificado)
+PC=0x403828fe EXCCAUSE=0x01 IllegalInstruction em xPortEnterCriticalTimeout.
+Call stack: reader_task -> cycle_detector_process_line -> emit_cycle_close
+(line 161 `app_log_feature_writef("CYCLE","fechado")`) -> app_log_write ->
+log_notify_cb (web_portal.cpp:92 xQueueSend) -> xQueueGenericSend ->
+xTaskRemoveFromEventList -> prvCheckForYieldUsingPrioritySMP ->
+vPortYieldOtherCore -> esp_crosscore_int_send -> vPortEnterCritical -> CRASH.
+
+SMP cross-core yield IPI hit FreeRTOS portMUX race quando /api/cycles/list
+HTTP task em outro core competia simultaneamente. Stack OK (16KB), heap OK,
+queue OK — bug FreeRTOS interno sob alta contencao.
+
+### Fixes v2.1.2 aplicados
+1. **Remove log enqueue de dentro de reader_task** (cycle_detector.cpp:
+   emit_cycle_close, process_line, tick). NDJSON + /api/cycles/status sao
+   suficientes para observabilidade — log redundante.
+2. **Single-flight mutex `/api/cycles/list`** (handle_cycles_list_get):
+   2o req concurrente -> 503 imediato. Onership do mutex passa ao
+   onDisconnect lambda em sucesso, release explicito em error paths.
+3. **Watchdog cycle_detector RTC baseline** (cycle_detector.cpp):
+   `RTC_NOINIT_ATTR ConfigBaseline s_baseline` + magic 0xC0DE2026.
+   cycle_detector_tick detecta `s_cfg.enabled==false` + magic OK e
+   restaura baseline (auto-heal contra BSS corruption futura).
+4. **Panic breadcrumb** em handle_cycles_list_get enter/exit
+   (panic_breadcrumb_set/clear via panic_logger.h). Next-boot dump
+   identifica crash dentro do handler.
 
 ## Em curso
 (nada — aguardar decisao proxima feature)
 
 ## Pendente
-
-### Smoke E2E cycle_detector (BLOCKED — COM8 USB-RS485 caido)
-- Replug fisico COM8 primeiro
-- TX via COM8 9600: `OPERACAO ...` + linhas + `FIM CICLO ...`
-- Verificar `/api/cycles/status` flicka ACTIVE -> IDLE
-- GET `/api/cycles/list?year=2026&month=05` confirma NDJSON entry status=DONE
 
 ### Sugestoes v2.2.0+
 - **UI events**: badge ciclo concluido, lista de ciclos no portal

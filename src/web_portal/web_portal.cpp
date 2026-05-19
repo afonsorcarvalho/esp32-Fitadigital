@@ -1192,7 +1192,14 @@ static void handle_cycles_status_get(AsyncWebServerRequest *request)
  * `request->send(SD, ...)` body callback streams chunks directly from SD on
  * the AsyncTCP task — under load this drains heap and triggers Double
  * Exception. Pre-load + memcpy callback decouples SD I/O from TCP.
+ *
+ * v2.1.2: single-flight mutex (concurrent calls hit 503 imediato).
+ * Soak 20min v2.1.1 mostrou 25/100 RSTs + corrupcao BSS cycle_detector
+ * sob hits paralelos. Mutex serializa alloc PSRAM + SD reads.
+ * Breadcrumb panic_logger marca enter/exit; next-boot dump deteta crash
+ * dentro do handler.
  */
+static SemaphoreHandle_t s_cycles_list_mtx = nullptr;
 
 static void handle_cycles_list_get(AsyncWebServerRequest *request)
 {
@@ -1209,6 +1216,28 @@ static void handle_cycles_list_get(AsyncWebServerRequest *request)
         request->send(503, "application/json", "{\"error\":\"sd not mounted\"}");
         return;
     }
+
+    /* v2.1.2 single-flight: try acquire mutex sem bloquear. Se ja' em uso,
+     * 503 imediato — preferivel a serializar AsyncTCP task. */
+    if (s_cycles_list_mtx == nullptr) {
+        s_cycles_list_mtx = xSemaphoreCreateMutex();
+    }
+    if (s_cycles_list_mtx == nullptr ||
+        xSemaphoreTake(s_cycles_list_mtx, 0) != pdTRUE) {
+        request->send(503, "application/json",
+                      "{\"error\":\"busy\",\"hint\":\"retry\"}");
+        return;
+    }
+    panic_breadcrumb_set("cycles_list:enter");
+
+    /* RAII-style cleanup helper para error paths. Sucesso passa ownership ao
+     * onDisconnect lambda no fim. */
+    auto release_lock = []() {
+        panic_breadcrumb_clear();
+        if (s_cycles_list_mtx != nullptr) {
+            xSemaphoreGive(s_cycles_list_mtx);
+        }
+    };
 
     int err = 0;
     size_t file_sz = 0;
@@ -1227,15 +1256,18 @@ static void handle_cycles_list_get(AsyncWebServerRequest *request)
         f.close();
     });
     if (err == 1 || file_sz == 0) {
+        release_lock();
         request->send(200, "application/x-ndjson", "");
         return;
     }
     if (err == 2) {
+        release_lock();
         request->send(500, "application/json", "{\"error\":\"open failed\"}");
         return;
     }
     static constexpr size_t kCyclesNdjsonMaxBytes = 512U * 1024U;
     if (file_sz > kCyclesNdjsonMaxBytes) {
+        release_lock();
         request->send(413, "application/json", "{\"error\":\"ndjson too large\"}");
         return;
     }
@@ -1245,6 +1277,7 @@ static void handle_cycles_list_get(AsyncWebServerRequest *request)
         blob = static_cast<uint8_t *>(heap_caps_malloc(file_sz, MALLOC_CAP_8BIT));
     }
     if (blob == nullptr) {
+        release_lock();
         request->send(500, "application/json", "{\"error\":\"oom\"}");
         return;
     }
@@ -1262,6 +1295,7 @@ static void handle_cycles_list_get(AsyncWebServerRequest *request)
     });
     if (read_err != 0) {
         heap_caps_free(blob);
+        release_lock();
         request->send(500, "application/json", "{\"error\":\"read failed\"}");
         return;
     }
@@ -1278,10 +1312,18 @@ static void handle_cycles_list_get(AsyncWebServerRequest *request)
         });
     if (resp == nullptr) {
         heap_caps_free(blob);
+        release_lock();
         request->send(500, "application/json", "{\"error\":\"oom\"}");
         return;
     }
-    request->onDisconnect([blob]() { heap_caps_free(blob); });
+    /* Success: passa ownership do blob + mutex + breadcrumb ao onDisconnect. */
+    request->onDisconnect([blob]() {
+        heap_caps_free(blob);
+        panic_breadcrumb_clear();
+        if (s_cycles_list_mtx != nullptr) {
+            xSemaphoreGive(s_cycles_list_mtx);
+        }
+    });
     request->send(resp);
 }
 
