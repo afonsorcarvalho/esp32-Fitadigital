@@ -1186,7 +1186,13 @@ static void handle_cycles_status_get(AsyncWebServerRequest *request)
     request->send(200, "application/json", buf);
 }
 
-/* --- /api/cycles/list (GET ?year=AAAA&month=MM) — v2.1.0 NDJSON readback --- */
+/* --- /api/cycles/list (GET ?year=AAAA&month=MM) — v2.1.0 NDJSON readback ---
+ *
+ * v2.1.1: pre-load NDJSON to PSRAM blob (same fix as /api/fs/file).
+ * `request->send(SD, ...)` body callback streams chunks directly from SD on
+ * the AsyncTCP task — under load this drains heap and triggers Double
+ * Exception. Pre-load + memcpy callback decouples SD I/O from TCP.
+ */
 
 static void handle_cycles_list_get(AsyncWebServerRequest *request)
 {
@@ -1203,13 +1209,80 @@ static void handle_cycles_list_get(AsyncWebServerRequest *request)
         request->send(503, "application/json", "{\"error\":\"sd not mounted\"}");
         return;
     }
-    /* Stream raw NDJSON as text/plain (cliente faz parse linha-a-linha).
-     * Mais simples + leve que serializar JSON array (rewrite all em RAM). */
-    if (!SD.exists(path)) {
+
+    int err = 0;
+    size_t file_sz = 0;
+    sd_access_sync_front([&]() {
+        if (!SD.exists(path)) {
+            err = 1;
+            return;
+        }
+        File f = SD.open(path, FILE_READ);
+        if (!f || f.isDirectory()) {
+            if (f) f.close();
+            err = 2;
+            return;
+        }
+        file_sz = f.size();
+        f.close();
+    });
+    if (err == 1 || file_sz == 0) {
         request->send(200, "application/x-ndjson", "");
         return;
     }
-    request->send(SD, path, "application/x-ndjson");
+    if (err == 2) {
+        request->send(500, "application/json", "{\"error\":\"open failed\"}");
+        return;
+    }
+    static constexpr size_t kCyclesNdjsonMaxBytes = 512U * 1024U;
+    if (file_sz > kCyclesNdjsonMaxBytes) {
+        request->send(413, "application/json", "{\"error\":\"ndjson too large\"}");
+        return;
+    }
+
+    uint8_t *blob = static_cast<uint8_t *>(heap_caps_malloc(file_sz, MALLOC_CAP_SPIRAM));
+    if (blob == nullptr) {
+        blob = static_cast<uint8_t *>(heap_caps_malloc(file_sz, MALLOC_CAP_8BIT));
+    }
+    if (blob == nullptr) {
+        request->send(500, "application/json", "{\"error\":\"oom\"}");
+        return;
+    }
+    int read_err = 0;
+    sd_access_sync_front([&]() {
+        File f = SD.open(path, FILE_READ);
+        if (!f || f.isDirectory()) {
+            if (f) f.close();
+            read_err = 1;
+            return;
+        }
+        const size_t r = f.read(blob, file_sz);
+        f.close();
+        if (r != file_sz) read_err = 2;
+    });
+    if (read_err != 0) {
+        heap_caps_free(blob);
+        request->send(500, "application/json", "{\"error\":\"read failed\"}");
+        return;
+    }
+
+    const size_t body_len = file_sz;
+    AsyncWebServerResponse *resp = request->beginResponse(
+        "application/x-ndjson", body_len,
+        [blob, body_len](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
+            if (index >= body_len || maxLen == 0U) return 0;
+            size_t want = body_len - index;
+            if (want > maxLen) want = maxLen;
+            memcpy(buffer, blob + index, want);
+            return want;
+        });
+    if (resp == nullptr) {
+        heap_caps_free(blob);
+        request->send(500, "application/json", "{\"error\":\"oom\"}");
+        return;
+    }
+    request->onDisconnect([blob]() { heap_caps_free(blob); });
+    request->send(resp);
 }
 
 /* --- /api/wg/status (GET) — v1.91 WG silent-death telemetry --- */
