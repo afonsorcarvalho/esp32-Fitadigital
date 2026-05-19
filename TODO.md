@@ -3,7 +3,14 @@
 Main HEAD `<pending>` (v2.1.2). Worktree v2 merged + apagado.
 Scope: WiFi + HTTP + RS485 + NTP + FTP server. Sem WG, sem MQTT, sem SCREENSHOT.
 
-## *** v2.1.2 SHIPPED *** (push origin 2026-05-19)
+## *** v2.1.2 PRODUCTION-READY *** (validado 2026-05-19 soak 8h)
+
+Soak 8h cycle+stress: 294 cycles, 1470/1470 list hits (100%), avg_t 1.50s,
+max_t 4.21s, NDJSON linear 6.7KB->63KB, active_seen 293/294, idle_seen
+294/294. Serial COM3 8h: zero panic, zero Guru. Device pos-soak:
+enabled=true IDLE prev_reset=UNKNOWN(0).
+
+
 
 Tag `v2.0.0` production. v2.0.1 NTP. v2.1.0 cycle_detector. v2.1.1 /list crash fix.
 v2.1.2 SMP yield crash fix + single-flight mutex + watchdog RTC baseline.
