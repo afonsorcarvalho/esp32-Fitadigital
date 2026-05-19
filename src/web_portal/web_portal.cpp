@@ -986,6 +986,62 @@ static void handle_cycle_settings_get(AsyncWebServerRequest *request)
     request->send(200, "application/json", out);
 }
 
+static void handle_cycle_settings_body(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
+{
+    JsonDocument doc;
+    if (!accumulate_body(data, len, index, total, doc)) {
+        if (index + len < total) return; /* incompleto */
+        request->send(400, "application/json", "{\"error\":\"json\"}");
+        return;
+    }
+
+    /* Defaults para campos ausentes: mantém valor actual. */
+    String start_s = app_settings_cycle_start_pattern();
+    String end_s = app_settings_cycle_end_pattern();
+    uint32_t idle_s = app_settings_cycle_idle_timeout_s();
+
+    if (!doc["startPattern"].isNull()) {
+        const char *s = doc["startPattern"] | "";
+        start_s = String(s);
+    }
+    if (!doc["endPattern"].isNull()) {
+        const char *e = doc["endPattern"] | "";
+        end_s = String(e);
+    }
+    if (!doc["idleTimeoutS"].isNull()) {
+        if (!doc["idleTimeoutS"].is<int>() && !doc["idleTimeoutS"].is<unsigned long>()) {
+            request->send(400, "application/json",
+                          "{\"error\":\"idleTimeoutS invalid\"}");
+            return;
+        }
+        long v = (long)doc["idleTimeoutS"];
+        if (v < 0) v = 0;
+        if (v > 86400) v = 86400;
+        idle_s = (uint32_t)v;
+    }
+
+    /* Persistir NVS (atomico, clamp+truncate dentro de set_cycle_config). */
+    app_settings_set_cycle_config(start_s.c_str(), end_s.c_str(), idle_s);
+
+    /* Live re-init via cycle_detector_reconfigure (fecha ACTIVE como INTERRUPTED).
+     * Use os getters pos-persist para reflectir truncate/clamp do app_settings. */
+    String applied_start = app_settings_cycle_start_pattern();
+    String applied_end = app_settings_cycle_end_pattern();
+    uint32_t applied_idle = app_settings_cycle_idle_timeout_s();
+    cycle_detector_reconfigure(applied_start.c_str(), applied_end.c_str(), applied_idle);
+
+    JsonDocument resp;
+    resp["ok"] = true;
+    JsonObject ap = resp["applied"].to<JsonObject>();
+    ap["startPattern"] = applied_start;
+    ap["endPattern"] = applied_end;
+    ap["idleTimeoutS"] = applied_idle;
+    ap["enabled"] = (applied_start.length() > 0);
+    String out;
+    serializeJson(resp, out);
+    request->send(200, "application/json", out);
+}
+
 /* --- /api/settings/mqtt --- */
 
 static void handle_mqtt_get(AsyncWebServerRequest *request)
@@ -1678,6 +1734,18 @@ void web_portal_init(void)
         if (!web_auth_check(request)) return;
         handle_cycle_settings_get(request);
     });
+
+    s_srv->on(
+        "/api/cycles/config", HTTP_POST,
+        [](AsyncWebServerRequest *request) {
+            if (!web_auth_check(request)) return;
+            (void)request;
+        },
+        NULL,
+        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            if (!web_auth_check(request)) return;
+            handle_cycle_settings_body(request, data, len, index, total);
+        });
 
     /* --- /api/settings/mqtt --- */
     s_srv->on("/api/settings/mqtt", HTTP_GET, [](AsyncWebServerRequest *request) {
