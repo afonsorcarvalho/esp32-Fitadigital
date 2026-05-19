@@ -191,3 +191,21 @@ size_t app_settings_rs485_std_baud_count(void);
 uint32_t app_settings_rs485_std_baud(size_t index);
 /** Indice do baud mais proximo na lista (para posicionar o roller). */
 size_t app_settings_rs485_std_baud_nearest_index(uint32_t baud);
+
+/* ------------------------------------------------------------------ */
+/* Cycle detector (v2.2.0)                                              */
+/* ------------------------------------------------------------------ */
+
+/** Pattern de inicio de ciclo (substring case-insensitive).
+ *  Default "OPERACAO". String vazia desactiva detector. Max 47 chars. */
+String app_settings_cycle_start_pattern(void);
+
+/** Pattern de fim de ciclo. Default "FIM CICLO". Max 47 chars. */
+String app_settings_cycle_end_pattern(void);
+
+/** Idle timeout em segundos. 0=sem timeout. Default 900. Range [0, 86400]. */
+uint32_t app_settings_cycle_idle_timeout_s(void);
+
+/** Persiste config atomicamente. Patterns truncados a 47 chars,
+ *  idle_s clampa [0, 86400]. */
+void app_settings_set_cycle_config(const char *start, const char *end, uint32_t idle_s);

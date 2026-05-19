@@ -1235,3 +1235,39 @@ void app_settings_supervisor_restart_increment(const char *name) {
   const uint32_t v = s_prefs.getUInt(key, 0U);
   s_prefs.putUInt(key, v + 1U);
 }
+
+/* ------------------------------------------------------------------ */
+/* Cycle detector (v2.2.0)                                              */
+/* ------------------------------------------------------------------ */
+
+static constexpr size_t kCyclePatternMax = 47U;  /* +1 NUL = 48 = cycle_detector kPatternMax */
+static constexpr uint32_t kCycleIdleMaxS = 86400U; /* 24h */
+
+String app_settings_cycle_start_pattern(void) {
+  return s_prefs.getString("cyc_st", "OPERACAO");
+}
+
+String app_settings_cycle_end_pattern(void) {
+  return s_prefs.getString("cyc_en", "FIM CICLO");
+}
+
+uint32_t app_settings_cycle_idle_timeout_s(void) {
+  return s_prefs.getUInt("cyc_to", 900U);
+}
+
+void app_settings_set_cycle_config(const char *start, const char *end, uint32_t idle_s) {
+  char st[kCyclePatternMax + 1U] = {0};
+  char en[kCyclePatternMax + 1U] = {0};
+  if (start != nullptr) {
+    strncpy(st, start, kCyclePatternMax);
+  }
+  if (end != nullptr) {
+    strncpy(en, end, kCyclePatternMax);
+  }
+  if (idle_s > kCycleIdleMaxS) {
+    idle_s = kCycleIdleMaxS;
+  }
+  s_prefs.putString("cyc_st", st);
+  s_prefs.putString("cyc_en", en);
+  s_prefs.putUInt("cyc_to", idle_s);
+}
