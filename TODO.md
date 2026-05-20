@@ -50,16 +50,35 @@ queue OK — bug FreeRTOS interno sob alta contencao.
    (panic_breadcrumb_set/clear via panic_logger.h). Next-boot dump
    identifica crash dentro do handler.
 
+## *** v2.2.0 SHIPPED *** (validado 2026-05-20 soak 30min)
+
+Cycle detector configuravel via portal web + NVS persist. Tab "Ciclo"
+no portal: start_pattern / end_pattern / idle_timeout_s editaveis.
+Endpoint `/api/cycles/config` GET/POST (URL movido de /api/settings/cycle
+por bug ESPAsyncWebServer GET prefix-match). Live reconfigure fecha
+ciclo ACTIVE como INTERRUPTED antes de re-init.
+Archive: `firmware_versions/FitaDigital_v2.20.bin` (2.4 MB).
+
+### Soak 30min v2.2.0 PASS (2026-05-19 19:34-20:04)
+- 23 cycles, list_200 115/115 (100%), errors=0
+- active_seen 23/23, idle_seen 23/23
+- NDJSON linear, COM3 serial zero panic
+- prev_reset=UNKNOWN(0) — zero reboots
+- Smoke custom patterns OK (INICIO_CICLO/FIM_CICLO detectados + NDJSON)
+- NVS persistence cross-reboot validado
+- tools/test_cycle_config.py 6 tests PASS
+
 ## Em curso
 (nada — aguardar decisao proxima feature)
 
 ## Pendente
 
-### Sugestoes v2.2.0+
+### Sugestoes v2.2.x+
 - **UI events**: badge ciclo concluido, lista de ciclos no portal
-- **Parser robustez**: NVS patterns configuraveis via UI (start/end/idle_timeout)
-  - Defaults hardcoded actuais: start="OPERACAO", end="FIM CICLO", idle=900s
 - **Pub/sub formal cycle_detector**: API observadores para outros modulos
+- **Watchdog edge case** (review v2.2.0): se config set a start vazio
+  (enabled=false intencional), `watchdog_heal_locked` pode restaurar
+  baseline antigo non-empty e re-activar silenciosamente. Low risk.
 
 ### FTP client (ULTIMA feature)
 - Push delta para servidor remoto. So' depois resto estavel.
