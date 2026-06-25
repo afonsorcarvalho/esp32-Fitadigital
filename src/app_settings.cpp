@@ -135,6 +135,20 @@ typedef struct {
   uint32_t mq_iv;
   bool have_mq_kw;
   char mq_kw[kMqttKwMax + 1U];
+  bool have_fup_en;
+  bool fup_en;
+  bool have_fup_h;
+  char fup_h[128];
+  bool have_fup_port;
+  uint32_t fup_port;
+  bool have_fup_u;
+  char fup_u[32];
+  bool have_fup_p;
+  char fup_p[32];
+  bool have_fup_rd;
+  char fup_rd[128];
+  bool have_fup_iv;
+  uint32_t fup_iv;
 } ParsedSdCfg;
 
 static bool copy_key_str(char *dst, size_t cap, const char *val) {
@@ -412,6 +426,26 @@ static bool cfg_parse_kv(int sec, const char *key, const char *val, ParsedSdCfg 
       return true;
     }
     return true;
+  case 9: /* [ftp_up] */
+    if (!strcmp(key, "fup_en")) {
+      c->fup_en = strtol(val, nullptr, 10) != 0;
+      c->have_fup_en = true;
+    } else if (!strcmp(key, "fup_h")) {
+      c->have_fup_h = copy_key_str(c->fup_h, sizeof(c->fup_h), val);
+    } else if (!strcmp(key, "fup_port")) {
+      c->fup_port = (uint32_t)strtol(val, nullptr, 10);
+      c->have_fup_port = true;
+    } else if (!strcmp(key, "fup_u")) {
+      c->have_fup_u = copy_key_str(c->fup_u, sizeof(c->fup_u), val);
+    } else if (!strcmp(key, "fup_p")) {
+      c->have_fup_p = copy_key_str(c->fup_p, sizeof(c->fup_p), val);
+    } else if (!strcmp(key, "fup_rd")) {
+      c->have_fup_rd = copy_key_str(c->fup_rd, sizeof(c->fup_rd), val);
+    } else if (!strcmp(key, "fup_iv")) {
+      c->fup_iv = (uint32_t)strtol(val, nullptr, 10);
+      c->have_fup_iv = true;
+    }
+    return true;
   default:
     return true;
   }
@@ -465,6 +499,10 @@ static bool cfg_parse_section_line(const char *line, int *sec) {
   }
   if (!strcmp(name, "mqtt")) {
     *sec = 8;
+    return true;
+  }
+  if (!strcmp(name, "ftp_up")) {
+    *sec = 9;
     return true;
   }
   return false;
@@ -553,6 +591,27 @@ static void cfg_apply_parsed(const ParsedSdCfg *c) {
   }
   if (c->have_mq_kw) {
     s_prefs.putString("mq_kw", c->mq_kw);
+  }
+  if (c->have_fup_en) {
+    s_prefs.putBool("fup_en", c->fup_en);
+  }
+  if (c->have_fup_h) {
+    s_prefs.putString("fup_h", c->fup_h);
+  }
+  if (c->have_fup_port) {
+    s_prefs.putUShort("fup_port", (uint16_t)c->fup_port);
+  }
+  if (c->have_fup_u) {
+    s_prefs.putString("fup_u", c->fup_u);
+  }
+  if (c->have_fup_p) {
+    s_prefs.putString("fup_p", c->fup_p);
+  }
+  if (c->have_fup_rd) {
+    s_prefs.putString("fup_rd", c->fup_rd);
+  }
+  if (c->have_fup_iv) {
+    s_prefs.putUShort("fup_iv", (uint16_t)c->fup_iv);
   }
 }
 
@@ -692,6 +751,18 @@ void app_settings_sync_config_file_to_sd(void) {
     f.print("mq_kw=");
     f.print(app_settings_mqtt_keywords().c_str());
     f.print("\n");
+    f.print("\n[ftp_up]\n");
+    f.printf("fup_en=%d\n", app_settings_ftp_up_enabled() ? 1 : 0);
+    f.print("fup_h=");
+    f.print(app_settings_ftp_up_host().c_str());
+    f.printf("\nfup_port=%u\n", (unsigned)app_settings_ftp_up_port());
+    f.print("fup_u=");
+    f.print(app_settings_ftp_up_user().c_str());
+    f.print("\nfup_p=");
+    f.print(app_settings_ftp_up_pass().c_str());
+    f.print("\nfup_rd=");
+    f.print(app_settings_ftp_up_remote_dir().c_str());
+    f.printf("\nfup_iv=%u\n", (unsigned)app_settings_ftp_up_interval_s());
     f.close();
   });
 }
