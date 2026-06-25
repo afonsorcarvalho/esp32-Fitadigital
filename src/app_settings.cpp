@@ -855,6 +855,83 @@ void app_settings_set_ftp(const char *user, const char *pass) {
   app_settings_sync_config_file_to_sd();
 }
 
+/* ---- FTP-upload client ---- */
+
+bool app_settings_ftp_up_enabled(void) {
+  return s_prefs.getBool("fup_en", false);
+}
+void app_settings_set_ftp_up_enabled(bool on) {
+  s_prefs.putBool("fup_en", on);
+}
+
+String app_settings_ftp_up_host(void) {
+  return s_prefs.getString("fup_h", "");
+}
+void app_settings_set_ftp_up_host(const char *host) {
+  char buf[128] = {0};
+  if (host) {
+    strncpy(buf, host, sizeof(buf) - 1);
+  }
+  s_prefs.putString("fup_h", buf);
+}
+
+uint16_t app_settings_ftp_up_port(void) {
+  return (uint16_t)s_prefs.getUShort("fup_port", 21);
+}
+void app_settings_set_ftp_up_port(uint16_t port) {
+  s_prefs.putUShort("fup_port", port == 0 ? 21 : port);
+}
+
+String app_settings_ftp_up_user(void) {
+  return s_prefs.getString("fup_u", "");
+}
+String app_settings_ftp_up_pass(void) {
+  return s_prefs.getString("fup_p", "");
+}
+void app_settings_set_ftp_up_creds(const char *user, const char *pass) {
+  char u[32] = {0};
+  char p[32] = {0};
+  if (user) {
+    strncpy(u, user, sizeof(u) - 1);
+  }
+  if (pass) {
+    strncpy(p, pass, sizeof(p) - 1);
+  }
+  s_prefs.putString("fup_u", u);
+  s_prefs.putString("fup_p", p);
+}
+
+String app_settings_ftp_up_remote_dir(void) {
+  String d = s_prefs.getString("fup_rd", "/");
+  if (d.length() == 0) {
+    d = "/";
+  }
+  return d;
+}
+void app_settings_set_ftp_up_remote_dir(const char *dir) {
+  char buf[128] = {0};
+  if (dir && dir[0] != '\0') {
+    strncpy(buf, dir, sizeof(buf) - 1);
+  } else {
+    buf[0] = '/';
+  }
+  s_prefs.putString("fup_rd", buf);
+}
+
+uint16_t app_settings_ftp_up_interval_s(void) {
+  uint16_t v = (uint16_t)s_prefs.getUShort("fup_iv", 300);
+  if (v < 30) {
+    v = 30;
+  }
+  return v;
+}
+void app_settings_set_ftp_up_interval_s(uint16_t secs) {
+  if (secs < 30) {
+    secs = 30;
+  }
+  s_prefs.putUShort("fup_iv", secs);
+}
+
 bool app_settings_ntp_enabled(void) {
   return s_prefs.getBool("ntp_on", true);
 }
