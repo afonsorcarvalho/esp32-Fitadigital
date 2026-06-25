@@ -2336,28 +2336,40 @@ static void create_settings_screen(void) {
   lv_obj_set_layout(tab_wifi, LV_LAYOUT_FLEX);
   lv_obj_set_flex_flow(tab_wifi, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(tab_wifi, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_all(tab_wifi, 6, 0);
-  lv_obj_set_style_pad_row(tab_wifi, 8, 0);
+  lv_obj_set_style_pad_all(tab_wifi, 4, 0);
+  lv_obj_set_style_pad_row(tab_wifi, 4, 0);
 
-  s_sett_wifi_lbl = lv_label_create(tab_wifi);
+  /* Conteudo scrollavel num container interno (mesma estrutura da aba SRV):
+   * o teclado fica como filho de tab_wifi (sibling deste scroll), ancorado ao
+   * fundo do viewport em vez de scrollar com o conteudo. */
+  lv_obj_t *wifi_scroll = lv_obj_create(tab_wifi);
+  lv_obj_set_width(wifi_scroll, LV_PCT(100));
+  lv_obj_set_flex_grow(wifi_scroll, 1);
+  lv_obj_set_layout(wifi_scroll, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(wifi_scroll, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_all(wifi_scroll, 4, 0);
+  lv_obj_set_style_pad_row(wifi_scroll, 6, 0);
+  lv_obj_set_scrollbar_mode(wifi_scroll, LV_SCROLLBAR_MODE_AUTO);
+
+  s_sett_wifi_lbl = lv_label_create(wifi_scroll);
   lv_label_set_long_mode(s_sett_wifi_lbl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(s_sett_wifi_lbl, LV_PCT(100));
   refresh_settings_wifi_label();
 
-  lv_obj_t *bt_wifi = lv_btn_create(tab_wifi);
+  lv_obj_t *bt_wifi = lv_btn_create(wifi_scroll);
   lv_obj_t *lb1 = lv_label_create(bt_wifi);
   lv_label_set_text(lb1, LV_SYMBOL_WIFI " Alterar Wi-Fi");
   lv_obj_center(lb1);
   lv_obj_add_event_cb(bt_wifi, settings_change_wifi_cb, LV_EVENT_CLICKED, nullptr);
 
   /* --- Monitorizacao remota (ping ICMP) --- */
-  lv_obj_t *lbl_mon_sec = lv_label_create(tab_wifi);
+  lv_obj_t *lbl_mon_sec = lv_label_create(wifi_scroll);
   lv_label_set_text(lbl_mon_sec, "Monitorizacao remota (ping):");
 
-  lv_obj_t *lbl_mon_ip = lv_label_create(tab_wifi);
+  lv_obj_t *lbl_mon_ip = lv_label_create(wifi_scroll);
   lv_label_set_text(lbl_mon_ip, "IP / host (deixe vazio para desligar):");
 
-  s_ta_mon_ip = lv_textarea_create(tab_wifi);
+  s_ta_mon_ip = lv_textarea_create(wifi_scroll);
   lv_textarea_set_one_line(s_ta_mon_ip, true);
   lv_textarea_set_max_length(s_ta_mon_ip, 63);
   lv_textarea_set_placeholder_text(s_ta_mon_ip, "ex. 192.168.0.1");
@@ -2366,21 +2378,21 @@ static void create_settings_screen(void) {
   lv_obj_add_event_cb(s_ta_mon_ip, settings_wifi_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
   lv_obj_add_event_cb(s_ta_mon_ip, settings_wifi_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
 
-  lv_obj_t *bt_save_mon = lv_btn_create(tab_wifi);
+  lv_obj_t *bt_save_mon = lv_btn_create(wifi_scroll);
   lv_obj_t *lb_save_mon = lv_label_create(bt_save_mon);
   lv_label_set_text(lb_save_mon, LV_SYMBOL_SAVE " Salvar monitorizacao");
   lv_obj_center(lb_save_mon);
   lv_obj_add_event_cb(bt_save_mon, settings_save_monitor_cb, LV_EVENT_CLICKED, nullptr);
 
-  s_mon_feedback_lbl = lv_label_create(tab_wifi);
+  s_mon_feedback_lbl = lv_label_create(wifi_scroll);
   lv_label_set_long_mode(s_mon_feedback_lbl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(s_mon_feedback_lbl, LV_PCT(100));
 
   /* --- URL base de descarga remota (usada pelo QR do viewer) --- */
-  lv_obj_t *lbl_dl_sec = lv_label_create(tab_wifi);
+  lv_obj_t *lbl_dl_sec = lv_label_create(wifi_scroll);
   lv_label_set_text(lbl_dl_sec, "URL base de descarga (vazio = portal local):");
 
-  s_ta_dl_url = lv_textarea_create(tab_wifi);
+  s_ta_dl_url = lv_textarea_create(wifi_scroll);
   lv_textarea_set_one_line(s_ta_dl_url, true);
   lv_textarea_set_max_length(s_ta_dl_url, 127);
   lv_textarea_set_placeholder_text(s_ta_dl_url, "http://servidor/api/fs/file");
@@ -2389,13 +2401,14 @@ static void create_settings_screen(void) {
   lv_obj_add_event_cb(s_ta_dl_url, settings_wifi_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
   lv_obj_add_event_cb(s_ta_dl_url, settings_wifi_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
 
-  lv_obj_t *bt_save_dl = lv_btn_create(tab_wifi);
+  lv_obj_t *bt_save_dl = lv_btn_create(wifi_scroll);
   lv_obj_t *lb_save_dl = lv_label_create(bt_save_dl);
   lv_label_set_text(lb_save_dl, LV_SYMBOL_SAVE " Salvar URL de descarga");
   lv_obj_center(lb_save_dl);
   lv_obj_add_event_cb(bt_save_dl, settings_save_download_url_cb, LV_EVENT_CLICKED, nullptr);
 
-  /* Teclado especifico da aba Wi-Fi (monitor IP + URL de descarga). */
+  /* Teclado especifico da aba Wi-Fi (monitor IP + URL de descarga).
+   * Pai = tab_wifi (sibling de wifi_scroll) => fixo no fundo do viewport. */
   s_sett_wifi_kb = lv_keyboard_create(tab_wifi);
   lv_obj_set_size(s_sett_wifi_kb, LV_PCT(100), (lv_coord_t)(vh * 30 / 100));
   lv_keyboard_set_mode(s_sett_wifi_kb, LV_KEYBOARD_MODE_TEXT_LOWER);

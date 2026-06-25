@@ -68,8 +68,94 @@ Archive: `firmware_versions/FitaDigital_v2.20.bin` (2.4 MB).
 - NVS persistence cross-reboot validado
 - tools/test_cycle_config.py 6 tests PASS
 
+## *** v2.2.1 SHIPPED *** (fix WiFi self-heal — 2026-06-25)
+
+**Bug:** device ficava offline indefinidamente apos `ASSOC_LEAVE` (reason 8)
+do AP. ICMP/FTP/HTTP mortos, mas firmware vivo por USB (heap flat, uptime
+monotonico). "Nao responde ping" era so' o sintoma.
+
+**Root cause:** a logica de WiFi self-heal `wifi_keepalive_tick` (SOFT @30s
+net_wifi_begin_saved / HARD @5min esp_wifi_stop+start, repetivel) vivia DENTRO
+do bloco `#else FITA_ENABLE_WG` de `net_wireguard.cpp`. Como v2.x tem
+`FITA_ENABLE_WG=0`, esse bloco inteiro NAO compila (so' o stub) — a funcao
+nem existia no binario v2.20. Unico reconnect restante era
+`WiFi.setAutoReconnect(true)`, que o proprio codigo ja' documentava como
+"confirmado estagnar pos-ASSOC_LEAVE" (net_wireguard.cpp:91). Regressao
+introduzida ao remover o WG para a v2.x — o self-heal estava acoplado ao
+modulo errado. Soaks de 8h nao apanharam (AP nunca disassociou nos testes).
+
+**Fix:** movido `net_wifi_keepalive_tick` (+ state) para `net_services.cpp`
+(sempre compilado), exposto em `net_services.h`, chamado a cada tick do
+`net_services_loop` (corre no core do Arduino => calls WiFi seguros).
+`net_wireguard.cpp` reaponta para a versao partilhada (single source).
+Sem `esp_restart()` (zero-reboot mantido). Sem service_supervisor (era o
+race do PANIC v1.88). `setAutoReconnect(true)` mantido (coexistencia
+provada v1.x soak 24h).
+
+**Validacao (2026-06-25):** device reproduziu ASSOC_LEAVE @17s no boot,
+ficou offline ~5min, depois o HARD path recuperou o WiFi **sem reboot**
+(uptime_s=690 continuo, ping 4/4 0% loss @192.168.0.197). Em v2.20 ficaria
+offline para sempre. Archive: `firmware_versions/FitaDigital_v2.21.bin`.
+Files: net_services.cpp/.h, net_wireguard.cpp, platformio.ini (2.20->2.21),
++ `#include <cstdint>` em net_services.h.
+
+**Diagnostico — licao:** crash-analyzer reportou "[NET-KA] nao disparou" =
+FALSO NEGATIVO. `[NET-KA]` usa `Serial.printf` (bufferizado); so' `[HEAP]`
+(`ets_printf` directo) sobrevive nas capturas. Presenca do `[HEAP]` provou
+que o net_svc arrancou. Ver [[session_2026_05_11_wg_enrollment_odoo]].
+
+## *** v2.2.2 SHIPPED *** (observabilidade [NET-KA] + recovery 90s — 2026-06-25)
+
+`[NET-KA]` `Serial.printf` -> `ets_printf` (ROM directa, nao bufferizada) em
+`net_wifi_keepalive_tick`: 4 chamadas substituidas (voltou/DOWN/HARD/SOFT).
+`"—"` (UTF-8 multi-byte) substituido por `"-"` ASCII nas strings HARD/SOFT
+para evitar lixo no terminal ROM. `kHardThresholdMs` 300000 -> 90000 (5min ->
+90s): HARD path e' o que de facto recupera; SOFT@30s nao recuperou (AP re-kick).
+Comentarios/doc em net_services.cpp e net_services.h actualizados.
+Files: net_services.cpp, net_services.h, platformio.ini (2.21->2.22).
+
+## Pendente (follow-ups v2.2.2)
+
+### *** TOUCH GT911 latch — FIX a fazer (re-init live, zero-reboot) ***
+**Sintoma (2026-06-25):** touch da tela deixa de responder em runtime; device
+fica vivo (rede/HTTP/SD/heap OK, UI a renderizar), so' o input morre. Reboot
+recupera. Intermitente.
+**Root cause:** GT911 (touch, I2C0) latcha e passa a NACK. `readPoints()`
+devolve -1 (esp_lcd_touch_read_data falha) — ver
+ESP_PanelTouch.cpp:213. Mas `touchpad_read` (lvgl_port_v8.cpp:651) trata
+-1 == 0 == "sem toque" (so' >0 conta) => GT911 morto e' silenciosamente
+ignorado, SEM watchdog/recuperacao. NAO bloqueia (readPoints retorna logo)
+=> sem WDT => fica morto indefinidamente. **NAO e' lock do bus I2C0**
+(CH422G/SD no mesmo bus funcionou durante o freeze; i2c0_timeouts_total=0).
+Independente do fix WiFi.
+**Fix decidido (re-init live, zero-reboot):** watchdog conta N leituras
+`readPoints()==-1` consecutivas (no `touchpad_read` ou task dedicada);
+ao exceder threshold, recupera o GT911 sem reboot: `tp->del()` +
+re-`begin()`/init (re-pulsa RST do GT911). O objecto ESP_PanelTouch persiste
+(LVGL indev->user_data continua valido) — so' o handle esp_lcd_touch interno
+e' recriado. Fazer sob `lvgl_port_lock(-1)` + `board_i2c0_bus_lock` e no core
+certo. Adicionar contador exposto em /api/system/status.
+**Caveat validacao:** latch e' intermitente/nao-reproduzivel on-demand —
+validar so' que o forced del+begin re-inicia o touch sem partir o display
+(RGB/tearing). Refinar/medir em campo.
+**Nota:** device tem historico fragil (boot_count 612, heap_guard_reboots 97,
+RTC PCF85063A "indisponivel" em todo boot — tambem I2C0). Avaliar se o RTC
+morto e o GT911 latch tem causa comum (hardware/power I2C0) ao implementar.
+
+### AP-side ASSOC_LEAVE (analise feita — benigno)
+ASSOC_LEAVE reason 8 @~17s no boot e' BENIGNO: auto-recupera ~506ms
+(validado Event A v2.22). Logo apos `wifi_connect_wait(15s)` + RSSI -41..-63
+=> provavel band-steering / renegociacao DHCP do AP. O ASSOC_LEAVE
+*problematico* (bug original) era tardio/intermitente — coberto agora pelo
+self-heal v2.21+. Investigacao router-side fica pendente (precisa logs do AP).
+
+### Follow-up "voltou" — NAO e' bug
+SD app_log confirma `[WIFI] Voltou apos N s` a ser escrito no tick
+WL_CONNECTED. O "missing" na captura serial foi timing (janela/resets), nao
+gap de codigo. Sem accao.
+
 ## Em curso
-(nada — aguardar decisao proxima feature)
+(nada — v2.22 shipped; aguardar decisao proxima feature)
 
 ## Pendente
 
