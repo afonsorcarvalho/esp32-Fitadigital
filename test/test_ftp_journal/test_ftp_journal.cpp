@@ -1,6 +1,10 @@
 #include <unity.h>
 #include "../../src/ftp_journal_core.cpp"   // pure logic; native env does not build src/
 
+// Unity exige estes hooks (chamados antes/depois de cada teste).
+void setUp(void) {}
+void tearDown(void) {}
+
 void test_parse_basic(void) {
     auto m = ftpj::parse_journal("2026/06/20260625.txt|14320\n2026/06/cycles.ndjson|512\n");
     TEST_ASSERT_EQUAL_INT(2, (int)m.size());
