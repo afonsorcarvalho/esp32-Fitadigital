@@ -86,106 +86,10 @@ static volatile bool s_ever_rx = false;
 
 static void wg_apply_locked(void);
 
-/* v1.82: WiFi self-healing layered escalation state.
- *
- * Arduino-ESP32 WiFi.setAutoReconnect(true) confirmado estagnar pos-ASSOC_LEAVE
- * sob heap-pressure (sessao 2026-05-15: 37+ min sem reconnect spontaneo). Sem
- * kick explicito, device fica offline indefinidamente. Escalacao:
- *   T1 = 30s sem WL_CONNECTED   -> SOFT: net_wifi_begin_saved (Arduino API),
- *                                  uma unica tentativa por janela down.
- *   T2 = 5min ainda down        -> HARD: esp_wifi_stop/start + net_wifi_begin_saved
- *                                  (full IDF stack restart). REPETIVEL a cada 5 min
- *                                  enquanto WiFi nao voltar.
- *
- * Sem esp_restart() — constraint zero-reboot do device. Device fica online com
- * outras tasks (sd_io, RS485, LVGL, MQTT-quando-rede-volta) mesmo enquanto rede
- * estiver intermitente. Hard reset isola completamente o WiFi sem afectar resto.
- *
- * Executa no mesmo task que o WG re-apply (tick 20s). WG re-apply gated por
- * WiFi up — sem WiFi nao faz sentido WG. */
-static volatile uint32_t s_wifi_down_since_ms = 0;
-static volatile bool     s_wifi_soft_tried    = false;
-static volatile uint32_t s_wifi_last_hard_ms  = 0;  /* timestamp ultimo hard reset */
-static volatile uint32_t s_wifi_soft_count    = 0;
-static volatile uint32_t s_wifi_hard_count    = 0;
-
-/* Devolve true se WiFi up neste tick; false se down (caller skip WG re-apply). */
-static bool wifi_keepalive_tick(uint32_t now_ms) {
-  /* v1.89: removed service_supervisor_heartbeat("wifi") — WiFi nao esta
-   * registado no supervisor (ver wg_keepalive_start_once nota v1.89). */
-  if (WiFi.status() == WL_CONNECTED) {
-    if (s_wifi_down_since_ms != 0) {
-      const uint32_t down_ms = now_ms - s_wifi_down_since_ms;
-      Serial.printf("[NET-KA] WiFi voltou apos %u ms (soft=%u hard=%u)\n",
-                    (unsigned)down_ms, (unsigned)s_wifi_soft_count,
-                    (unsigned)s_wifi_hard_count);
-      app_log_feature_writef("INFO", "WIFI",
-                             "Voltou apos %u s (soft=%u hard=%u).",
-                             (unsigned)(down_ms / 1000U),
-                             (unsigned)s_wifi_soft_count,
-                             (unsigned)s_wifi_hard_count);
-    }
-    s_wifi_down_since_ms = 0;
-    s_wifi_soft_tried = false;
-    s_wifi_last_hard_ms = 0;
-    return true;
-  }
-
-  /* WiFi down */
-  if (s_wifi_down_since_ms == 0) {
-    s_wifi_down_since_ms = now_ms;
-    Serial.println("[NET-KA] WiFi DOWN detectado");
-    app_log_feature_write("WARN", "WIFI", "WiFi DOWN detectado.");
-    return false;
-  }
-
-  const uint32_t down_ms = now_ms - s_wifi_down_since_ms;
-  constexpr uint32_t kSoftThresholdMs = 30000U;   /* 30 s — 1x soft */
-  constexpr uint32_t kHardThresholdMs = 300000U;  /* 5 min — hard repetivel */
-
-  /* Hard reset repetivel: a cada 5 min sem WiFi (medido desde inicio do down
-   * OU desde ultimo hard, o que for mais tarde). */
-  const uint32_t since_last_hard = (s_wifi_last_hard_ms == 0)
-                                       ? down_ms
-                                       : (now_ms - s_wifi_last_hard_ms);
-  if (down_ms >= kHardThresholdMs && since_last_hard >= kHardThresholdMs) {
-    s_wifi_last_hard_ms = now_ms;
-    s_wifi_hard_count++;
-    Serial.printf("[NET-KA] WiFi down %u s — HARD reset stack (#%u)\n",
-                  (unsigned)(down_ms / 1000U), (unsigned)s_wifi_hard_count);
-    app_log_feature_writef("WARN", "WIFI",
-                           "Hard reset stack apos %u s (#%u).",
-                           (unsigned)(down_ms / 1000U),
-                           (unsigned)s_wifi_hard_count);
-    panic_breadcrumb_set("wifi_ka:hard:stop");
-    (void)esp_wifi_stop();
-    vTaskDelay(pdMS_TO_TICKS(200));
-    panic_breadcrumb_set("wifi_ka:hard:start");
-    (void)esp_wifi_start();
-    vTaskDelay(pdMS_TO_TICKS(200));
-    panic_breadcrumb_set("wifi_ka:hard:begin_saved");
-    net_wifi_begin_saved();
-    panic_breadcrumb_clear();
-    return false;
-  }
-
-  if (!s_wifi_soft_tried && down_ms >= kSoftThresholdMs) {
-    s_wifi_soft_tried = true;
-    s_wifi_soft_count++;
-    Serial.printf("[NET-KA] WiFi down %u s — SOFT reconnect (#%u)\n",
-                  (unsigned)(down_ms / 1000U), (unsigned)s_wifi_soft_count);
-    app_log_feature_writef("WARN", "WIFI",
-                           "Soft reconnect apos %u s (#%u).",
-                           (unsigned)(down_ms / 1000U),
-                           (unsigned)s_wifi_soft_count);
-    panic_breadcrumb_set("wifi_ka:soft:begin_saved");
-    net_wifi_begin_saved();
-    panic_breadcrumb_clear();
-    return false;
-  }
-
-  return false;
-}
+/* v2.21: wifi_keepalive_tick e as 5 state vars foram movidas para
+ * net_services.cpp como net_wifi_keepalive_tick() (sempre compilado).
+ * O call site abaixo foi actualizado para usar o nome publico.
+ * net_services.h esta incluido (linha 34). */
 
 /* in_filter_fn sentinel — atualiza last_rx_ms mas NAO eh usado para detection
  * (ver comment v1.72 acima). Util para diagnostico via /api/system/status
@@ -208,7 +112,7 @@ static void wg_keepalive_task(void *arg) {
     /* v1.89: removed service_supervisor_heartbeat("wg") — WG nao registado. */
     /* v1.82: WiFi self-healing antes do WG. Sem WiFi nao faz sentido WG;
      * tambem evita s_wg.begin() ler netif_default invalido. */
-    if (!wifi_keepalive_tick(millis())) continue;
+    if (!net_wifi_keepalive_tick(millis())) continue;
     if (!s_wg_active) continue;
     /* Telemetria peer_up — so' p/ log primeiro handshake. NAO gate o re-apply. */
     if (s_wg.is_peer_up()) {
@@ -303,18 +207,18 @@ size_t net_wireguard_status_json(char *out, size_t out_sz) {
   const uint32_t last_up_ago = (s_last_up_ms == 0U) ? 0U : (now - s_last_up_ms);
   const uint32_t last_rx_ago = (s_last_rx_ms == 0U) ? 0U : (now - s_last_rx_ms);
   const uint32_t last_apply_ago = (s_last_apply_ms == 0U) ? 0U : (now - s_last_apply_ms);
+  /* v2.21: wifi_soft_count/wifi_hard_count removidos daqui — state movido
+   * para net_services.cpp (net_wifi_keepalive_tick). */
   const int n = snprintf(out, out_sz,
       "{\"active\":%s,\"peer_up\":%s,\"ever_up\":%s,\"ever_rx\":%s,"
       "\"last_up_ms_ago\":%u,\"last_rx_ms_ago\":%u,\"last_apply_ms_ago\":%u,"
-      "\"reapply_count\":%u,\"wifi_soft_count\":%u,\"wifi_hard_count\":%u,"
-      "\"uptime_ms\":%u}",
+      "\"reapply_count\":%u,\"uptime_ms\":%u}",
       s_wg_active ? "true" : "false",
       peer_up ? "true" : "false",
       s_ever_up ? "true" : "false",
       s_ever_rx ? "true" : "false",
       (unsigned)last_up_ago, (unsigned)last_rx_ago, (unsigned)last_apply_ago,
       (unsigned)s_reapply_count,
-      (unsigned)s_wifi_soft_count, (unsigned)s_wifi_hard_count,
       (unsigned)now);
   if (n <= 0 || (size_t)n >= out_sz) return 0;
   return (size_t)n;

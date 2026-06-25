@@ -4,6 +4,8 @@
  */
 #pragma once
 
+#include <cstdint>
+
 void net_wifi_begin(const char *ssid, const char *pass);
 void net_wifi_begin_saved(void);
 
@@ -35,3 +37,11 @@ void net_services_set_ftp_suspended(bool suspended);
  * Usa polling adaptativo: ~10 Hz sem cliente, frequencia maxima com cliente ativo.
  */
 void net_services_sd_worker_tick(void);
+
+/**
+ * WiFi self-heal independente do WG (movido de net_wireguard.cpp em v2.21).
+ * SOFT 30s (net_wifi_begin_saved, 1x por janela down) ->
+ * HARD 90s (esp_wifi_stop/start + begin_saved, repetivel).
+ * Devolve true se WiFi esta up neste tick.
+ */
+bool net_wifi_keepalive_tick(uint32_t now_ms);
