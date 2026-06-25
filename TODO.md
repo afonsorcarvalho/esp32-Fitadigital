@@ -1,7 +1,32 @@
 # TODO — FitaDigital v2.x.x
 
-Main HEAD `<pending>` (v2.1.2). Worktree v2 merged + apagado.
+Main HEAD em v2.23 (commits `c153487` wifi self-heal + `0f9a2eb` ui teclado,
+push origin). Worktree v2 merged + apagado.
 Scope: WiFi + HTTP + RS485 + NTP + FTP server. Sem WG, sem MQTT, sem SCREENSHOT.
+
+## *** BRANCH `feature/tailscale-microlink` — viabilidade Tailscale (2026-06-25) ***
+
+Avaliacao de adoptar o microlink (https://github.com/CamM2325/microlink) para
+acesso remoto VPN via Tailscale. Relatorio completo: `docs/tailscale-microlink-viability.md`.
+
+**Veredicto:**
+- Hardware da placa **compativel** (PSRAM octal OPI, 16MB flash, Arduino 3.0.3 = IDF 5.1). Licenca MIT.
+- POC standalone **viavel** (recomendado como 1o passo de de-risk).
+- Integracao no firmware Arduino actual **NAO viavel as-is** — 2 bloqueios:
+  1. SRAM interna: microlink precisa ~116KB estatica + 42KB stacks; FitaDigital
+     corre com ~36KB livres e ja' tem 97 heap_guard_reboots (OOM cronico).
+  2. Build: microlink e' ESP-IDF puro (idf.py/sdkconfig); projeto e' Arduino/PlatformIO.
+- Riscos: wireguard-lwip (mesma familia buggy de antes), contencao PSRAM↔LCD RGB,
+  protocolo ts2021 por eng-reversa (1 autor, nao-afiliado Tailscale).
+- Merito: control plane gerido + DERP relay e' mais robusto que o WG custom abandonado.
+
+**Proximos passos (decisao do user — nada decidido ainda):**
+- [ ] POC standalone: placa S3 dedicada + ESP-IDF + Headscale/cloud, validar join
+      tailnet + ping cross-network (o ponto fraco do WG antigo). Risco zero ao
+      firmware de producao. Criterios pass/fail no relatorio.
+- [ ] Alternativa: co-processador/gateway separado (Tailscale noutra placa, bridge LAN).
+- [ ] Alternativa longo prazo: migrar FitaDigital Arduino -> ESP-IDF (esforco grande).
+- [ ] Ou arquivar e manter WG custom como unica opcao de acesso remoto.
 
 ## *** v2.1.2 PRODUCTION-READY *** (validado 2026-05-19 soak 8h)
 
