@@ -2546,6 +2546,70 @@ static void create_settings_screen(void) {
   lv_obj_add_flag(s_sett_ftp_kb, LV_OBJ_FLAG_HIDDEN);
   lv_keyboard_set_textarea(s_sett_ftp_kb, nullptr);
 
+  /* --- Bloco FTP-upload (cliente) --- */
+  srv_section_header(LV_SYMBOL_UPLOAD " Upload FTP");
+
+  {
+    lv_obj_t *en_row = lv_obj_create(srv_scroll);
+    lv_obj_set_width(en_row, LV_PCT(100));
+    lv_obj_set_height(en_row, LV_SIZE_CONTENT);
+    lv_obj_set_layout(en_row, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(en_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(en_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(en_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *en_lbl = lv_label_create(en_row);
+    lv_label_set_text(en_lbl, "Ativar upload");
+    s_sw_fup_en = lv_switch_create(en_row);
+    if (app_settings_ftp_up_enabled()) {
+      lv_obj_add_state(s_sw_fup_en, LV_STATE_CHECKED);
+    }
+  }
+
+  auto fup_field = [&](const char *label, bool pwd, bool numeric, const char *val) -> lv_obj_t * {
+    lv_obj_t *l = lv_label_create(srv_scroll);
+    lv_label_set_text(l, label);
+    lv_obj_t *ta = lv_textarea_create(srv_scroll);
+    lv_textarea_set_one_line(ta, true);
+    lv_obj_set_width(ta, LV_PCT(100));
+    if (pwd) {
+      lv_textarea_set_password_mode(ta, true);
+    }
+    if (numeric) {
+      lv_textarea_set_accepted_chars(ta, "0123456789");
+    }
+    lv_textarea_set_text(ta, val ? val : "");
+    lv_obj_add_event_cb(ta, settings_ftp_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
+    lv_obj_add_event_cb(ta, settings_ftp_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
+    return ta;
+  };
+
+  s_ta_fup_host = fup_field("Host:", false, false, app_settings_ftp_up_host().c_str());
+  {
+    char pbuf[8];
+    snprintf(pbuf, sizeof(pbuf), "%u", (unsigned)app_settings_ftp_up_port());
+    s_ta_fup_port = fup_field("Porta:", false, true, pbuf);
+  }
+  s_ta_fup_user = fup_field("Utilizador:", false, false, app_settings_ftp_up_user().c_str());
+  s_ta_fup_pass = fup_field("Senha:", true, false, app_settings_ftp_up_pass().c_str());
+  s_ta_fup_rdir = fup_field("Dir remoto:", false, false, app_settings_ftp_up_remote_dir().c_str());
+  {
+    char ibuf[8];
+    snprintf(ibuf, sizeof(ibuf), "%u", (unsigned)app_settings_ftp_up_interval_s());
+    s_ta_fup_iv = fup_field("Intervalo (s):", false, true, ibuf);
+  }
+
+  lv_obj_t *bt_save_fup = lv_btn_create(srv_scroll);
+  lv_obj_t *lbf = lv_label_create(bt_save_fup);
+  lv_label_set_text(lbf, LV_SYMBOL_SAVE " Salvar Upload");
+  lv_obj_center(lbf);
+  lv_obj_add_event_cb(bt_save_fup, settings_save_fup_cb, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t *bt_sync_now = lv_btn_create(srv_scroll);
+  lv_obj_t *lbn = lv_label_create(bt_sync_now);
+  lv_label_set_text(lbn, LV_SYMBOL_UPLOAD " Sincronizar agora");
+  lv_obj_center(lbn);
+  lv_obj_add_event_cb(bt_sync_now, settings_sync_now_cb, LV_EVENT_CLICKED, nullptr);
+
   /* --- Bloco WireGuard (dentro de srv_scroll) --- */
   srv_section_header(LV_SYMBOL_LOOP " WireGuard");
 
