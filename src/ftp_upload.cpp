@@ -20,6 +20,46 @@ void ftp_upload_request_now(void) {
 
 static void ftp_upload_task(void *arg);
 
+static const size_t kChunk = 2048;
+static uint8_t s_chunk[kChunk];
+
+// Le `vfs_path` em chunks via sd_io e envia por FTP. Devolve bytes enviados,
+// ou -1 em erro de leitura. O File e' aberto/lido/fechado SEMPRE no contexto sd_io;
+// o WriteData (rede) corre na task ftp_up entre chunks, sem bloquear o sd_io.
+static long ftp_stream_file(ESP32_FTPClient &ftp, const char *vfs_path, const char *remote_path) {
+  File f;
+  bool open_ok = false;
+  sd_access_sync([&]() {
+    f = SD.open(vfs_path, FILE_READ);
+    open_ok = (bool)f;
+  });
+  if (!open_ok) {
+    return -1;
+  }
+
+  ftp.InitFile("Type I");
+  ftp.NewFile(remote_path);  // STOR
+
+  long sent = 0;
+  for (;;) {
+    int n = 0;
+    sd_access_sync([&]() {
+      n = (int)f.read(s_chunk, kChunk);
+    });
+    if (n <= 0) {
+      break;
+    }
+    ftp.WriteData(s_chunk, n);
+    sent += n;
+  }
+  ftp.CloseFile();
+
+  sd_access_sync([&]() {
+    f.close();
+  });
+  return sent;
+}
+
 void ftp_upload_init(void) {
   if (s_task != nullptr) {
     return;
