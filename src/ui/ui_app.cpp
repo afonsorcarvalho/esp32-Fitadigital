@@ -34,6 +34,7 @@
 #include "ui/ui_theme.h"
 #include "ota_manager.h"
 #include "net_mqtt.h"
+#include "ftp_upload.h"
 
 static constexpr int kStatusBarH = 46;
 
@@ -77,6 +78,14 @@ static lv_obj_t *s_ta_ftp_user = nullptr;
 static lv_obj_t *s_ta_ftp_pass = nullptr;
 static lv_obj_t *s_sett_ftp_kb = nullptr;
 static lv_obj_t *s_ftp_feedback_lbl = nullptr;
+/* Aba SRV — seccao FTP-upload (cliente). */
+static lv_obj_t *s_ta_fup_host = nullptr;
+static lv_obj_t *s_ta_fup_port = nullptr;
+static lv_obj_t *s_ta_fup_user = nullptr;
+static lv_obj_t *s_ta_fup_pass = nullptr;
+static lv_obj_t *s_ta_fup_rdir = nullptr;
+static lv_obj_t *s_ta_fup_iv = nullptr;
+static lv_obj_t *s_sw_fup_en = nullptr;
 static lv_obj_t *s_font_slider    = nullptr;
 static lv_obj_t *s_scr_sw         = nullptr;
 static lv_obj_t *s_scr_timeout_sl = nullptr;
@@ -1751,6 +1760,37 @@ static void settings_save_ftp_cb(lv_event_t *e) {
   app_settings_set_ftp(u, p);
   net_services_ftp_restart();
   ui_toast_show(ToastKind::Success, "FTP guardado e a reiniciar");
+}
+
+static void settings_save_fup_cb(lv_event_t *e) {
+  (void)e;
+  if (s_ta_fup_host == nullptr) {
+    return;
+  }
+  const char *host = lv_textarea_get_text(s_ta_fup_host);
+  const char *ports = lv_textarea_get_text(s_ta_fup_port);
+  const char *user = lv_textarea_get_text(s_ta_fup_user);
+  const char *pass = lv_textarea_get_text(s_ta_fup_pass);
+  const char *rdir = lv_textarea_get_text(s_ta_fup_rdir);
+  const char *ivs = lv_textarea_get_text(s_ta_fup_iv);
+
+  long port = (ports && *ports) ? strtol(ports, nullptr, 10) : 21;
+  long iv = (ivs && *ivs) ? strtol(ivs, nullptr, 10) : 300;
+
+  app_settings_set_ftp_up_host(host ? host : "");
+  app_settings_set_ftp_up_port((uint16_t)(port <= 0 ? 21 : port));
+  app_settings_set_ftp_up_creds(user ? user : "", pass ? pass : "");
+  app_settings_set_ftp_up_remote_dir((rdir && *rdir) ? rdir : "/");
+  app_settings_set_ftp_up_interval_s((uint16_t)(iv < 30 ? 30 : iv));
+  app_settings_set_ftp_up_enabled(s_sw_fup_en && lv_obj_has_state(s_sw_fup_en, LV_STATE_CHECKED));
+
+  ui_toast_show(ToastKind::Success, "Upload FTP guardado");
+}
+
+static void settings_sync_now_cb(lv_event_t *e) {
+  (void)e;
+  ftp_upload_request_now();
+  ui_toast_show(ToastKind::Info, "Sincronizacao FTP pedida");
 }
 
 static char s_tz_roller_buf[512];
