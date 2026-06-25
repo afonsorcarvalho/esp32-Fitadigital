@@ -49,6 +49,7 @@
 #include "net_mqtt.h"
 #include "net_mqtt_keywords.h"
 #include "screenshot.h"
+#include "ftp_upload.h"
 #include "service_supervisor.h"
 
 /** SPI dedicado ao TF (pinos em `board_pins.h`, documentação Waveshare). */
@@ -360,6 +361,7 @@ void setup() {
 #else
   Serial.println("[BUILD] SCREENSHOT disabled");
 #endif
+  ftp_upload_init();  /* cliente FTP-upload: task ftp_up (gated por settings) */
 
   /* Telemetria de heap + watchdog: 30s, reboot graceful se int_free < 6 KB. */
   heap_monitor_start();
