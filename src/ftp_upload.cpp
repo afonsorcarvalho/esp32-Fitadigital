@@ -60,6 +60,30 @@ static long ftp_stream_file(ESP32_FTPClient &ftp, const char *vfs_path, const ch
   return sent;
 }
 
+// Emite "SIZE <path>" no socket de controlo e devolve o tamanho remoto, ou -1.
+// O servidor responde "213 <n>". Em binario (Type I) o SIZE e' fiavel.
+static long ftp_remote_size(ESP32_FTPClient &ftp, const char *remote_path) {
+  char cmd[160];
+  snprintf(cmd, sizeof(cmd), "SIZE %s\r\n", remote_path);
+  ftp.Write(cmd);
+
+  char resp[64] = {0};
+  ftp.GetFTPAnswer(resp, 0);
+  // Procura "213" e o numero que se segue.
+  char *p = strstr(resp, "213");
+  if (p == nullptr) {
+    return -1;
+  }
+  p += 3;
+  while (*p == ' ') {
+    p++;
+  }
+  if (*p < '0' || *p > '9') {
+    return -1;
+  }
+  return strtol(p, nullptr, 10);
+}
+
 void ftp_upload_init(void) {
   if (s_task != nullptr) {
     return;
