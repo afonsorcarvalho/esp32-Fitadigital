@@ -86,6 +86,7 @@ static lv_obj_t *s_ta_fup_pass = nullptr;
 static lv_obj_t *s_ta_fup_rdir = nullptr;
 static lv_obj_t *s_ta_fup_iv = nullptr;
 static lv_obj_t *s_sw_fup_en = nullptr;
+static bool s_fup_pass_revealed = false;
 static lv_obj_t *s_font_slider    = nullptr;
 static lv_obj_t *s_scr_sw         = nullptr;
 static lv_obj_t *s_scr_timeout_sl = nullptr;
@@ -1793,6 +1794,20 @@ static void settings_sync_now_cb(lv_event_t *e) {
   ui_toast_show(ToastKind::Info, "Sincronizacao FTP pedida");
 }
 
+/* Alterna a visibilidade da senha de upload FTP (botao olho). */
+static void settings_fup_toggle_pass_cb(lv_event_t *e) {
+  if (s_ta_fup_pass == nullptr) return;
+  s_fup_pass_revealed = !s_fup_pass_revealed;
+  lv_textarea_set_password_mode(s_ta_fup_pass, !s_fup_pass_revealed);
+  lv_obj_t *lbl = (lv_obj_t *)lv_event_get_user_data(e);
+  if (lbl != nullptr) {
+    lv_label_set_text(lbl,
+                      s_fup_pass_revealed
+                          ? (LV_SYMBOL_EYE_CLOSE " Esconder senha")
+                          : (LV_SYMBOL_EYE_OPEN " Mostrar senha"));
+  }
+}
+
 static char s_tz_roller_buf[512];
 /** Opcoes do roller de baud RS485 (geradas a partir de `app_settings_rs485_std_baud`). */
 static char s_rs485_baud_roller_buf[256];
@@ -2591,6 +2606,16 @@ static void create_settings_screen(void) {
   }
   s_ta_fup_user = fup_field("Utilizador:", false, false, app_settings_ftp_up_user().c_str());
   s_ta_fup_pass = fup_field("Senha:", true, false, app_settings_ftp_up_pass().c_str());
+  s_fup_pass_revealed = false;
+  {
+    lv_obj_t *bt_fup_eye = lv_btn_create(srv_scroll);
+    lv_obj_set_width(bt_fup_eye, LV_PCT(100));
+    lv_obj_set_style_bg_color(bt_fup_eye, UI_COLOR_TEXT_MUTED, 0);
+    lv_obj_t *lb_eye = lv_label_create(bt_fup_eye);
+    lv_label_set_text(lb_eye, LV_SYMBOL_EYE_OPEN " Mostrar senha");
+    lv_obj_center(lb_eye);
+    lv_obj_add_event_cb(bt_fup_eye, settings_fup_toggle_pass_cb, LV_EVENT_CLICKED, lb_eye);
+  }
   s_ta_fup_rdir = fup_field("Dir remoto:", false, false, app_settings_ftp_up_remote_dir().c_str());
   {
     char ibuf[8];
