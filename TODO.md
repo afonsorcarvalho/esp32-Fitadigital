@@ -1,7 +1,90 @@
 # TODO — FitaDigital v2.x.x
 
-Main HEAD `<pending>` (v2.1.2). Worktree v2 merged + apagado.
+Main HEAD em v2.23 (commits `c153487` wifi self-heal + `0f9a2eb` ui teclado,
+push origin). Worktree v2 merged + apagado.
 Scope: WiFi + HTTP + RS485 + NTP + FTP server. Sem WG, sem MQTT, sem SCREENSHOT.
+
+## *** INTEGRIDADE .txt — cadeia HMAC inline (v2.24, 2026-06-26) ***
+
+Cada linha gravada leva `\t<seq>\t<mac8hex>` (HMAC-SHA256/32 truncado, encadeado
+na anterior). Password hardcoded global (`FDIGI_INT_SECRET`, gitignored). Deteta
+editar/inserir/remover/reordenar. Verificacao offline no PC: `tools/verify_integrity.py`.
+Plano: `.claude/plans/vamos-estudar-o-caso-giggly-bumblebee.md`.
+
+### Validado no rig do user (SD + RS485 reais — 2026-06-26)
+- [x] Toggle "Integridade dos .txt (HMAC)" ligado em Definicoes.
+- [x] Ciclo real RS485 -> .txt com cabecalho `#FDIGI-INT` seq0 -> `verify_integrity.py` ⇒ `OK`
+      (4 linhas, dev=8032B19E139C).
+- [x] Teste adulteracao: editar linha ⇒ `ADULTERADO ... mac nao bate`; remover ⇒ seq gap;
+      reordenar ⇒ seq gap. Tudo aponta a linha exacta.
+- [x] **Fix de ordenacao** (revisao): abrir SD ANTES de prepare()/compose() nos 2
+      escritores; senao open falhado avancava a cadeia sem gravar -> header perdido +
+      gap de seq -> falso ADULTERADO. Flashado v2.24.
+- [ ] Teste reboot a meio do dia: cadeia continua (recuperacao por tail). *(nao testado on-rig)*
+- [ ] **TROCAR** `src/integrity_secret.h` para password real antes de producao.
+
+### Feito (2026-06-26)
+- [x] Modulo `src/cycle_integrity.{h,cpp}`: cadeia HMAC, seed por path, cabecalho
+      `#FDIGI-INT`, recuperacao por tail, init lazy.
+- [x] Integracao nos 2 escritores (`cycles_rs485.cpp` + `rs485_buffer.cpp` flush),
+      ambos no contexto `sd_io` (cadeia partilhada, sem locks).
+- [x] Setting NVS `int_en` (default OFF) + toggle na aba Definicoes (ui_app.cpp).
+- [x] Password via `FDIGI_INT_SECRET` (header gitignored + `.example`); `#error` se ausente.
+- [x] `tools/verify_integrity.py` (+ `--clean` p/ leitura humana). Paridade firmware↔PC
+      validada por simulacao (good/tamper/delete/forge/wrong-key).
+- [x] Build v2.24 OK (RAM 39.3%, flash 37.3%), flash COM3, boot estavel sem crash.
+- [ ] Commit (a pedido do user).
+
+## *** BRANCH `feature/ftp-upload` — cliente FTP-upload (2026-06-25) ***
+
+Nova feature: empurra `/CICLOS` do SD para um servidor FTP remoto, so' os
+ficheiros novos/modificados (deteccao por TAMANHO), com journal e verificacao
+por SIZE antes de marcar como sincronizado. Task dedicada `ftp_up`, leitura do
+SD em chunks via sd_access (RS485-safe). Spec `docs/superpowers/specs/2026-06-25-ftp-upload-client-design.md`,
+plano `docs/superpowers/plans/2026-06-25-ftp-upload-client.md`.
+
+### Em curso
+- [ ] Validacao em hardware contra servidor real `sistema.fitadigital.com.br`
+      (user testa; ler resultado em Definicoes -> Logs, linhas `FTPUP`).
+      Falhas anteriores foram so' auth (USER rejeitado) — config, nao codigo.
+- [ ] Soak: RS485 sender continuo durante uploads -> confirmar zero linhas
+      perdidas + heap estavel (criterio de aceitacao: captura nunca para).
+
+### Feito (2026-06-25)
+- [x] Core logica pura `ftp_journal_core` + testes Unity nativos (6/6 PASS via
+      LLVM-MinGW host, env `[env:native]`).
+- [x] Settings NVS (`fup_*`) + espelho `/fdigi.cfg`.
+- [x] Motor `ftp_upload.cpp`: scan recursivo, MKD arvore, upload chunked, gate SIZE, journal.
+- [x] UI: seccao "Upload FTP" na aba SRV + botao "Sincronizar agora" + botao olho mostrar senha.
+- [x] Init no boot (apos screenshot, fora do `#if FITA_ENABLE_SCREENSHOT`).
+- [x] **Fix 2 bugs criticos** (revisao final): fork local `lib/ESP32_FTPClient`
+      com `Size()` correcto — upstream `Write()` ia para o socket de DADOS e
+      `GetFTPAnswer()` estourava buffer 64->128B. Sem isto, verificacao nunca
+      passava (re-upload eterno) + stack overflow por verify.
+
+## *** BRANCH `feature/tailscale-microlink` — viabilidade Tailscale (2026-06-25) ***
+
+Avaliacao de adoptar o microlink (https://github.com/CamM2325/microlink) para
+acesso remoto VPN via Tailscale. Relatorio completo: `docs/tailscale-microlink-viability.md`.
+
+**Veredicto:**
+- Hardware da placa **compativel** (PSRAM octal OPI, 16MB flash, Arduino 3.0.3 = IDF 5.1). Licenca MIT.
+- POC standalone **viavel** (recomendado como 1o passo de de-risk).
+- Integracao no firmware Arduino actual **NAO viavel as-is** — 2 bloqueios:
+  1. SRAM interna: microlink precisa ~116KB estatica + 42KB stacks; FitaDigital
+     corre com ~36KB livres e ja' tem 97 heap_guard_reboots (OOM cronico).
+  2. Build: microlink e' ESP-IDF puro (idf.py/sdkconfig); projeto e' Arduino/PlatformIO.
+- Riscos: wireguard-lwip (mesma familia buggy de antes), contencao PSRAM↔LCD RGB,
+  protocolo ts2021 por eng-reversa (1 autor, nao-afiliado Tailscale).
+- Merito: control plane gerido + DERP relay e' mais robusto que o WG custom abandonado.
+
+**Proximos passos (decisao do user — nada decidido ainda):**
+- [ ] POC standalone: placa S3 dedicada + ESP-IDF + Headscale/cloud, validar join
+      tailnet + ping cross-network (o ponto fraco do WG antigo). Risco zero ao
+      firmware de producao. Criterios pass/fail no relatorio.
+- [ ] Alternativa: co-processador/gateway separado (Tailscale noutra placa, bridge LAN).
+- [ ] Alternativa longo prazo: migrar FitaDigital Arduino -> ESP-IDF (esforco grande).
+- [ ] Ou arquivar e manter WG custom como unica opcao de acesso remoto.
 
 ## *** v2.1.2 PRODUCTION-READY *** (validado 2026-05-19 soak 8h)
 

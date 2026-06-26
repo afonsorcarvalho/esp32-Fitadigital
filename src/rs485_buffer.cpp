@@ -15,6 +15,7 @@
 
 #include "rs485_buffer.h"
 #include "cycles_rs485.h"   /* cycles_rs485_format_path_from_tm, cycles_rs485_mkdirs_for_ym */
+#include "cycle_integrity.h"
 #include "sd_access.h"
 #include "app_log.h"
 
@@ -216,17 +217,45 @@ void rs485_buffer_flush_to_sd(void) {
             continue;
         }
 
-        /* Escrever no SD. */
-        File fw = SD.open(path, FILE_APPEND);
-        if (!fw) {
-            app_log_writef("WARN", "[rs485_buffer] flush: erro ao abrir SD %s", path);
-            sd_error = true;
-            break;
-        }
-        (void)fw.write(reinterpret_cast<const uint8_t *>(content), content_len);
+        /* Escrever no SD (mesma cadeia de integridade que cycles_rs485). */
         const uint8_t nl = static_cast<uint8_t>('\n');
-        (void)fw.write(&nl, 1U);
-        fw.close();
+        if (cycle_integrity_enabled()) {
+            /* Abrir o SD PRIMEIRO: so' avancar a cadeia (prepare/compose mutam
+             * estado global) depois de garantir o ficheiro. Senao um open falhado
+             * marcava s_chain_path/seq sem gravar nada e o retro desta linha (ficheiro
+             * SPIFFS mantido) reescrevia seq=N+1 num ficheiro vazio sem header. */
+            File fw = SD.open(path, FILE_APPEND);
+            if (!fw) {
+                app_log_writef("WARN", "[rs485_buffer] flush: erro ao abrir SD %s", path);
+                sd_error = true;
+                break;
+            }
+            char hdr[96];
+            const size_t hlen = cycle_integrity_prepare(path, hdr, sizeof(hdr));
+            char composed[600];
+            const size_t clen = cycle_integrity_compose(content, content_len, composed, sizeof(composed));
+            if (hlen > 0U) {
+                (void)fw.write(reinterpret_cast<const uint8_t *>(hdr), hlen);
+                (void)fw.write(&nl, 1U);
+            }
+            if (clen > 0U) {
+                (void)fw.write(reinterpret_cast<const uint8_t *>(composed), clen);
+            } else {
+                (void)fw.write(reinterpret_cast<const uint8_t *>(content), content_len);
+            }
+            (void)fw.write(&nl, 1U);
+            fw.close();
+        } else {
+            File fw = SD.open(path, FILE_APPEND);
+            if (!fw) {
+                app_log_writef("WARN", "[rs485_buffer] flush: erro ao abrir SD %s", path);
+                sd_error = true;
+                break;
+            }
+            (void)fw.write(reinterpret_cast<const uint8_t *>(content), content_len);
+            (void)fw.write(&nl, 1U);
+            fw.close();
+        }
         ++n_ok;
     }
 

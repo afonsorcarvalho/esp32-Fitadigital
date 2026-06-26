@@ -34,6 +34,7 @@
 #include "ui/ui_theme.h"
 #include "ota_manager.h"
 #include "net_mqtt.h"
+#include "ftp_upload.h"
 
 static constexpr int kStatusBarH = 46;
 
@@ -77,6 +78,15 @@ static lv_obj_t *s_ta_ftp_user = nullptr;
 static lv_obj_t *s_ta_ftp_pass = nullptr;
 static lv_obj_t *s_sett_ftp_kb = nullptr;
 static lv_obj_t *s_ftp_feedback_lbl = nullptr;
+/* Aba SRV — seccao FTP-upload (cliente). */
+static lv_obj_t *s_ta_fup_host = nullptr;
+static lv_obj_t *s_ta_fup_port = nullptr;
+static lv_obj_t *s_ta_fup_user = nullptr;
+static lv_obj_t *s_ta_fup_pass = nullptr;
+static lv_obj_t *s_ta_fup_rdir = nullptr;
+static lv_obj_t *s_ta_fup_iv = nullptr;
+static lv_obj_t *s_sw_fup_en = nullptr;
+static bool s_fup_pass_revealed = false;
 static lv_obj_t *s_font_slider    = nullptr;
 static lv_obj_t *s_scr_sw         = nullptr;
 static lv_obj_t *s_scr_timeout_sl = nullptr;
@@ -1096,6 +1106,11 @@ static void scr_sw_cb(lv_event_t *e) {
   app_settings_set_screensaver_enabled(lv_obj_has_state(sw, LV_STATE_CHECKED));
 }
 
+static void integrity_sw_cb(lv_event_t *e) {
+  lv_obj_t *sw = lv_event_get_target(e);
+  app_settings_set_integrity_enabled(lv_obj_has_state(sw, LV_STATE_CHECKED));
+}
+
 static void dark_mode_sw_cb(lv_event_t *e) {
   lv_obj_t *sw = lv_event_get_target(e);
   bool on = lv_obj_has_state(sw, LV_STATE_CHECKED);
@@ -1751,6 +1766,51 @@ static void settings_save_ftp_cb(lv_event_t *e) {
   app_settings_set_ftp(u, p);
   net_services_ftp_restart();
   ui_toast_show(ToastKind::Success, "FTP guardado e a reiniciar");
+}
+
+static void settings_save_fup_cb(lv_event_t *e) {
+  (void)e;
+  if (s_ta_fup_host == nullptr) {
+    return;
+  }
+  const char *host = lv_textarea_get_text(s_ta_fup_host);
+  const char *ports = lv_textarea_get_text(s_ta_fup_port);
+  const char *user = lv_textarea_get_text(s_ta_fup_user);
+  const char *pass = lv_textarea_get_text(s_ta_fup_pass);
+  const char *rdir = lv_textarea_get_text(s_ta_fup_rdir);
+  const char *ivs = lv_textarea_get_text(s_ta_fup_iv);
+
+  long port = (ports && *ports) ? strtol(ports, nullptr, 10) : 21;
+  long iv = (ivs && *ivs) ? strtol(ivs, nullptr, 10) : 300;
+
+  app_settings_set_ftp_up_host(host ? host : "");
+  app_settings_set_ftp_up_port((uint16_t)(port <= 0 ? 21 : port));
+  app_settings_set_ftp_up_creds(user ? user : "", pass ? pass : "");
+  app_settings_set_ftp_up_remote_dir((rdir && *rdir) ? rdir : "/");
+  app_settings_set_ftp_up_interval_s((uint16_t)(iv < 30 ? 30 : iv));
+  app_settings_set_ftp_up_enabled(s_sw_fup_en && lv_obj_has_state(s_sw_fup_en, LV_STATE_CHECKED));
+
+  ui_toast_show(ToastKind::Success, "Upload FTP guardado");
+}
+
+static void settings_sync_now_cb(lv_event_t *e) {
+  (void)e;
+  ftp_upload_request_now();
+  ui_toast_show(ToastKind::Info, "Sincronizacao FTP pedida");
+}
+
+/* Alterna a visibilidade da senha de upload FTP (botao olho). */
+static void settings_fup_toggle_pass_cb(lv_event_t *e) {
+  if (s_ta_fup_pass == nullptr) return;
+  s_fup_pass_revealed = !s_fup_pass_revealed;
+  lv_textarea_set_password_mode(s_ta_fup_pass, !s_fup_pass_revealed);
+  lv_obj_t *lbl = (lv_obj_t *)lv_event_get_user_data(e);
+  if (lbl != nullptr) {
+    lv_label_set_text(lbl,
+                      s_fup_pass_revealed
+                          ? (LV_SYMBOL_EYE_CLOSE " Esconder senha")
+                          : (LV_SYMBOL_EYE_OPEN " Mostrar senha"));
+  }
 }
 
 static char s_tz_roller_buf[512];
@@ -2506,6 +2566,80 @@ static void create_settings_screen(void) {
   lv_obj_add_flag(s_sett_ftp_kb, LV_OBJ_FLAG_HIDDEN);
   lv_keyboard_set_textarea(s_sett_ftp_kb, nullptr);
 
+  /* --- Bloco FTP-upload (cliente) --- */
+  srv_section_header(LV_SYMBOL_UPLOAD " Upload FTP");
+
+  {
+    lv_obj_t *en_row = lv_obj_create(srv_scroll);
+    lv_obj_set_width(en_row, LV_PCT(100));
+    lv_obj_set_height(en_row, LV_SIZE_CONTENT);
+    lv_obj_set_layout(en_row, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(en_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(en_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(en_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *en_lbl = lv_label_create(en_row);
+    lv_label_set_text(en_lbl, "Ativar upload");
+    s_sw_fup_en = lv_switch_create(en_row);
+    if (app_settings_ftp_up_enabled()) {
+      lv_obj_add_state(s_sw_fup_en, LV_STATE_CHECKED);
+    }
+  }
+
+  auto fup_field = [&](const char *label, bool pwd, bool numeric, const char *val) -> lv_obj_t * {
+    lv_obj_t *l = lv_label_create(srv_scroll);
+    lv_label_set_text(l, label);
+    lv_obj_t *ta = lv_textarea_create(srv_scroll);
+    lv_textarea_set_one_line(ta, true);
+    lv_obj_set_width(ta, LV_PCT(100));
+    if (pwd) {
+      lv_textarea_set_password_mode(ta, true);
+    }
+    if (numeric) {
+      lv_textarea_set_accepted_chars(ta, "0123456789");
+    }
+    lv_textarea_set_text(ta, val ? val : "");
+    lv_obj_add_event_cb(ta, settings_ftp_ta_kb_event_cb, LV_EVENT_FOCUSED, nullptr);
+    lv_obj_add_event_cb(ta, settings_ftp_ta_kb_event_cb, LV_EVENT_DEFOCUSED, nullptr);
+    return ta;
+  };
+
+  s_ta_fup_host = fup_field("Host:", false, false, app_settings_ftp_up_host().c_str());
+  {
+    char pbuf[8];
+    snprintf(pbuf, sizeof(pbuf), "%u", (unsigned)app_settings_ftp_up_port());
+    s_ta_fup_port = fup_field("Porta:", false, true, pbuf);
+  }
+  s_ta_fup_user = fup_field("Utilizador:", false, false, app_settings_ftp_up_user().c_str());
+  s_ta_fup_pass = fup_field("Senha:", true, false, app_settings_ftp_up_pass().c_str());
+  s_fup_pass_revealed = false;
+  {
+    lv_obj_t *bt_fup_eye = lv_btn_create(srv_scroll);
+    lv_obj_set_width(bt_fup_eye, LV_PCT(100));
+    lv_obj_set_style_bg_color(bt_fup_eye, UI_COLOR_TEXT_MUTED, 0);
+    lv_obj_t *lb_eye = lv_label_create(bt_fup_eye);
+    lv_label_set_text(lb_eye, LV_SYMBOL_EYE_OPEN " Mostrar senha");
+    lv_obj_center(lb_eye);
+    lv_obj_add_event_cb(bt_fup_eye, settings_fup_toggle_pass_cb, LV_EVENT_CLICKED, lb_eye);
+  }
+  s_ta_fup_rdir = fup_field("Dir remoto:", false, false, app_settings_ftp_up_remote_dir().c_str());
+  {
+    char ibuf[8];
+    snprintf(ibuf, sizeof(ibuf), "%u", (unsigned)app_settings_ftp_up_interval_s());
+    s_ta_fup_iv = fup_field("Intervalo (s):", false, true, ibuf);
+  }
+
+  lv_obj_t *bt_save_fup = lv_btn_create(srv_scroll);
+  lv_obj_t *lbf = lv_label_create(bt_save_fup);
+  lv_label_set_text(lbf, LV_SYMBOL_SAVE " Salvar Upload");
+  lv_obj_center(lbf);
+  lv_obj_add_event_cb(bt_save_fup, settings_save_fup_cb, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t *bt_sync_now = lv_btn_create(srv_scroll);
+  lv_obj_t *lbn = lv_label_create(bt_sync_now);
+  lv_label_set_text(lbn, LV_SYMBOL_UPLOAD " Sincronizar agora");
+  lv_obj_center(lbn);
+  lv_obj_add_event_cb(bt_sync_now, settings_sync_now_cb, LV_EVENT_CLICKED, nullptr);
+
   /* --- Bloco WireGuard (dentro de srv_scroll) --- */
   srv_section_header(LV_SYMBOL_LOOP " WireGuard");
 
@@ -3017,6 +3151,27 @@ static void create_settings_screen(void) {
     lv_obj_add_state(dark_sw, LV_STATE_CHECKED);
   }
   lv_obj_add_event_cb(dark_sw, dark_mode_sw_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+  /* Separador INTEGRIDADE */
+  lv_obj_t *integ_sep = lv_label_create(tab_ui);
+  lv_label_set_text(integ_sep, "Integridade dos .txt (HMAC):");
+
+  lv_obj_t *integ_row = lv_obj_create(tab_ui);
+  lv_obj_set_size(integ_row, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_layout(integ_row, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(integ_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(integ_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_border_width(integ_row, 0, 0);
+  lv_obj_set_style_bg_opa(integ_row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_pad_all(integ_row, 0, 0);
+  lv_obj_clear_flag(integ_row, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t *integ_lbl = lv_label_create(integ_row);
+  lv_label_set_text(integ_lbl, "Assinar linhas");
+  lv_obj_t *integ_sw = lv_switch_create(integ_row);
+  if (app_settings_integrity_enabled()) {
+    lv_obj_add_state(integ_sw, LV_STATE_CHECKED);
+  }
+  lv_obj_add_event_cb(integ_sw, integrity_sw_cb, LV_EVENT_VALUE_CHANGED, nullptr);
 
   /* Separador */
   lv_obj_t *scr_sep = lv_label_create(tab_ui);

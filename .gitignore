@@ -65,6 +65,9 @@ venv/
 # secrets.ini
 tools/test_out/
 
+# Password de integridade dos .txt (cadeia HMAC). Versionar so' o .example.
+src/integrity_secret.h
+
 # Claude Code (project agents, skills, settings locais)
 .claude/
 

@@ -35,6 +35,7 @@
 #include "net_services.h"
 #include "sd_access.h"
 #include "cycles_rs485.h"
+#include "cycle_integrity.h"
 #include "cycle_detector.h"
 #include "rs485_buffer.h"
 #include "net_time.h"
@@ -49,6 +50,7 @@
 #include "net_mqtt.h"
 #include "net_mqtt_keywords.h"
 #include "screenshot.h"
+#include "ftp_upload.h"
 #include "service_supervisor.h"
 
 /** SPI dedicado ao TF (pinos em `board_pins.h`, documentação Waveshare). */
@@ -179,6 +181,7 @@ void setup() {
   Serial.printf("[BOOT] FitaDigital firmware v%s\n", FITADIGITAL_VERSION);
   Serial.println(String(title) + " start");
   app_settings_init();
+  cycle_integrity_init();  /* incondicional: cadeia HMAC pronta antes de qualquer escrita .txt */
   (void)boot_journal_init();
   (void)boot_journal_reset();
   panic_logger_init();  /* v1.84: log breadcrumb se reset por TWDT/panic */
@@ -360,6 +363,7 @@ void setup() {
 #else
   Serial.println("[BUILD] SCREENSHOT disabled");
 #endif
+  ftp_upload_init();  /* cliente FTP-upload: task ftp_up (gated por settings) */
 
   /* Telemetria de heap + watchdog: 30s, reboot graceful se int_free < 6 KB. */
   heap_monitor_start();

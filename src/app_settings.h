@@ -45,6 +45,37 @@ String app_settings_ftp_pass(void);
 /** Grava credenciais FTP (truncadas ao limite da biblioteca). */
 void app_settings_set_ftp(const char *user, const char *pass);
 
+/* ------------------------------------------------------------------ */
+/* FTP-upload client (push de /CICLOS para servidor FTP remoto)         */
+/* ------------------------------------------------------------------ */
+
+/** Liga/desliga o cliente de upload FTP. Default false. */
+bool app_settings_ftp_up_enabled(void);
+void app_settings_set_ftp_up_enabled(bool on);
+
+/** Host do servidor FTP remoto (IP/hostname). Max 127 chars. Default "". */
+String app_settings_ftp_up_host(void);
+void   app_settings_set_ftp_up_host(const char *host);
+
+/** Porta FTP. Default 21. */
+uint16_t app_settings_ftp_up_port(void);
+void     app_settings_set_ftp_up_port(uint16_t port);
+
+/** Utilizador FTP (max 31 chars). */
+String app_settings_ftp_up_user(void);
+/** Password FTP (max 31 chars). */
+String app_settings_ftp_up_pass(void);
+/** Grava utilizador+password atomicamente. */
+void   app_settings_set_ftp_up_creds(const char *user, const char *pass);
+
+/** Directorio base remoto (ex.: "/" ou "/fitadigital"). Max 127 chars. Default "/". */
+String app_settings_ftp_up_remote_dir(void);
+void   app_settings_set_ftp_up_remote_dir(const char *dir);
+
+/** Intervalo entre passagens de upload, em segundos. Clamp [30..86400]. Default 300. */
+uint16_t app_settings_ftp_up_interval_s(void);
+void     app_settings_set_ftp_up_interval_s(uint16_t secs);
+
 /** NTP ativo por defeito; servidor por defeito "pool.ntp.org". */
 bool app_settings_ntp_enabled(void);
 void app_settings_set_ntp_enabled(bool on);
@@ -80,6 +111,10 @@ bool app_settings_screensaver_enabled(void);
 void app_settings_set_screensaver_enabled(bool on);
 uint16_t app_settings_screensaver_timeout(void);
 void app_settings_set_screensaver_timeout(uint16_t secs);
+
+/** Integridade dos .txt: liga/desliga a cadeia HMAC inline por linha. Default false. */
+bool app_settings_integrity_enabled(void);
+void app_settings_set_integrity_enabled(bool on);
 
 /** WireGuard (biblioteca ciniml/WireGuard-ESP32): requer Wi-Fi e hora valida (NTP). */
 bool app_settings_wireguard_enabled(void);

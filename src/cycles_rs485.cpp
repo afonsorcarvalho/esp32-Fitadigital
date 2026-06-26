@@ -4,6 +4,7 @@
  */
 #include "cycles_rs485.h"
 #include "cycle_detector.h"
+#include "cycle_integrity.h"
 #include "rs485_buffer.h"
 #include "service_supervisor.h"
 #include "ui/ui_screensaver.h"
@@ -216,15 +217,43 @@ static void append_line_sync(const char *line, size_t line_len) {
   if (!cycles_rs485_format_path_from_tm(&lt, path, sizeof path)) {
     return;
   }
-  File f = SD.open(path, FILE_APPEND);
-  if (!f) {
-    app_log_writef("WARN", "RS485: falha ao abrir para append: %s", path);
-    return;
-  }
-  (void)f.write(reinterpret_cast<const uint8_t *>(line), line_len);
   const uint8_t nl = static_cast<uint8_t>('\n');
-  (void)f.write(&nl, 1U);
-  f.close();
+  if (cycle_integrity_enabled()) {
+    /* Cadeia HMAC inline: cabecalho (se ficheiro novo) + linha assinada.
+     * Abrir o SD PRIMEIRO: prepare()/compose() mutam o estado da cadeia, logo so'
+     * podem correr depois de garantir que o ficheiro abriu (senao avancariamos a
+     * cadeia sem nada gravado -> header perdido + gap de seq -> falso ADULTERADO). */
+    File f = SD.open(path, FILE_APPEND);
+    if (!f) {
+      app_log_writef("WARN", "RS485: falha ao abrir para append: %s", path);
+      return;
+    }
+    char hdr[96];
+    const size_t hlen = cycle_integrity_prepare(path, hdr, sizeof(hdr));
+    char composed[600];
+    const size_t clen = cycle_integrity_compose(line, line_len, composed, sizeof(composed));
+    if (hlen > 0U) {
+      (void)f.write(reinterpret_cast<const uint8_t *>(hdr), hlen);
+      (void)f.write(&nl, 1U);
+    }
+    if (clen > 0U) {
+      (void)f.write(reinterpret_cast<const uint8_t *>(composed), clen);
+    } else {
+      /* Falha a compor: grava a linha crua para nao perder dados. */
+      (void)f.write(reinterpret_cast<const uint8_t *>(line), line_len);
+    }
+    (void)f.write(&nl, 1U);
+    f.close();
+  } else {
+    File f = SD.open(path, FILE_APPEND);
+    if (!f) {
+      app_log_writef("WARN", "RS485: falha ao abrir para append: %s", path);
+      return;
+    }
+    (void)f.write(reinterpret_cast<const uint8_t *>(line), line_len);
+    (void)f.write(&nl, 1U);
+    f.close();
+  }
   sd_access_notify_changed();
   /* Mudanca de dia: reinicia contador; ficheiro novo acabou de ser criado com 1 linha. */
   if (strcmp(s_today_path_cache, path) != 0) {
@@ -314,6 +343,7 @@ void cycles_rs485_apply_settings(void) {
 }
 
 void cycles_rs485_init(void) {
+  cycle_integrity_init();
   if (s_reader_task != nullptr) {
     return;
   }
