@@ -4,6 +4,33 @@ Main HEAD em v2.23 (commits `c153487` wifi self-heal + `0f9a2eb` ui teclado,
 push origin). Worktree v2 merged + apagado.
 Scope: WiFi + HTTP + RS485 + NTP + FTP server. Sem WG, sem MQTT, sem SCREENSHOT.
 
+## *** BRANCH `feature/ftp-upload` — cliente FTP-upload (2026-06-25) ***
+
+Nova feature: empurra `/CICLOS` do SD para um servidor FTP remoto, so' os
+ficheiros novos/modificados (deteccao por TAMANHO), com journal e verificacao
+por SIZE antes de marcar como sincronizado. Task dedicada `ftp_up`, leitura do
+SD em chunks via sd_access (RS485-safe). Spec `docs/superpowers/specs/2026-06-25-ftp-upload-client-design.md`,
+plano `docs/superpowers/plans/2026-06-25-ftp-upload-client.md`.
+
+### Em curso
+- [ ] Validacao em hardware contra servidor real `sistema.fitadigital.com.br`
+      (user testa; ler resultado em Definicoes -> Logs, linhas `FTPUP`).
+      Falhas anteriores foram so' auth (USER rejeitado) — config, nao codigo.
+- [ ] Soak: RS485 sender continuo durante uploads -> confirmar zero linhas
+      perdidas + heap estavel (criterio de aceitacao: captura nunca para).
+
+### Feito (2026-06-25)
+- [x] Core logica pura `ftp_journal_core` + testes Unity nativos (6/6 PASS via
+      LLVM-MinGW host, env `[env:native]`).
+- [x] Settings NVS (`fup_*`) + espelho `/fdigi.cfg`.
+- [x] Motor `ftp_upload.cpp`: scan recursivo, MKD arvore, upload chunked, gate SIZE, journal.
+- [x] UI: seccao "Upload FTP" na aba SRV + botao "Sincronizar agora" + botao olho mostrar senha.
+- [x] Init no boot (apos screenshot, fora do `#if FITA_ENABLE_SCREENSHOT`).
+- [x] **Fix 2 bugs criticos** (revisao final): fork local `lib/ESP32_FTPClient`
+      com `Size()` correcto — upstream `Write()` ia para o socket de DADOS e
+      `GetFTPAnswer()` estourava buffer 64->128B. Sem isto, verificacao nunca
+      passava (re-upload eterno) + stack overflow por verify.
+
 ## *** BRANCH `feature/tailscale-microlink` — viabilidade Tailscale (2026-06-25) ***
 
 Avaliacao de adoptar o microlink (https://github.com/CamM2325/microlink) para
