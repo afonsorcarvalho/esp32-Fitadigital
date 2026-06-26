@@ -1106,6 +1106,11 @@ static void scr_sw_cb(lv_event_t *e) {
   app_settings_set_screensaver_enabled(lv_obj_has_state(sw, LV_STATE_CHECKED));
 }
 
+static void integrity_sw_cb(lv_event_t *e) {
+  lv_obj_t *sw = lv_event_get_target(e);
+  app_settings_set_integrity_enabled(lv_obj_has_state(sw, LV_STATE_CHECKED));
+}
+
 static void dark_mode_sw_cb(lv_event_t *e) {
   lv_obj_t *sw = lv_event_get_target(e);
   bool on = lv_obj_has_state(sw, LV_STATE_CHECKED);
@@ -3146,6 +3151,27 @@ static void create_settings_screen(void) {
     lv_obj_add_state(dark_sw, LV_STATE_CHECKED);
   }
   lv_obj_add_event_cb(dark_sw, dark_mode_sw_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+  /* Separador INTEGRIDADE */
+  lv_obj_t *integ_sep = lv_label_create(tab_ui);
+  lv_label_set_text(integ_sep, "Integridade dos .txt (HMAC):");
+
+  lv_obj_t *integ_row = lv_obj_create(tab_ui);
+  lv_obj_set_size(integ_row, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_layout(integ_row, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(integ_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(integ_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_border_width(integ_row, 0, 0);
+  lv_obj_set_style_bg_opa(integ_row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_pad_all(integ_row, 0, 0);
+  lv_obj_clear_flag(integ_row, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t *integ_lbl = lv_label_create(integ_row);
+  lv_label_set_text(integ_lbl, "Assinar linhas");
+  lv_obj_t *integ_sw = lv_switch_create(integ_row);
+  if (app_settings_integrity_enabled()) {
+    lv_obj_add_state(integ_sw, LV_STATE_CHECKED);
+  }
+  lv_obj_add_event_cb(integ_sw, integrity_sw_cb, LV_EVENT_VALUE_CHANGED, nullptr);
 
   /* Separador */
   lv_obj_t *scr_sep = lv_label_create(tab_ui);

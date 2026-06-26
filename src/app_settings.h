@@ -112,6 +112,10 @@ void app_settings_set_screensaver_enabled(bool on);
 uint16_t app_settings_screensaver_timeout(void);
 void app_settings_set_screensaver_timeout(uint16_t secs);
 
+/** Integridade dos .txt: liga/desliga a cadeia HMAC inline por linha. Default false. */
+bool app_settings_integrity_enabled(void);
+void app_settings_set_integrity_enabled(bool on);
+
 /** WireGuard (biblioteca ciniml/WireGuard-ESP32): requer Wi-Fi e hora valida (NTP). */
 bool app_settings_wireguard_enabled(void);
 void app_settings_set_wireguard_enabled(bool on);

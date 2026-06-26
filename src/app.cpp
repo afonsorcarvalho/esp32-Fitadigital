@@ -35,6 +35,7 @@
 #include "net_services.h"
 #include "sd_access.h"
 #include "cycles_rs485.h"
+#include "cycle_integrity.h"
 #include "cycle_detector.h"
 #include "rs485_buffer.h"
 #include "net_time.h"
@@ -180,6 +181,7 @@ void setup() {
   Serial.printf("[BOOT] FitaDigital firmware v%s\n", FITADIGITAL_VERSION);
   Serial.println(String(title) + " start");
   app_settings_init();
+  cycle_integrity_init();  /* incondicional: cadeia HMAC pronta antes de qualquer escrita .txt */
   (void)boot_journal_init();
   (void)boot_journal_reset();
   panic_logger_init();  /* v1.84: log breadcrumb se reset por TWDT/panic */

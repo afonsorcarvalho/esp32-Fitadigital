@@ -882,6 +882,14 @@ bool app_settings_set_settings_pin(const char *pin) {
   return true;
 }
 
+bool app_settings_integrity_enabled(void) {
+  return s_prefs.getBool("int_en", false);
+}
+
+void app_settings_set_integrity_enabled(bool on) {
+  s_prefs.putBool("int_en", on);
+}
+
 bool app_settings_dark_mode(void) {
   return s_prefs.getBool("dark", false);
 }
