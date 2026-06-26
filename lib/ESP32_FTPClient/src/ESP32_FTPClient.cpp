@@ -244,7 +244,13 @@ void ESP32_FTPClient::InitFile(const char* type){
   FTPdbgn(hiPort);
   if (dclient.connect(pasvServer, hiPort, timeout)) {
     FTPdbgn(F("Data connection established"));
+  } else {
+    FTPdbgn(F("Data connection FAILED"));
   }
+}
+
+bool ESP32_FTPClient::DataConnected() {
+  return dclient.connected();
 }
 
 void ESP32_FTPClient::AppendFile (char* fileName) {
@@ -277,6 +283,14 @@ void ESP32_FTPClient::MakeDir(const char * dir) {
   client.print(F("MKD "));
   client.println(F(dir));
   GetFTPAnswer();
+  // MKD num directorio que ja existe devolve "550" — erro de COMANDO, nao de
+  // LIGACAO. GetFTPAnswer marca _isConnected=false em qualquer 4xx/5xx, o que
+  // envenenava todo o upload seguinte (InitFile/NewFile/WriteData/Size
+  // abortavam via if(!isConnected())). Restaura a ligacao, a menos que o socket
+  // tenha mesmo caido (GetFTPAnswer escreve "Offline" nesse caso).
+  if(!_isConnected && strncmp(outBuf, "Offline", 7) != 0) {
+    _isConnected = true;
+  }
 }
 
 void ESP32_FTPClient::ContentList(const char * dir, String * list) {

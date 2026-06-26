@@ -40,6 +40,15 @@ static long ftp_stream_file(ESP32_FTPClient &ftp, const char *vfs_path, const ch
   }
 
   ftp.InitFile("Type I");
+  // Se o socket de dados PASV nao abriu, abortar: escrever aqui contaria bytes
+  // para um socket morto (falso "enviado") e o ficheiro nunca chegaria ao
+  // servidor. Devolve -1 (erro real) em vez de mascarar a falha.
+  if (!ftp.DataConnected()) {
+    sd_access_sync([&]() {
+      f.close();
+    });
+    return -1;
+  }
   ftp.NewFile(remote_path);  // STOR
 
   long sent = 0;

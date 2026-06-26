@@ -20,7 +20,9 @@ Plano: `.claude/plans/vamos-estudar-o-caso-giggly-bumblebee.md`.
 - [x] **Fix de ordenacao** (revisao): abrir SD ANTES de prepare()/compose() nos 2
       escritores; senao open falhado avancava a cadeia sem gravar -> header perdido +
       gap de seq -> falso ADULTERADO. Flashado v2.24.
-- [ ] Teste reboot a meio do dia: cadeia continua (recuperacao por tail). *(nao testado on-rig)*
+- [x] Teste reboot a meio do dia (2026-06-26): pre seq0-4 -> reboot (RAM limpa) ->
+      pos seq5-7 SEM novo header, recover_from_tail leu seq4 -> `verify_integrity.py`
+      ⇒ `OK (7 linhas)`. Cadeia atravessa reboot sem costura nem gap.
 - [ ] **TROCAR** `src/integrity_secret.h` para password real antes de producao.
 
 ### Feito (2026-06-26)
@@ -43,12 +45,27 @@ por SIZE antes de marcar como sincronizado. Task dedicada `ftp_up`, leitura do
 SD em chunks via sd_access (RS485-safe). Spec `docs/superpowers/specs/2026-06-25-ftp-upload-client-design.md`,
 plano `docs/superpowers/plans/2026-06-25-ftp-upload-client.md`.
 
-### Em curso
-- [ ] Validacao em hardware contra servidor real `sistema.fitadigital.com.br`
-      (user testa; ler resultado em Definicoes -> Logs, linhas `FTPUP`).
-      Falhas anteriores foram so' auth (USER rejeitado) — config, nao codigo.
+### Validado em hardware contra servidor real (2026-06-26)
+- [x] **Upload e2e OK** contra `sistema.fitadigital.com.br:21` (user `fitadigital`,
+      rdir `/fitas`). Pass: `19 enviados, 19 verificados, 0 falhas`. 18 ficheiros
+      reais no server (`/fitas/2026/{04,05,06}/`), tamanhos batem com locais.
+- [x] **ROOT CAUSE do "0 verificados / remoto=-1" eterno (NAO era o server):**
+      `ESP32_FTPClient::MakeDir()` num dir que ja' existe recebe `550` do vsftpd;
+      `GetFTPAnswer()` marca QUALQUER 4xx/5xx como `_isConnected=false`, envenenando
+      o resto do pass — `InitFile`/`NewFile`/`WriteData`/`Size` abortavam em
+      `if(!isConnected())`. Logo: data socket PASV nunca abria (`data_conn=0` em
+      100%, provado via instrumentacao app_log), STOR nunca corria, mas
+      `ftp_stream_file` contava `sent+=n` cego -> `enviado=N` FALSO; `Size()` -> -1.
+      Server estava 100% saudavel (login/MKD/STOR/SIZE/RETR testados de cliente externo).
+- [x] **Fix (2 partes):** (1) `MakeDir()` restaura `_isConnected=true` apos erro
+      benigno de comando (mantem false so' se socket caiu mesmo = outBuf "Offline").
+      (2) `ftp_stream_file` aborta com `-1` se `ftp.DataConnected()` for false
+      (deixa de mascarar falha com bytes falsos). Novo metodo `DataConnected()` no lib.
+      Flashed COM3, validado on-rig. Bonus: loop de re-upload eterno tambem resolvido
+      (journal commita -> proximos passes saltam ja-enviados).
 - [ ] Soak: RS485 sender continuo durante uploads -> confirmar zero linhas
-      perdidas + heap estavel (criterio de aceitacao: captura nunca para).
+      perdidas + heap estavel (heap apertado: min ~10.7KB durante pass).
+- [ ] Commit do fix (lib/ESP32_FTPClient + src/ftp_upload.cpp) — a pedido do user.
 
 ### Feito (2026-06-25)
 - [x] Core logica pura `ftp_journal_core` + testes Unity nativos (6/6 PASS via

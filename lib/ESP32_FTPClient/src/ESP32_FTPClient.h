@@ -48,6 +48,8 @@ class ESP32_FTPClient
   void RenameFile(char* from, char* to);
   void Write(const char * str);
   void InitFile(const char* type);
+  // FitaDigital DEBUG: estado do socket de DADOS (PASV). true = conectado.
+  bool DataConnected();
   void ChangeWorkDir(const char * dir);
   void DeleteFile(const char * file);
   void MakeDir(const char * dir);
