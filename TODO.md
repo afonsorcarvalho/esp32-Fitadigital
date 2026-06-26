@@ -4,6 +4,37 @@ Main HEAD em v2.23 (commits `c153487` wifi self-heal + `0f9a2eb` ui teclado,
 push origin). Worktree v2 merged + apagado.
 Scope: WiFi + HTTP + RS485 + NTP + FTP server. Sem WG, sem MQTT, sem SCREENSHOT.
 
+## *** INTEGRIDADE .txt — cadeia HMAC inline (v2.24, 2026-06-26) ***
+
+Cada linha gravada leva `\t<seq>\t<mac8hex>` (HMAC-SHA256/32 truncado, encadeado
+na anterior). Password hardcoded global (`FDIGI_INT_SECRET`, gitignored). Deteta
+editar/inserir/remover/reordenar. Verificacao offline no PC: `tools/verify_integrity.py`.
+Plano: `.claude/plans/vamos-estudar-o-caso-giggly-bumblebee.md`.
+
+### Validado no rig do user (SD + RS485 reais — 2026-06-26)
+- [x] Toggle "Integridade dos .txt (HMAC)" ligado em Definicoes.
+- [x] Ciclo real RS485 -> .txt com cabecalho `#FDIGI-INT` seq0 -> `verify_integrity.py` ⇒ `OK`
+      (4 linhas, dev=8032B19E139C).
+- [x] Teste adulteracao: editar linha ⇒ `ADULTERADO ... mac nao bate`; remover ⇒ seq gap;
+      reordenar ⇒ seq gap. Tudo aponta a linha exacta.
+- [x] **Fix de ordenacao** (revisao): abrir SD ANTES de prepare()/compose() nos 2
+      escritores; senao open falhado avancava a cadeia sem gravar -> header perdido +
+      gap de seq -> falso ADULTERADO. Flashado v2.24.
+- [ ] Teste reboot a meio do dia: cadeia continua (recuperacao por tail). *(nao testado on-rig)*
+- [ ] **TROCAR** `src/integrity_secret.h` para password real antes de producao.
+
+### Feito (2026-06-26)
+- [x] Modulo `src/cycle_integrity.{h,cpp}`: cadeia HMAC, seed por path, cabecalho
+      `#FDIGI-INT`, recuperacao por tail, init lazy.
+- [x] Integracao nos 2 escritores (`cycles_rs485.cpp` + `rs485_buffer.cpp` flush),
+      ambos no contexto `sd_io` (cadeia partilhada, sem locks).
+- [x] Setting NVS `int_en` (default OFF) + toggle na aba Definicoes (ui_app.cpp).
+- [x] Password via `FDIGI_INT_SECRET` (header gitignored + `.example`); `#error` se ausente.
+- [x] `tools/verify_integrity.py` (+ `--clean` p/ leitura humana). Paridade firmware↔PC
+      validada por simulacao (good/tamper/delete/forge/wrong-key).
+- [x] Build v2.24 OK (RAM 39.3%, flash 37.3%), flash COM3, boot estavel sem crash.
+- [ ] Commit (a pedido do user).
+
 ## *** BRANCH `feature/ftp-upload` — cliente FTP-upload (2026-06-25) ***
 
 Nova feature: empurra `/CICLOS` do SD para um servidor FTP remoto, so' os
