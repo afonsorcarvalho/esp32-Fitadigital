@@ -18,6 +18,7 @@
 #include <cstring>
 #include <strings.h>
 #include <esp_heap_caps.h>
+#include <esp_task_wdt.h>
 #include <esp_log.h>
 #include <esp_system.h>
 #include <freertos/FreeRTOS.h>
@@ -629,6 +630,62 @@ static void portal_fs_set_download_name(AsyncWebServerResponse *resp, const Stri
     resp->addHeader("Content-Disposition", cd.c_str(), false);
 }
 
+/*
+ * Pre-carrega [off, off+len) de `path` para `blob`, em chunks de 8 KB, cada
+ * chunk num job sd_access_sync_front (contexto sd_io). Entre chunks chama
+ * esp_task_wdt_reset() — esta funcao corre na task chamadora (async_tcp, que
+ * executa o handler HTTP), logo alimenta o Task WDT do async_tcp durante todo
+ * o preload e evita o TASK_WDT mesmo em ficheiros grandes. Os jobs curtos
+ * deixam o sd_io intercalar outros trabalhos (UI/log/ticks) entre chunks.
+ *
+ * Devolve true se leu exactamente `len` bytes. `f` e' aberto/lido/fechado
+ * sempre dentro dos lambdas (contexto sd_io); persiste na stack entre chunks.
+ */
+static bool portal_preload_file_chunked(const char *path, size_t off,
+                                        uint8_t *blob, size_t len) {
+    static constexpr size_t kReadChunk = 8192U;
+    File f;
+    bool open_ok = false;
+    sd_access_sync_front([&]() {
+        f = SD.open(path, FILE_READ);
+        if (!f || f.isDirectory()) {
+            if (f) {
+                f.close();
+            }
+            return;
+        }
+        if (off != 0U && !f.seek(static_cast<uint32_t>(off))) {
+            f.close();
+            return;
+        }
+        open_ok = true;
+    });
+    if (!open_ok) {
+        return false;
+    }
+
+    size_t done = 0;
+    bool read_ok = true;
+    while (done < len) {
+        const size_t want = (len - done < kReadChunk) ? (len - done) : kReadChunk;
+        size_t got = 0;
+        sd_access_sync_front([&]() { got = f.read(blob + done, want); });
+        esp_task_wdt_reset();  /* corre na task async_tcp: alimenta o WDT */
+        if (got == 0U) {
+            read_ok = false;
+            break;
+        }
+        done += got;
+    }
+
+    sd_access_sync_front([&]() {
+        if (f) {
+            f.close();
+        }
+    });
+    return read_ok && (done == len);
+}
+
 static void handle_fs_file(AsyncWebServerRequest *request)
 {
     const String p = path_param_from_request(request);
@@ -718,28 +775,7 @@ static void handle_fs_file(AsyncWebServerRequest *request)
         request->send(500, "text/plain", "oom");
         return;
     }
-    int read_err = 0;
-    sd_access_sync_front([&]() {
-        File f = SD.open(p.c_str(), FILE_READ);
-        if (!f || f.isDirectory()) {
-            if (f) {
-                f.close();
-            }
-            read_err = 1;
-            return;
-        }
-        if (!f.seek(static_cast<uint32_t>(body_off))) {
-            f.close();
-            read_err = 2;
-            return;
-        }
-        const size_t r = f.read(blob, body_len);
-        f.close();
-        if (r != body_len) {
-            read_err = 3;
-        }
-    });
-    if (read_err != 0) {
+    if (!portal_preload_file_chunked(p.c_str(), body_off, blob, body_len)) {
         heap_caps_free(blob);
         request->send(500, "text/plain", "read failed");
         return;
@@ -1353,19 +1389,7 @@ static void handle_cycles_list_get(AsyncWebServerRequest *request)
         request->send(500, "application/json", "{\"error\":\"oom\"}");
         return;
     }
-    int read_err = 0;
-    sd_access_sync_front([&]() {
-        File f = SD.open(path, FILE_READ);
-        if (!f || f.isDirectory()) {
-            if (f) f.close();
-            read_err = 1;
-            return;
-        }
-        const size_t r = f.read(blob, file_sz);
-        f.close();
-        if (r != file_sz) read_err = 2;
-    });
-    if (read_err != 0) {
+    if (!portal_preload_file_chunked(path, 0U, blob, file_sz)) {
         heap_caps_free(blob);
         release_lock();
         request->send(500, "application/json", "{\"error\":\"read failed\"}");
