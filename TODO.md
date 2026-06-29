@@ -4,6 +4,28 @@ Main HEAD em v2.23 (commits `c153487` wifi self-heal + `0f9a2eb` ui teclado,
 push origin). Worktree v2 merged + apagado.
 Scope: WiFi + HTTP + RS485 + NTP + FTP server. Sem WG, sem MQTT, sem SCREENSHOT.
 
+## *** FIX reboot TASK_WDT(async_tcp) — SHIPPED main 3d3e1eb (2026-06-29) ***
+
+Device travava a tela + rebootava em loop. Razao: `prev_reset=TASK_WDT(6)`,
+sempre task **async_tcp**. Causa: QUALQUER leitura SD via async_tcp (handlers HTTP)
+bloqueia >5s quando o sd_io esta lento (cartao SD a degradar ~33KB/s) e async_tcp
+esta subscrita ao Task WDT -> reboot. Confirmado: ate ficheiro 749B e handler
+`/api/logs/tail` (nao tocado) rebootavam; idle estavel.
+
+- [x] **M2 leitura chunked** (commit a4b4e84): handlers /api/fs/file + NDJSON leem
+      em chunks de 8KB com esp_task_wdt_reset entre chunks. Melhora justica do sd_io.
+- [x] **A rede de seguranca** (commit 3d3e1eb): `-DCONFIG_ASYNC_TCP_USE_WDT=0` no
+      platformio.ini — tira async_tcp do Task WDT. Verificado on-device: 5x download
+      fdigi.log 499KB -> 200 OK completo, **ZERO reboots** (boot_count fixo 647).
+- [x] Merge main + push GitHub. Spec/plan em docs/superpowers/.
+- [ ] **Soak 24h em curso** (USE_WDT=0 + stress fs/file) — declarar estavel se 24h sem reboot.
+- [ ] **Causa raiz (hardware): trocar/testar o cartao SD** (~33KB/s = lento/degradado).
+      Devolve velocidade das leituras web/FTP. Unit fragil (boot_count 647, heap_guard 97, RTC morto).
+
+Licao: verificacao on-device FALSIFICOU a hipotese M2 (build+code-review passaram
+na mesma) — o reboot nao era duracao de leitura, era sd_io lento. Abrir COM3 reseta
+a placa (RTS), logo soak/monitor so' por HTTP.
+
 ## *** INTEGRIDADE .txt — cadeia HMAC inline (v2.24, 2026-06-26) ***
 
 Cada linha gravada leva `\t<seq>\t<mac8hex>` (HMAC-SHA256/32 truncado, encadeado
@@ -63,9 +85,21 @@ plano `docs/superpowers/plans/2026-06-25-ftp-upload-client.md`.
       (deixa de mascarar falha com bytes falsos). Novo metodo `DataConnected()` no lib.
       Flashed COM3, validado on-rig. Bonus: loop de re-upload eterno tambem resolvido
       (journal commita -> proximos passes saltam ja-enviados).
-- [ ] Soak: RS485 sender continuo durante uploads -> confirmar zero linhas
-      perdidas + heap estavel (heap apertado: min ~10.7KB durante pass).
-- [ ] Commit do fix (lib/ESP32_FTPClient + src/ftp_upload.cpp) — a pedido do user.
+- [x] **Soak leve PASS (2026-06-26 19:28-21:53, ~2h25m):** RS485 6 linhas/min +
+      ftpup uploads reais sob carga. **ZERO reboots** (boot_count 629 fixo), uptime
+      monotonico, heap flat. ftpup `2 enviados, 2 verificados, 0 falhas` por passagem.
+      Sender 1084 linhas, 0 erros write. **Zero linhas perdidas no soak leve** (as
+      unicas perdas — SOAK#36-45 — foram na janela dos 2 reboots-artefacto iniciais:
+      verifier HTTP pesado 66KB=TASK_WDT, e crash-analyzer a abrir COM3=auto-reset RTS;
+      NAO o fix ftpup). Licao: nao puxar ficheiros grandes via /api/fs/file durante
+      carga (sd_io), e abrir COM3 reseta a placa (DTR/RTS).
+- [x] Commit do fix: `ac8ea27` em main, pushed GitHub.
+
+### Nota menor (nao-bug)
+- ftpup pode logar 1 falha pontual num ficheiro em escrita activa (ex `cycles.ndjson`):
+  `enviado=205748 local=205550 remoto=205748` — o ficheiro CRESCEU (RS485 append)
+  entre o scan do tamanho e o fim do stream. Verificacao rejeita (size != scan) e
+  re-envia na passagem seguinte. Auto-corrige; inerente a uploadar ficheiro activo.
 
 ### Feito (2026-06-25)
 - [x] Core logica pura `ftp_journal_core` + testes Unity nativos (6/6 PASS via
@@ -277,6 +311,11 @@ gap de codigo. Sem accao.
 - Long term: fallback chain pools/IPs hardcoded
 
 ## Feito
+- **2026-06-26 — Documentação técnica completa** (`docs/DOCUMENTACAO_TECNICA.md`):
+  24 secções — arquitetura, boot, tarefas FreeRTOS, captura RS485, cadeia HMAC,
+  sd_access, NTP/RTC, WG/MQTT/screenshot (presentes-desativados v2.24), FTP-upload,
+  UI LVGL, portal web REST, confiabilidade, NVS, partições, build flags. Lida do
+  código v2.24 (README antigo estava stale).
 - **2026-05-18 — v2.1.0 cycle_detector + NDJSON index** (commit `3441208` push origin):
   - State machine ACTIVE/IDLE com timeout 900s default
   - `/api/cycles/status` + `/api/cycles/list`
