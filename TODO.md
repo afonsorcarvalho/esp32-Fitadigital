@@ -18,7 +18,10 @@ esta subscrita ao Task WDT -> reboot. Confirmado: ate ficheiro 749B e handler
       platformio.ini — tira async_tcp do Task WDT. Verificado on-device: 5x download
       fdigi.log 499KB -> 200 OK completo, **ZERO reboots** (boot_count fixo 647).
 - [x] Merge main + push GitHub. Spec/plan em docs/superpowers/.
-- [ ] **Soak 24h em curso** (USE_WDT=0 + stress fs/file) — declarar estavel se 24h sem reboot.
+- [x] **Soak ~24h PASS (2026-06-29 12:09 → 06-30 12:04):** 283 iters, **0 reboots**
+      (boot_count fixo 647, heap_guard 97 inalterado), uptime ~86565s contínuo,
+      stress /api/fs/file **94/94 HTTP 200** (o caminho que rebootava), wifi/ftp ok.
+      Monitor so' HTTP (COM3 nao tocado). **Reboot TASK_WDT declarado ESTAVEL.**
 - [ ] **Causa raiz (hardware): trocar/testar o cartao SD** (~33KB/s = lento/degradado).
       Devolve velocidade das leituras web/FTP. Unit fragil (boot_count 647, heap_guard 97, RTC morto).
 
